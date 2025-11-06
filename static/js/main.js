@@ -190,16 +190,65 @@ function validateForm(formId) {
     return isValid;
 }
 
+// Vehicle Management
+function getCurrentVehicleId() {
+    return localStorage.getItem('currentVehicleId');
+}
+
+function setCurrentVehicleId(vehicleId) {
+    localStorage.setItem('currentVehicleId', vehicleId);
+}
+
+async function loadVehicleSelector() {
+    try {
+        const vehicles = await fetchAPI('/api/vehicles');
+        const selector = document.getElementById('vehicleSelector');
+
+        if (!selector) return;
+
+        if (vehicles && vehicles.length > 0) {
+            selector.style.display = 'block';
+            selector.innerHTML = '<option value="">Select a vehicle...</option>';
+
+            vehicles.forEach(vehicle => {
+                const option = document.createElement('option');
+                option.value = vehicle.id;
+                const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
+                option.textContent = nickname;
+                selector.appendChild(option);
+            });
+
+            // Set current vehicle
+            const currentId = getCurrentVehicleId();
+            if (currentId) {
+                selector.value = currentId;
+            } else if (vehicles.length === 1) {
+                // Auto-select if only one vehicle
+                selector.value = vehicles[0].id;
+                setCurrentVehicleId(vehicles[0].id);
+            }
+        } else {
+            selector.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading vehicle selector:', error);
+    }
+}
+
+function handleVehicleChange() {
+    const selector = document.getElementById('vehicleSelector');
+    if (selector && selector.value) {
+        setCurrentVehicleId(selector.value);
+        // Reload the current page to show data for selected vehicle
+        window.location.reload();
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initViewMode();
     setActiveNav();
-
-    // Add event listener to view toggle button
-    const toggleButton = document.querySelector('.view-toggle');
-    if (toggleButton) {
-        toggleButton.addEventListener('click', toggleView);
-    }
+    loadVehicleSelector();
 });
 
 // API helper functions

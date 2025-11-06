@@ -42,16 +42,23 @@
 {% block scripts %}
 <script>
 async function loadDashboard() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        document.getElementById('recentServices').innerHTML = '<p>Please <a href="/vehicles">select or add a vehicle</a> to get started.</p>';
+        document.getElementById('upcomingReminders').innerHTML = '';
+        return;
+    }
+
     try {
         // Load stats
-        const stats = await fetchAPI('/api/stats');
+        const stats = await fetchAPI(`/api/stats?vehicle_id=${vehicleId}`);
         document.getElementById('totalServices').textContent = stats.total_services;
         document.getElementById('totalSpent').textContent = formatCurrency(stats.total_spent);
         document.getElementById('avgMpg').textContent = stats.avg_mpg.toFixed(1);
         document.getElementById('pendingReminders').textContent = stats.pending_reminders;
 
         // Load recent services
-        const services = await fetchAPI('/api/services');
+        const services = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
         const recentServicesDiv = document.getElementById('recentServices');
 
         if (services.length === 0) {
@@ -77,7 +84,7 @@ async function loadDashboard() {
         }
 
         // Load upcoming reminders
-        const reminders = await fetchAPI('/api/reminders');
+        const reminders = await fetchAPI(`/api/reminders?vehicle_id=${vehicleId}`);
         const upcomingRemindersDiv = document.getElementById('upcomingReminders');
 
         const activeReminders = reminders.filter(r => !r.completed);

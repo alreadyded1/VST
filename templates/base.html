@@ -9,8 +9,13 @@
 <body class="desktop-view">
     <header>
         <div class="header-content">
-            <h1>🚗 Vehicle Maintenance Tracker</h1>
-            <button class="view-toggle" onclick="toggleView()">Switch to Mobile</button>
+            <h1>Vehicle Maintenance Tracker</h1>
+            <div class="header-controls">
+                <select id="vehicleSelector" class="vehicle-selector" onchange="handleVehicleChange()" style="display: none;">
+                    <option value="">Select a vehicle...</option>
+                </select>
+                <button class="view-toggle" onclick="toggleView()">Switch to Mobile</button>
+            </div>
         </div>
     </header>
 
@@ -18,7 +23,7 @@
         <div class="nav-container">
             <ul class="nav-menu">
                 <li><a href="/">Dashboard</a></li>
-                <li><a href="/vehicle">Vehicle Profile</a></li>
+                <li><a href="/vehicles">Vehicles</a></li>
                 <li><a href="/services">Service Records</a></li>
                 <li><a href="/supplies">Supplies</a></li>
                 <li><a href="/fuel">Fuel Tracker</a></li>

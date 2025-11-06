@@ -21,7 +21,7 @@
                 <tr>
                     <th class="sortable">Date</th>
                     <th class="sortable">Service Provider</th>
-                    <th class="sortable">Labor Cost</th>
+                    <th class="sortable">Cost</th>
                     <th class="sortable">Supplies Cost</th>
                     <th class="sortable">Total Cost</th>
                     <th>Repairs Completed</th>
@@ -53,7 +53,7 @@
                     <input type="date" id="serviceDate" name="date" required>
                 </div>
                 <div class="form-group">
-                    <label for="serviceCost">Labor Cost *</label>
+                    <label for="serviceCost">Cost *</label>
                     <input type="number" id="serviceCost" name="cost" step="0.01" min="0" required>
                 </div>
             </div>
@@ -96,10 +96,17 @@
 <script>
 let allServices = [];
 let availableSupplies = [];
+let currentEditServiceId = null;
 
 async function loadServices() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Please select a vehicle first</td></tr>';
+        return;
+    }
+
     try {
-        const services = await fetchAPI('/api/services');
+        const services = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
         allServices = services;
         displayServices(services);
         makeSortable(document.getElementById('servicesTable'));
@@ -110,8 +117,13 @@ async function loadServices() {
 }
 
 async function loadSupplies() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        return;
+    }
+
     try {
-        availableSupplies = await fetchAPI('/api/supplies');
+        availableSupplies = await fetchAPI(`/api/supplies?vehicle_id=${vehicleId}`);
         displaySuppliesCheckboxes();
     } catch (error) {
         console.error('Error loading supplies:', error);
@@ -182,6 +194,7 @@ function displayServices(services) {
                     ${service.receipt_path ? `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-small btn-secondary">View</a>` : 'N/A'}
                 </td>
                 <td>
+                    <button class="btn btn-small btn-secondary" onclick="editService(${service.id})">Edit</button>
                     <button class="btn btn-small btn-danger" onclick="deleteService(${service.id})">Delete</button>
                 </td>
             </tr>
@@ -208,11 +221,41 @@ function searchServices() {
     displayServices(filtered);
 }
 
+async function editService(serviceId) {
+    try {
+        const service = await fetchAPI(`/api/services/${serviceId}`);
+        if (!service) return;
+
+        currentEditServiceId = serviceId;
+
+        // Populate form
+        document.getElementById('serviceDate').value = service.date;
+        document.getElementById('serviceCost').value = service.cost;
+        document.getElementById('serviceProvider').value = service.service_provider;
+        document.getElementById('repairsCompleted').value = service.repairs_completed || '';
+        document.getElementById('serviceComments').value = service.comments || '';
+
+        // Update modal title
+        document.querySelector('#addServiceModal h3').textContent = 'Edit Service Record';
+
+        openModal('addServiceModal');
+    } catch (error) {
+        console.error('Error loading service:', error);
+    }
+}
+
 async function addService(event) {
     event.preventDefault();
 
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first', 'danger');
+        return;
+    }
+
     const form = document.getElementById('serviceForm');
     const formData = new FormData(form);
+    formData.append('vehicle_id', vehicleId);
 
     // Collect selected supplies
     const selectedSupplies = [];
@@ -231,18 +274,32 @@ async function addService(event) {
     formData.append('supplies', JSON.stringify(selectedSupplies));
 
     try {
-        const result = await postFormData('/api/services', formData);
+        let result;
+        if (currentEditServiceId) {
+            // Update existing service using PUT
+            const response = await fetch(`/api/services/${currentEditServiceId}`, {
+                method: 'PUT',
+                body: formData
+            });
+            result = await response.json();
+            showAlert('Service record updated successfully!', 'success');
+        } else {
+            // Add new service
+            result = await postFormData('/api/services', formData);
+            showAlert('Service record added successfully!', 'success');
+        }
 
         if (result.success) {
-            showAlert('Service record added successfully!', 'success');
             form.reset();
             document.getElementById('receiptPreview').textContent = '';
+            document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
+            currentEditServiceId = null;
             closeModal('addServiceModal');
             await loadServices();
             await loadSupplies(); // Reload supplies to update quantities
         }
     } catch (error) {
-        console.error('Error adding service:', error);
+        console.error('Error saving service:', error);
     }
 }
 

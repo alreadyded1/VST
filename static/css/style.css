@@ -53,6 +53,28 @@ header {
     font-weight: 600;
 }
 
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.vehicle-selector {
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    border: none;
+    font-size: 0.9rem;
+    font-family: var(--font-family);
+    background-color: var(--white);
+    color: var(--dark-text);
+    cursor: pointer;
+    min-width: 200px;
+}
+
+.vehicle-selector:focus {
+    outline: 2px solid var(--secondary-color);
+}
+
 .view-toggle {
     background-color: var(--secondary-color);
     color: var(--white);
@@ -63,6 +85,7 @@ header {
     font-size: 0.9rem;
     font-family: var(--font-family);
     transition: background-color 0.3s;
+    white-space: nowrap;
 }
 
 .view-toggle:hover {

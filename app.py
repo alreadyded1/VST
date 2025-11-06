@@ -110,8 +110,13 @@ def index():
 
 @app.route('/vehicle')
 def vehicle_page():
-    """Vehicle profile page"""
-    return render_template('vehicle.html')
+    """Vehicle profile page (legacy - redirects to vehicles)"""
+    return render_template('vehicles.html')
+
+@app.route('/vehicles')
+def vehicles_page():
+    """Vehicles management page"""
+    return render_template('vehicles.html')
 
 @app.route('/services')
 def services_page():
@@ -136,19 +141,27 @@ def reminders_page():
 # API Endpoints
 
 # Vehicle endpoints
-@app.route('/api/vehicle', methods=['GET'])
-def get_vehicle():
-    """Get vehicle profile"""
+@app.route('/api/vehicles', methods=['GET'])
+def get_vehicles():
+    """Get all vehicles"""
     db = get_db()
-    vehicle = db.execute('SELECT * FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
+    vehicles = db.execute('SELECT * FROM vehicle ORDER BY created_at DESC').fetchall()
+    db.close()
+    return jsonify([dict(row) for row in vehicles])
+
+@app.route('/api/vehicle/<int:vehicle_id>', methods=['GET'])
+def get_vehicle(vehicle_id):
+    """Get specific vehicle profile"""
+    db = get_db()
+    vehicle = db.execute('SELECT * FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
     db.close()
     if vehicle:
         return jsonify(dict(vehicle))
     return jsonify(None)
 
 @app.route('/api/vehicle', methods=['POST'])
-def save_vehicle():
-    """Save or update vehicle profile"""
+def add_vehicle():
+    """Add new vehicle"""
     data = request.form
     picture_path = None
 
@@ -163,28 +176,59 @@ def save_vehicle():
             picture_path = f'uploads/vehicles/{filename}'
 
     db = get_db()
-    existing = db.execute('SELECT id FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
+    cursor = db.execute('''INSERT INTO vehicle (manufacturer, model, year, engine, vin, nickname, picture)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+              (data['manufacturer'], data['model'], data['year'],
+               data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
+               picture_path))
+    vehicle_id = cursor.lastrowid
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'id': vehicle_id})
 
-    if existing:
-        if picture_path:
-            db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
-                         engine=?, vin=?, nickname=?, picture=? WHERE id=?''',
-                      (data['manufacturer'], data['model'], data['year'],
-                       data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
-                       picture_path, existing['id']))
-        else:
-            db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
-                         engine=?, vin=?, nickname=? WHERE id=?''',
-                      (data['manufacturer'], data['model'], data['year'],
-                       data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
-                       existing['id']))
-    else:
-        db.execute('''INSERT INTO vehicle (manufacturer, model, year, engine, vin, nickname, picture)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+@app.route('/api/vehicle/<int:vehicle_id>', methods=['PUT'])
+def update_vehicle(vehicle_id):
+    """Update existing vehicle"""
+    data = request.form
+    picture_path = None
+
+    if 'picture' in request.files:
+        file = request.files['picture']
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'vehicles', filename)
+            file.save(filepath)
+            picture_path = f'uploads/vehicles/{filename}'
+
+    db = get_db()
+    if picture_path:
+        db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
+                     engine=?, vin=?, nickname=?, picture=? WHERE id=?''',
                   (data['manufacturer'], data['model'], data['year'],
                    data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
-                   picture_path))
+                   picture_path, vehicle_id))
+    else:
+        db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
+                     engine=?, vin=?, nickname=? WHERE id=?''',
+                  (data['manufacturer'], data['model'], data['year'],
+                   data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
+                   vehicle_id))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
 
+@app.route('/api/vehicle/<int:vehicle_id>', methods=['DELETE'])
+def delete_vehicle(vehicle_id):
+    """Delete a vehicle"""
+    db = get_db()
+    db.execute('DELETE FROM service_supplies WHERE service_id IN (SELECT id FROM service_records WHERE vehicle_id = ?)', (vehicle_id,))
+    db.execute('DELETE FROM service_records WHERE vehicle_id = ?', (vehicle_id,))
+    db.execute('DELETE FROM supplies WHERE vehicle_id = ?', (vehicle_id,))
+    db.execute('DELETE FROM fuel_records WHERE vehicle_id = ?', (vehicle_id,))
+    db.execute('DELETE FROM service_reminders WHERE vehicle_id = ?', (vehicle_id,))
+    db.execute('DELETE FROM vehicle WHERE id = ?', (vehicle_id,))
     db.commit()
     db.close()
     return jsonify({'success': True})
@@ -192,37 +236,89 @@ def save_vehicle():
 # Service records endpoints
 @app.route('/api/services', methods=['GET'])
 def get_services():
-    """Get all service records"""
+    """Get all service records for a vehicle"""
+    vehicle_id = request.args.get('vehicle_id')
     db = get_db()
-    services = db.execute('''
+
+    if vehicle_id:
+        services = db.execute('''
+            SELECT s.*,
+                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+            FROM service_records s
+            LEFT JOIN service_supplies ss ON s.id = ss.service_id
+            LEFT JOIN supplies sup ON ss.supply_id = sup.id
+            WHERE s.vehicle_id = ?
+            GROUP BY s.id
+            ORDER BY s.date DESC
+        ''', (vehicle_id,)).fetchall()
+    else:
+        services = db.execute('''
+            SELECT s.*,
+                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+            FROM service_records s
+            LEFT JOIN service_supplies ss ON s.id = ss.service_id
+            LEFT JOIN supplies sup ON ss.supply_id = sup.id
+            GROUP BY s.id
+            ORDER BY s.date DESC
+        ''').fetchall()
+
+    db.close()
+    return jsonify([dict(row) for row in services])
+
+@app.route('/api/services/<int:service_id>', methods=['GET'])
+def get_service(service_id):
+    """Get a specific service record"""
+    db = get_db()
+    service = db.execute('''
         SELECT s.*,
                COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
         FROM service_records s
         LEFT JOIN service_supplies ss ON s.id = ss.service_id
         LEFT JOIN supplies sup ON ss.supply_id = sup.id
+        WHERE s.id = ?
         GROUP BY s.id
-        ORDER BY s.date DESC
-    ''').fetchall()
+    ''', (service_id,)).fetchone()
     db.close()
-    return jsonify([dict(row) for row in services])
+    if service:
+        return jsonify(dict(service))
+    return jsonify(None), 404
 
 @app.route('/api/services/search', methods=['GET'])
 def search_services():
     """Search service records"""
     query = request.args.get('q', '').lower()
+    vehicle_id = request.args.get('vehicle_id')
     db = get_db()
-    services = db.execute('''
-        SELECT s.*,
-               COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
-        FROM service_records s
-        LEFT JOIN service_supplies ss ON s.id = ss.service_id
-        LEFT JOIN supplies sup ON ss.supply_id = sup.id
-        WHERE LOWER(s.service_provider) LIKE ?
-           OR LOWER(s.comments) LIKE ?
-           OR LOWER(s.repairs_completed) LIKE ?
-        GROUP BY s.id
-        ORDER BY s.date DESC
-    ''', (f'%{query}%', f'%{query}%', f'%{query}%')).fetchall()
+
+    if vehicle_id:
+        services = db.execute('''
+            SELECT s.*,
+                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+            FROM service_records s
+            LEFT JOIN service_supplies ss ON s.id = ss.service_id
+            LEFT JOIN supplies sup ON ss.supply_id = sup.id
+            WHERE s.vehicle_id = ? AND (
+                LOWER(s.service_provider) LIKE ? OR
+                LOWER(s.comments) LIKE ? OR
+                LOWER(s.repairs_completed) LIKE ?
+            )
+            GROUP BY s.id
+            ORDER BY s.date DESC
+        ''', (vehicle_id, f'%{query}%', f'%{query}%', f'%{query}%')).fetchall()
+    else:
+        services = db.execute('''
+            SELECT s.*,
+                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+            FROM service_records s
+            LEFT JOIN service_supplies ss ON s.id = ss.service_id
+            LEFT JOIN supplies sup ON ss.supply_id = sup.id
+            WHERE LOWER(s.service_provider) LIKE ?
+               OR LOWER(s.comments) LIKE ?
+               OR LOWER(s.repairs_completed) LIKE ?
+            GROUP BY s.id
+            ORDER BY s.date DESC
+        ''', (f'%{query}%', f'%{query}%', f'%{query}%')).fetchall()
+
     db.close()
     return jsonify([dict(row) for row in services])
 
@@ -230,6 +326,11 @@ def search_services():
 def add_service():
     """Add new service record"""
     data = request.form
+    vehicle_id = data.get('vehicle_id')
+
+    if not vehicle_id:
+        return jsonify({'error': 'Vehicle ID is required'}), 400
+
     receipt_path = None
 
     if 'receipt' in request.files:
@@ -243,16 +344,10 @@ def add_service():
             receipt_path = f'uploads/receipts/{filename}'
 
     db = get_db()
-    vehicle = db.execute('SELECT id FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
-
-    if not vehicle:
-        db.close()
-        return jsonify({'error': 'Please create a vehicle profile first'}), 400
-
     cursor = db.execute('''INSERT INTO service_records
                           (vehicle_id, date, cost, service_provider, comments, repairs_completed, receipt_path)
                           VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                       (vehicle['id'], data['date'], data['cost'], data['service_provider'],
+                       (vehicle_id, data['date'], data['cost'], data['service_provider'],
                         data.get('comments', ''), data.get('repairs_completed', ''), receipt_path))
 
     service_id = cursor.lastrowid
@@ -273,6 +368,58 @@ def add_service():
     db.close()
     return jsonify({'success': True, 'id': service_id})
 
+@app.route('/api/services/<int:service_id>', methods=['PUT'])
+def update_service(service_id):
+    """Update existing service record"""
+    data = request.form
+    receipt_path = None
+
+    # Check if we're updating the receipt
+    if 'receipt' in request.files:
+        file = request.files['receipt']
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
+            file.save(filepath)
+            receipt_path = f'uploads/receipts/{filename}'
+
+    db = get_db()
+
+    # Delete existing service_supplies entries
+    db.execute('DELETE FROM service_supplies WHERE service_id = ?', (service_id,))
+
+    # Update service record
+    if receipt_path:
+        db.execute('''UPDATE service_records
+                     SET date=?, cost=?, service_provider=?, comments=?, repairs_completed=?, receipt_path=?
+                     WHERE id=?''',
+                  (data['date'], data['cost'], data['service_provider'],
+                   data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
+    else:
+        db.execute('''UPDATE service_records
+                     SET date=?, cost=?, service_provider=?, comments=?, repairs_completed=?
+                     WHERE id=?''',
+                  (data['date'], data['cost'], data['service_provider'],
+                   data.get('comments', ''), data.get('repairs_completed', ''), service_id))
+
+    # Add new supplies used
+    if 'supplies' in data:
+        supplies_data = json.loads(data['supplies'])
+        for supply in supplies_data:
+            db.execute('''INSERT INTO service_supplies (service_id, supply_id, quantity_used)
+                         VALUES (?, ?, ?)''',
+                      (service_id, supply['id'], supply['quantity']))
+
+            # Update supply quantity
+            db.execute('''UPDATE supplies SET quantity = quantity - ? WHERE id = ?''',
+                      (supply['quantity'], supply['id']))
+
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
 @app.route('/api/services/<int:service_id>', methods=['DELETE'])
 def delete_service(service_id):
     """Delete a service record"""
@@ -286,9 +433,15 @@ def delete_service(service_id):
 # Supplies endpoints
 @app.route('/api/supplies', methods=['GET'])
 def get_supplies():
-    """Get all supplies"""
+    """Get all supplies for a vehicle"""
+    vehicle_id = request.args.get('vehicle_id')
     db = get_db()
-    supplies = db.execute('SELECT * FROM supplies ORDER BY name').fetchall()
+
+    if vehicle_id:
+        supplies = db.execute('SELECT * FROM supplies WHERE vehicle_id = ? ORDER BY name', (vehicle_id,)).fetchall()
+    else:
+        supplies = db.execute('SELECT * FROM supplies ORDER BY name').fetchall()
+
     db.close()
     return jsonify([dict(row) for row in supplies])
 
@@ -296,16 +449,15 @@ def get_supplies():
 def add_supply():
     """Add new supply"""
     data = request.json
+    vehicle_id = data.get('vehicle_id')
+
+    if not vehicle_id:
+        return jsonify({'error': 'Vehicle ID is required'}), 400
+
     db = get_db()
-    vehicle = db.execute('SELECT id FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
-
-    if not vehicle:
-        db.close()
-        return jsonify({'error': 'Please create a vehicle profile first'}), 400
-
     cursor = db.execute('''INSERT INTO supplies (vehicle_id, name, cost, quantity, unit)
                           VALUES (?, ?, ?, ?, ?)''',
-                       (vehicle['id'], data['name'], data['cost'],
+                       (vehicle_id, data['name'], data['cost'],
                         data['quantity'], data.get('unit', 'units')))
 
     db.commit()
@@ -336,9 +488,15 @@ def delete_supply(supply_id):
 # Fuel endpoints
 @app.route('/api/fuel', methods=['GET'])
 def get_fuel_records():
-    """Get all fuel records"""
+    """Get all fuel records for a vehicle"""
+    vehicle_id = request.args.get('vehicle_id')
     db = get_db()
-    records = db.execute('SELECT * FROM fuel_records ORDER BY date DESC, odometer DESC').fetchall()
+
+    if vehicle_id:
+        records = db.execute('SELECT * FROM fuel_records WHERE vehicle_id = ? ORDER BY date DESC, odometer DESC', (vehicle_id,)).fetchall()
+    else:
+        records = db.execute('SELECT * FROM fuel_records ORDER BY date DESC, odometer DESC').fetchall()
+
     db.close()
     return jsonify([dict(row) for row in records])
 
@@ -346,18 +504,18 @@ def get_fuel_records():
 def add_fuel_record():
     """Add new fuel record and calculate MPG"""
     data = request.json
-    db = get_db()
-    vehicle = db.execute('SELECT id FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
+    vehicle_id = data.get('vehicle_id')
 
-    if not vehicle:
-        db.close()
-        return jsonify({'error': 'Please create a vehicle profile first'}), 400
+    if not vehicle_id:
+        return jsonify({'error': 'Vehicle ID is required'}), 400
+
+    db = get_db()
 
     # Get previous fuel record to calculate MPG
     prev_record = db.execute('''SELECT * FROM fuel_records
                                WHERE vehicle_id = ?
                                ORDER BY odometer DESC LIMIT 1''',
-                            (vehicle['id'],)).fetchone()
+                            (vehicle_id,)).fetchone()
 
     mpg = None
     if prev_record:
@@ -368,7 +526,7 @@ def add_fuel_record():
     cursor = db.execute('''INSERT INTO fuel_records
                           (vehicle_id, date, gallons, cost, odometer, location, mpg)
                           VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                       (vehicle['id'], data['date'], data['gallons'], data['cost'],
+                       (vehicle_id, data['date'], data['gallons'], data['cost'],
                         data['odometer'], data['location'], mpg))
 
     db.commit()
@@ -388,9 +546,15 @@ def delete_fuel_record(fuel_id):
 # Service reminders endpoints
 @app.route('/api/reminders', methods=['GET'])
 def get_reminders():
-    """Get all service reminders"""
+    """Get all service reminders for a vehicle"""
+    vehicle_id = request.args.get('vehicle_id')
     db = get_db()
-    reminders = db.execute('SELECT * FROM service_reminders ORDER BY completed, due_date').fetchall()
+
+    if vehicle_id:
+        reminders = db.execute('SELECT * FROM service_reminders WHERE vehicle_id = ? ORDER BY completed, due_date', (vehicle_id,)).fetchall()
+    else:
+        reminders = db.execute('SELECT * FROM service_reminders ORDER BY completed, due_date').fetchall()
+
     db.close()
     return jsonify([dict(row) for row in reminders])
 
@@ -398,17 +562,16 @@ def get_reminders():
 def add_reminder():
     """Add new service reminder"""
     data = request.json
+    vehicle_id = data.get('vehicle_id')
+
+    if not vehicle_id:
+        return jsonify({'error': 'Vehicle ID is required'}), 400
+
     db = get_db()
-    vehicle = db.execute('SELECT id FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
-
-    if not vehicle:
-        db.close()
-        return jsonify({'error': 'Please create a vehicle profile first'}), 400
-
     cursor = db.execute('''INSERT INTO service_reminders
                           (vehicle_id, service_type, due_date, due_mileage, notes)
                           VALUES (?, ?, ?, ?, ?)''',
-                       (vehicle['id'], data['service_type'],
+                       (vehicle_id, data['service_type'],
                         data.get('due_date'), data.get('due_mileage'), data.get('notes', '')))
 
     db.commit()
@@ -439,39 +602,43 @@ def delete_reminder(reminder_id):
 # Dashboard stats
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
-    """Get dashboard statistics"""
+    """Get dashboard statistics for a vehicle"""
+    vehicle_id = request.args.get('vehicle_id')
     db = get_db()
-    vehicle = db.execute('SELECT id FROM vehicle ORDER BY id DESC LIMIT 1').fetchone()
 
-    if not vehicle:
-        db.close()
-        return jsonify({
-            'total_services': 0,
-            'total_spent': 0,
-            'avg_mpg': 0,
-            'pending_reminders': 0
-        })
+    if not vehicle_id:
+        # Get the first vehicle if none specified
+        vehicle = db.execute('SELECT id FROM vehicle ORDER BY created_at ASC LIMIT 1').fetchone()
+        if not vehicle:
+            db.close()
+            return jsonify({
+                'total_services': 0,
+                'total_spent': 0,
+                'avg_mpg': 0,
+                'pending_reminders': 0
+            })
+        vehicle_id = vehicle['id']
 
     stats = {}
 
     # Total services
     result = db.execute('SELECT COUNT(*) as count FROM service_records WHERE vehicle_id = ?',
-                       (vehicle['id'],)).fetchone()
+                       (vehicle_id,)).fetchone()
     stats['total_services'] = result['count']
 
     # Total spent on services
     result = db.execute('SELECT COALESCE(SUM(cost), 0) as total FROM service_records WHERE vehicle_id = ?',
-                       (vehicle['id'],)).fetchone()
+                       (vehicle_id,)).fetchone()
     stats['total_spent'] = round(result['total'], 2)
 
     # Average MPG
     result = db.execute('SELECT AVG(mpg) as avg FROM fuel_records WHERE vehicle_id = ? AND mpg IS NOT NULL',
-                       (vehicle['id'],)).fetchone()
+                       (vehicle_id,)).fetchone()
     stats['avg_mpg'] = round(result['avg'], 2) if result['avg'] else 0
 
     # Pending reminders
     result = db.execute('SELECT COUNT(*) as count FROM service_reminders WHERE vehicle_id = ? AND completed = 0',
-                       (vehicle['id'],)).fetchone()
+                       (vehicle_id,)).fetchone()
     stats['pending_reminders'] = result['count']
 
     db.close()

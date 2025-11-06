@@ -67,8 +67,15 @@
 let allReminders = [];
 
 async function loadReminders() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        document.getElementById('activeReminders').innerHTML = '<p>Please select a vehicle first</p>';
+        document.getElementById('completedReminders').innerHTML = '';
+        return;
+    }
+
     try {
-        const reminders = await fetchAPI('/api/reminders');
+        const reminders = await fetchAPI(`/api/reminders?vehicle_id=${vehicleId}`);
         allReminders = reminders;
         displayReminders(reminders);
     } catch (error) {
@@ -160,10 +167,17 @@ function displayCompletedReminders(reminders) {
 async function addReminder(event) {
     event.preventDefault();
 
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first', 'danger');
+        return;
+    }
+
     const form = document.getElementById('reminderForm');
     const formData = new FormData(form);
 
     const data = {
+        vehicle_id: vehicleId,
         service_type: formData.get('service_type'),
         due_date: formData.get('due_date') || null,
         due_mileage: formData.get('due_mileage') ? parseInt(formData.get('due_mileage')) : null,

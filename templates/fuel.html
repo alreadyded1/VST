@@ -106,8 +106,14 @@
 let allFuelRecords = [];
 
 async function loadFuelRecords() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
+        return;
+    }
+
     try {
-        const records = await fetchAPI('/api/fuel');
+        const records = await fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`);
         allFuelRecords = records;
         displayFuelRecords(records);
         calculateStats(records);
@@ -183,10 +189,17 @@ function calculateStats(records) {
 async function addFuelRecord(event) {
     event.preventDefault();
 
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first', 'danger');
+        return;
+    }
+
     const form = document.getElementById('fuelForm');
     const formData = new FormData(form);
 
     const data = {
+        vehicle_id: vehicleId,
         date: formData.get('date'),
         gallons: parseFloat(formData.get('gallons')),
         cost: parseFloat(formData.get('cost')),
@@ -198,18 +211,46 @@ async function addFuelRecord(event) {
         const result = await postJSON('/api/fuel', data);
 
         if (result.success) {
-            let message = 'Fuel record added successfully!';
-            if (result.mpg) {
-                message += ` MPG: ${result.mpg}`;
-            }
-            showAlert(message, 'success');
+            showAlert('Fuel record added successfully!', 'success');
             form.reset();
             closeModal('addFuelModal');
             await loadFuelRecords();
+
+            // Show MPG popup if calculated
+            if (result.mpg) {
+                showMpgPopup(result.mpg, data.gallons, data.cost);
+            }
         }
     } catch (error) {
         console.error('Error adding fuel record:', error);
     }
+}
+
+function showMpgPopup(mpg, gallons, cost) {
+    const pricePerGal = (cost / gallons).toFixed(2);
+    const popup = document.createElement('div');
+    popup.className = 'modal';
+    popup.style.display = 'block';
+    popup.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Fuel Economy Calculated!</h3>
+                <button class="close" onclick="this.closest('.modal').remove()">&times;</button>
+            </div>
+            <div style="text-align: center; padding: 2rem 0;">
+                <div style="font-size: 3rem; font-weight: bold; color: var(--secondary-color); margin-bottom: 1rem;">
+                    ${mpg} MPG
+                </div>
+                <div style="font-size: 1.2rem; color: var(--dark-text);">
+                    <p>You added ${gallons.toFixed(2)} gallons</p>
+                    <p>At ${formatCurrency(parseFloat(pricePerGal))} per gallon</p>
+                    <p style="margin-top: 1rem;">Total Cost: ${formatCurrency(cost)}</p>
+                </div>
+            </div>
+            <button class="btn btn-primary" style="width: 100%;" onclick="this.closest('.modal').remove()">Got it!</button>
+        </div>
+    `;
+    document.body.appendChild(popup);
 }
 
 async function deleteFuelRecord(fuelId) {
