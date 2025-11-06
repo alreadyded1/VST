@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Vehicle Maintenance Tracker Update Script for Proxmox LXC Container
-# This script updates an existing installation
+# This script updates an existing installation from GitHub
 
 set -e
 
@@ -19,6 +19,8 @@ fi
 
 INSTALL_DIR="/opt/vehicle-tracker"
 SERVICE_USER="vtracker"
+GITHUB_REPO="https://github.com/alreadyded1/VST.git"
+TEMP_DIR="/tmp/vehicle-tracker-update-$(date +%Y%m%d%H%M%S)"
 
 # Check if installation exists
 if [ ! -d "$INSTALL_DIR" ]; then
@@ -39,17 +41,34 @@ cp -r "$INSTALL_DIR/static/uploads" "$BACKUP_DIR/" 2>/dev/null || true
 echo "Backup created at: $BACKUP_DIR"
 
 echo ""
-echo "Step 3: Getting current directory..."
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+echo "Step 3: Downloading latest code from GitHub..."
+# Install git if not present
+if ! command -v git &> /dev/null; then
+    echo "Git not found, installing..."
+    apt-get update -qq
+    apt-get install -y -qq git
+fi
+
+# Clone latest code to temp directory
+git clone --depth 1 --branch main "$GITHUB_REPO" "$TEMP_DIR" 2>&1 | grep -v "Cloning into" || true
+
+if [ ! -d "$TEMP_DIR" ]; then
+    echo "ERROR: Failed to download updates from GitHub"
+    systemctl start vehicle-tracker.service
+    exit 1
+fi
 
 echo ""
 echo "Step 4: Updating application files..."
 # Copy new files, preserving database and uploads
-cp "$SCRIPT_DIR/app.py" "$INSTALL_DIR/"
-cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
-cp -r "$SCRIPT_DIR/templates" "$INSTALL_DIR/"
-cp -r "$SCRIPT_DIR/static/css" "$INSTALL_DIR/static/"
-cp -r "$SCRIPT_DIR/static/js" "$INSTALL_DIR/static/"
+cp "$TEMP_DIR/app.py" "$INSTALL_DIR/"
+cp "$TEMP_DIR/requirements.txt" "$INSTALL_DIR/"
+cp -r "$TEMP_DIR/templates" "$INSTALL_DIR/"
+cp -r "$TEMP_DIR/static/css" "$INSTALL_DIR/static/"
+cp -r "$TEMP_DIR/static/js" "$INSTALL_DIR/static/"
+
+# Clean up temp directory
+rm -rf "$TEMP_DIR"
 
 echo ""
 echo "Step 5: Updating Python dependencies..."

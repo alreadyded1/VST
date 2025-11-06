@@ -2,6 +2,8 @@
 
 A comprehensive web-based vehicle maintenance tracking application designed for easy installation in Proxmox LXC containers.
 
+**GitHub Repository:** https://github.com/alreadyded1/VST
+
 ## Features
 
 ✅ **Multiple Vehicle Management**
@@ -89,13 +91,9 @@ apt-get update && apt-get upgrade -y
 # Install git
 apt-get install -y git
 
-# Clone or upload this repository to the container
-# Option A: If using git
+# Clone the repository from GitHub
 git clone https://github.com/alreadyded1/VST.git /tmp/vehicle-tracker
 cd /tmp/vehicle-tracker
-
-# Option B: If copying files manually, upload to /tmp/vehicle-tracker
-# Then cd to that directory
 
 # Run the installation script
 chmod +x install.sh
@@ -123,18 +121,16 @@ The installation script will display the exact URL.
 
 ## Manual Installation (Alternative)
 
-If you prefer manual installation:
+If you prefer manual installation without using the install script:
 
 ```bash
 # Install dependencies
 apt-get update
-apt-get install -y python3 python3-pip python3-venv
+apt-get install -y python3 python3-pip python3-venv git
 
-# Create installation directory
-mkdir -p /opt/vehicle-tracker
+# Clone the repository
+git clone https://github.com/alreadyded1/VST.git /opt/vehicle-tracker
 cd /opt/vehicle-tracker
-
-# Copy application files here
 
 # Create virtual environment
 python3 -m venv venv
@@ -153,6 +149,8 @@ python app.py
 ```
 
 The application will be available at `http://<your-ip>:5000`
+
+**Note:** For production use, it's recommended to use the automated `install.sh` script which sets up proper systemd service, permissions, and auto-start on boot.
 
 ## Usage Guide
 
@@ -212,45 +210,48 @@ The selected mode is saved in your browser.
 
 ### Updating the Application
 
-When a new version is available, use the automated update script to upgrade your installation:
+When a new version is available, use the automated update script to upgrade your installation. The script downloads the latest code directly from GitHub:
 
 ```bash
-# Navigate to your installation directory
+# Option 1: Download and run update script directly from GitHub
+curl -o /tmp/update.sh https://raw.githubusercontent.com/alreadyded1/VST/main/update.sh
+chmod +x /tmp/update.sh
+sudo bash /tmp/update.sh
+```
+
+Or if you still have the original installation directory:
+
+```bash
+# Option 2: Use existing update script and it will pull latest from GitHub
 cd /opt/vehicle-tracker
-
-# Download the latest code
-git pull origin main
-
-# Run the update script
 sudo bash update.sh
 ```
 
 The update script will:
 1. Stop the running service
 2. **Automatically backup your database and uploads** to `/root/vehicle-tracker-backup-[timestamp]/`
-3. Update application files (app.py, templates, static files)
-4. Update Python dependencies
-5. Set proper permissions
-6. Restart the service
-7. Verify successful startup
+3. **Download latest code from GitHub** (https://github.com/alreadyded1/VST.git)
+4. Update application files (app.py, templates, static files)
+5. Update Python dependencies
+6. Set proper permissions
+7. Restart the service
+8. Verify successful startup
 
 **Important Notes:**
-- Your data (database and uploads) is preserved during updates
+- Your data (database and uploads) is **always preserved** during updates
 - A backup is automatically created before any changes
+- The script pulls the latest code from GitHub automatically
 - If the update fails, rollback instructions are provided
+- Git is automatically installed if not present
 - Check the logs if you encounter issues: `journalctl -u vehicle-tracker -xe`
 
-**Alternative: Manual Update from Downloaded Files**
-
-If you downloaded the files manually (not using git):
-
-```bash
-# Upload new files to /tmp/vehicle-tracker-update/
-# Then run:
-cd /tmp/vehicle-tracker-update
-chmod +x update.sh
-sudo bash update.sh
-```
+**What Gets Updated:**
+- ✅ Application code (app.py)
+- ✅ Templates (HTML files)
+- ✅ Static files (CSS, JavaScript)
+- ✅ Python dependencies
+- ❌ Database (preserved)
+- ❌ Uploaded files (receipts, vehicle photos - preserved)
 
 ### Service Control
 
@@ -406,15 +407,29 @@ userdel vtracker
 
 ## Support
 
-For issues, questions, or feature requests, please check:
-- Application logs: `journalctl -u vehicle-tracker -f`
-- System logs: `tail -f /var/log/syslog`
+For issues, questions, or feature requests:
+- **GitHub Issues:** https://github.com/alreadyded1/VST/issues
+- **Application logs:** `journalctl -u vehicle-tracker -f`
+- **System logs:** `tail -f /var/log/syslog`
 
 ## License
 
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 2.0.0 (Latest)
+- **Multiple vehicle support** - Manage unlimited vehicles in one application
+- **Vehicle selector** in header for easy switching between vehicles
+- **Edit service records** - Update existing service entries
+- **MPG popup modal** - Beautiful visual display after fuel fill-ups
+- **Improved supplies integration** - Fixed display issues in service records
+- **Automated update script** - Easy updates directly from GitHub
+- **Enhanced UI** - Removed emoji, cleaner professional appearance
+- **Better mobile toggle** - Fixed mobile/desktop view switching
+- All data automatically filtered by selected vehicle
+- Vehicle CRUD operations (Create, Read, Update, Delete)
+- Vehicles management page with card-based layout
 
 ### Version 1.0.0
 - Initial release
