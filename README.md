@@ -4,13 +4,17 @@ A comprehensive web-based vehicle maintenance tracking application designed for 
 
 ## Features
 
-✅ **Vehicle Profile Management**
-- Store manufacturer, model, year, engine, VIN
+✅ **Multiple Vehicle Management**
+- Manage unlimited vehicles in one application
+- Store manufacturer, model, year, engine, VIN for each vehicle
 - Add custom nickname and vehicle photo
-- Easy profile editing
+- Switch between vehicles using header dropdown
+- Edit or delete vehicles anytime
+- All data automatically filtered by selected vehicle
 
 ✅ **Service Record Tracking**
 - Track date, cost, service provider
+- Edit existing service records
 - Record repairs completed and comments
 - Upload and store service receipts (PDF/images)
 - Link supplies used to service records
@@ -26,10 +30,11 @@ A comprehensive web-based vehicle maintenance tracking application designed for 
 
 ✅ **Fuel Tracking**
 - Record fill-ups with location
-- Automatic MPG calculation
+- Automatic MPG calculation with visual popup display
 - Track total fuel purchased and spent
 - View best MPG and average MPG statistics
 - Sortable fuel history table
+- Beautiful MPG popup shows fuel economy after each fill-up
 
 ✅ **Service Reminders**
 - Set reminders by date and/or mileage
@@ -153,11 +158,13 @@ The application will be available at `http://<your-ip>:5000`
 
 ### First-Time Setup
 
-1. **Create Vehicle Profile**
-   - Navigate to "Vehicle Profile"
-   - Fill in your vehicle information
+1. **Add Your First Vehicle**
+   - Navigate to "Vehicles" page
+   - Click "Add Vehicle"
+   - Fill in your vehicle information (manufacturer, model, year, etc.)
    - Optionally upload a vehicle photo
-   - Click "Save Profile"
+   - Click "Save Vehicle"
+   - Your new vehicle will be automatically selected
 
 2. **Add Supplies (Optional)**
    - Go to "Supplies" page
@@ -177,12 +184,21 @@ The application will be available at `http://<your-ip>:5000`
    - Click "Add Fuel Record"
    - Enter fill-up details including location
    - MPG is calculated automatically (after 2nd fill-up)
+   - A popup will display your fuel economy!
 
 5. **Set Reminders**
    - Navigate to "Reminders"
    - Click "Add Reminder"
    - Set service type and due date/mileage
    - Reminders will show on dashboard
+
+### Managing Multiple Vehicles
+
+- **Add More Vehicles**: Go to "Vehicles" → "Add Vehicle"
+- **Switch Between Vehicles**: Use the dropdown in the header
+- **Edit Vehicle Details**: Go to "Vehicles" → Click "Edit" on any vehicle
+- **Delete a Vehicle**: Go to "Vehicles" → Click "Delete" (removes all associated data)
+- **Selected Vehicle**: All data (services, supplies, fuel, reminders) automatically filters to your selected vehicle
 
 ### Desktop vs Mobile Mode
 
@@ -193,6 +209,48 @@ Click the "Switch to Mobile/Desktop" button in the header to toggle between view
 The selected mode is saved in your browser.
 
 ## System Management
+
+### Updating the Application
+
+When a new version is available, use the automated update script to upgrade your installation:
+
+```bash
+# Navigate to your installation directory
+cd /opt/vehicle-tracker
+
+# Download the latest code
+git pull origin main
+
+# Run the update script
+sudo bash update.sh
+```
+
+The update script will:
+1. Stop the running service
+2. **Automatically backup your database and uploads** to `/root/vehicle-tracker-backup-[timestamp]/`
+3. Update application files (app.py, templates, static files)
+4. Update Python dependencies
+5. Set proper permissions
+6. Restart the service
+7. Verify successful startup
+
+**Important Notes:**
+- Your data (database and uploads) is preserved during updates
+- A backup is automatically created before any changes
+- If the update fails, rollback instructions are provided
+- Check the logs if you encounter issues: `journalctl -u vehicle-tracker -xe`
+
+**Alternative: Manual Update from Downloaded Files**
+
+If you downloaded the files manually (not using git):
+
+```bash
+# Upload new files to /tmp/vehicle-tracker-update/
+# Then run:
+cd /tmp/vehicle-tracker-update
+chmod +x update.sh
+sudo bash update.sh
+```
 
 ### Service Control
 
