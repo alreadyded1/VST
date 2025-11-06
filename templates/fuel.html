@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+
+{% block title %}Fuel Tracker - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Fuel Tracker</h1>
+
+<div class="card">
+    <h2>Fuel Economy Statistics</h2>
+    <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+        <div class="stat-card">
+            <h3>Average MPG</h3>
+            <div class="stat-value" id="avgMpg">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Fuel Purchased</h3>
+            <div class="stat-value" id="totalGallons">0 gal</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Spent</h3>
+            <div class="stat-value" id="totalSpent">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <h3>Best MPG</h3>
+            <div class="stat-value" id="bestMpg">0</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Fuel Records</h2>
+        <button class="btn btn-primary" onclick="openModal('addFuelModal')">Add Fuel Record</button>
+    </div>
+
+    <div class="table-container">
+        <table id="fuelTable">
+            <thead>
+                <tr>
+                    <th class="sortable">Date</th>
+                    <th class="sortable">Odometer</th>
+                    <th class="sortable">Gallons</th>
+                    <th class="sortable">Cost</th>
+                    <th class="sortable">Price/Gal</th>
+                    <th>Location</th>
+                    <th class="sortable">MPG</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="fuelTableBody">
+                <tr>
+                    <td colspan="8" class="text-center">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Fuel Modal -->
+<div id="addFuelModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Fuel Record</h3>
+            <button class="close" onclick="closeModal('addFuelModal')">&times;</button>
+        </div>
+        <form id="fuelForm" onsubmit="addFuelRecord(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="fuelDate">Date *</label>
+                    <input type="date" id="fuelDate" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="odometer">Odometer *</label>
+                    <input type="number" id="odometer" name="odometer" min="0" required>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="gallons">Gallons *</label>
+                    <input type="number" id="gallons" name="gallons" step="0.001" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="fuelCost">Total Cost *</label>
+                    <input type="number" id="fuelCost" name="cost" step="0.01" min="0" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="location">Location *</label>
+                <input type="text" id="location" name="location" placeholder="e.g., Shell Station, Main St" required>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>Note:</strong> MPG will be automatically calculated based on the previous fill-up record.
+            </div>
+
+            <button type="submit" class="btn btn-success">Add Fuel Record</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allFuelRecords = [];
+
+async function loadFuelRecords() {
+    try {
+        const records = await fetchAPI('/api/fuel');
+        allFuelRecords = records;
+        displayFuelRecords(records);
+        calculateStats(records);
+        makeSortable(document.getElementById('fuelTable'));
+    } catch (error) {
+        console.error('Error loading fuel records:', error);
+        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading fuel records</td></tr>';
+    }
+}
+
+function displayFuelRecords(records) {
+    const tbody = document.getElementById('fuelTableBody');
+
+    if (records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
+        return;
+    }
+
+    let html = '';
+    records.forEach(record => {
+        const pricePerGal = record.cost / record.gallons;
+        html += `
+            <tr>
+                <td>${formatDate(record.date)}</td>
+                <td>${record.odometer.toLocaleString()}</td>
+                <td>${record.gallons.toFixed(3)}</td>
+                <td>${formatCurrency(record.cost)}</td>
+                <td>${formatCurrency(pricePerGal)}</td>
+                <td>${record.location}</td>
+                <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
+                <td>
+                    <button class="btn btn-small btn-danger" onclick="deleteFuelRecord(${record.id})">Delete</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+function calculateStats(records) {
+    if (records.length === 0) {
+        document.getElementById('avgMpg').textContent = '0';
+        document.getElementById('totalGallons').textContent = '0 gal';
+        document.getElementById('totalSpent').textContent = '$0.00';
+        document.getElementById('bestMpg').textContent = '0';
+        return;
+    }
+
+    // Calculate total gallons
+    const totalGallons = records.reduce((sum, r) => sum + r.gallons, 0);
+    document.getElementById('totalGallons').textContent = totalGallons.toFixed(1) + ' gal';
+
+    // Calculate total spent
+    const totalSpent = records.reduce((sum, r) => sum + r.cost, 0);
+    document.getElementById('totalSpent').textContent = formatCurrency(totalSpent);
+
+    // Calculate average MPG
+    const recordsWithMpg = records.filter(r => r.mpg !== null && r.mpg > 0);
+    if (recordsWithMpg.length > 0) {
+        const avgMpg = recordsWithMpg.reduce((sum, r) => sum + r.mpg, 0) / recordsWithMpg.length;
+        document.getElementById('avgMpg').textContent = avgMpg.toFixed(2);
+
+        // Find best MPG
+        const bestMpg = Math.max(...recordsWithMpg.map(r => r.mpg));
+        document.getElementById('bestMpg').textContent = bestMpg.toFixed(2);
+    } else {
+        document.getElementById('avgMpg').textContent = 'N/A';
+        document.getElementById('bestMpg').textContent = 'N/A';
+    }
+}
+
+async function addFuelRecord(event) {
+    event.preventDefault();
+
+    const form = document.getElementById('fuelForm');
+    const formData = new FormData(form);
+
+    const data = {
+        date: formData.get('date'),
+        gallons: parseFloat(formData.get('gallons')),
+        cost: parseFloat(formData.get('cost')),
+        odometer: parseInt(formData.get('odometer')),
+        location: formData.get('location')
+    };
+
+    try {
+        const result = await postJSON('/api/fuel', data);
+
+        if (result.success) {
+            let message = 'Fuel record added successfully!';
+            if (result.mpg) {
+                message += ` MPG: ${result.mpg}`;
+            }
+            showAlert(message, 'success');
+            form.reset();
+            closeModal('addFuelModal');
+            await loadFuelRecords();
+        }
+    } catch (error) {
+        console.error('Error adding fuel record:', error);
+    }
+}
+
+async function deleteFuelRecord(fuelId) {
+    if (!confirm('Are you sure you want to delete this fuel record?')) {
+        return;
+    }
+
+    try {
+        await deleteAPI(`/api/fuel/${fuelId}`);
+        showAlert('Fuel record deleted successfully!', 'success');
+        await loadFuelRecords();
+    } catch (error) {
+        console.error('Error deleting fuel record:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadFuelRecords();
+
+    // Set default date to today
+    document.getElementById('fuelDate').valueAsDate = new Date();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="stats-grid" id="statsGrid">
+    <div class="stat-card">
+        <h3>Total Services</h3>
+        <div class="stat-value" id="totalServices">0</div>
+    </div>
+    <div class="stat-card">
+        <h3>Total Spent</h3>
+        <div class="stat-value" id="totalSpent">$0.00</div>
+    </div>
+    <div class="stat-card">
+        <h3>Average MPG</h3>
+        <div class="stat-value" id="avgMpg">0</div>
+    </div>
+    <div class="stat-card">
+        <h3>Pending Reminders</h3>
+        <div class="stat-value" id="pendingReminders">0</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Recent Service Records</h2>
+    <div id="recentServices">
+        <p>Loading...</p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Upcoming Reminders</h2>
+    <div id="upcomingReminders">
+        <p>Loading...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadDashboard() {
+    try {
+        // Load stats
+        const stats = await fetchAPI('/api/stats');
+        document.getElementById('totalServices').textContent = stats.total_services;
+        document.getElementById('totalSpent').textContent = formatCurrency(stats.total_spent);
+        document.getElementById('avgMpg').textContent = stats.avg_mpg.toFixed(1);
+        document.getElementById('pendingReminders').textContent = stats.pending_reminders;
+
+        // Load recent services
+        const services = await fetchAPI('/api/services');
+        const recentServicesDiv = document.getElementById('recentServices');
+
+        if (services.length === 0) {
+            recentServicesDiv.innerHTML = '<p>No service records yet. <a href="/services">Add your first service</a>.</p>';
+        } else {
+            const recentFive = services.slice(0, 5);
+            let html = '<table><thead><tr><th>Date</th><th>Service Provider</th><th>Cost</th><th>Repairs</th></tr></thead><tbody>';
+
+            recentFive.forEach(service => {
+                const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
+                html += `
+                    <tr>
+                        <td>${formatDate(service.date)}</td>
+                        <td>${service.service_provider}</td>
+                        <td>${formatCurrency(totalCost)}</td>
+                        <td>${service.repairs_completed || 'N/A'}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            recentServicesDiv.innerHTML = html;
+        }
+
+        // Load upcoming reminders
+        const reminders = await fetchAPI('/api/reminders');
+        const upcomingRemindersDiv = document.getElementById('upcomingReminders');
+
+        const activeReminders = reminders.filter(r => !r.completed);
+
+        if (activeReminders.length === 0) {
+            upcomingRemindersDiv.innerHTML = '<p>No pending reminders. <a href="/reminders">Add a reminder</a>.</p>';
+        } else {
+            let html = '<div>';
+            activeReminders.slice(0, 5).forEach(reminder => {
+                const isOverdue = reminder.due_date && new Date(reminder.due_date) < new Date();
+                const className = isOverdue ? 'reminder-item overdue' : 'reminder-item';
+
+                html += `
+                    <div class="${className}">
+                        <div class="reminder-header">
+                            <span class="reminder-title">${reminder.service_type}</span>
+                            ${isOverdue ? '<span style="color: var(--danger-color); font-weight: bold;">OVERDUE</span>' : ''}
+                        </div>
+                        ${reminder.due_date ? `<p>Due: ${formatDate(reminder.due_date)}</p>` : ''}
+                        ${reminder.due_mileage ? `<p>Due at: ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
+                        ${reminder.notes ? `<p>${reminder.notes}</p>` : ''}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            upcomingRemindersDiv.innerHTML = html;
+        }
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadDashboard);
+</script>
+{% endblock %}

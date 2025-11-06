@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Vehicle Profile - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Vehicle Profile</h1>
+
+<div class="card">
+    <div id="vehicleDisplay" class="hidden">
+        <div class="vehicle-profile">
+            <div class="vehicle-image-container">
+                <img id="vehicleImage" class="vehicle-image" src="" alt="Vehicle">
+                <div id="vehiclePlaceholder" class="vehicle-placeholder">No image uploaded</div>
+            </div>
+            <div>
+                <h2 id="vehicleNickname"></h2>
+                <p><strong>Manufacturer:</strong> <span id="displayManufacturer"></span></p>
+                <p><strong>Model:</strong> <span id="displayModel"></span></p>
+                <p><strong>Year:</strong> <span id="displayYear"></span></p>
+                <p><strong>Engine:</strong> <span id="displayEngine"></span></p>
+                <p><strong>VIN:</strong> <span id="displayVin"></span></p>
+                <button class="btn btn-primary mt-2" onclick="editVehicle()">Edit Profile</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="vehicleForm">
+        <h2 id="formTitle">Create Vehicle Profile</h2>
+        <form id="profileForm" onsubmit="saveVehicle(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="manufacturer">Manufacturer *</label>
+                    <input type="text" id="manufacturer" name="manufacturer" required>
+                </div>
+                <div class="form-group">
+                    <label for="model">Model *</label>
+                    <input type="text" id="model" name="model" required>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="year">Year *</label>
+                    <input type="number" id="year" name="year" min="1900" max="2100" required>
+                </div>
+                <div class="form-group">
+                    <label for="engine">Engine</label>
+                    <input type="text" id="engine" name="engine" placeholder="e.g., 2.0L Turbo">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="vin">VIN</label>
+                    <input type="text" id="vin" name="vin" maxlength="17" placeholder="17-character VIN">
+                </div>
+                <div class="form-group">
+                    <label for="nickname">Nickname</label>
+                    <input type="text" id="nickname" name="nickname" placeholder="e.g., The Beast">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="picture">Vehicle Picture</label>
+                <input type="file" id="picture" name="picture" accept="image/*" onchange="handleFilePreview(this, 'picturePreview')">
+                <div id="picturePreview" class="file-preview"></div>
+            </div>
+
+            <div class="flex gap-2">
+                <button type="submit" class="btn btn-success">Save Profile</button>
+                <button type="button" class="btn btn-secondary" onclick="cancelEdit()" id="cancelBtn" style="display: none;">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentVehicle = null;
+
+async function loadVehicle() {
+    try {
+        const vehicle = await fetchAPI('/api/vehicle');
+
+        if (vehicle) {
+            currentVehicle = vehicle;
+            displayVehicle(vehicle);
+        } else {
+            document.getElementById('vehicleDisplay').classList.add('hidden');
+            document.getElementById('vehicleForm').classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Error loading vehicle:', error);
+    }
+}
+
+function displayVehicle(vehicle) {
+    document.getElementById('vehicleDisplay').classList.remove('hidden');
+    document.getElementById('vehicleForm').classList.add('hidden');
+
+    document.getElementById('vehicleNickname').textContent = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
+    document.getElementById('displayManufacturer').textContent = vehicle.manufacturer;
+    document.getElementById('displayModel').textContent = vehicle.model;
+    document.getElementById('displayYear').textContent = vehicle.year;
+    document.getElementById('displayEngine').textContent = vehicle.engine || 'N/A';
+    document.getElementById('displayVin').textContent = vehicle.vin || 'N/A';
+
+    const imageElement = document.getElementById('vehicleImage');
+    const placeholder = document.getElementById('vehiclePlaceholder');
+
+    if (vehicle.picture) {
+        imageElement.src = `/static/${vehicle.picture}`;
+        imageElement.style.display = 'block';
+        placeholder.style.display = 'none';
+    } else {
+        imageElement.style.display = 'none';
+        placeholder.style.display = 'flex';
+    }
+}
+
+function editVehicle() {
+    document.getElementById('vehicleDisplay').classList.add('hidden');
+    document.getElementById('vehicleForm').classList.remove('hidden');
+    document.getElementById('formTitle').textContent = 'Edit Vehicle Profile';
+    document.getElementById('cancelBtn').style.display = 'inline-block';
+
+    // Populate form with current data
+    if (currentVehicle) {
+        document.getElementById('manufacturer').value = currentVehicle.manufacturer;
+        document.getElementById('model').value = currentVehicle.model;
+        document.getElementById('year').value = currentVehicle.year;
+        document.getElementById('engine').value = currentVehicle.engine || '';
+        document.getElementById('vin').value = currentVehicle.vin || '';
+        document.getElementById('nickname').value = currentVehicle.nickname || '';
+    }
+}
+
+function cancelEdit() {
+    if (currentVehicle) {
+        displayVehicle(currentVehicle);
+        document.getElementById('profileForm').reset();
+        document.getElementById('picturePreview').textContent = '';
+    }
+}
+
+async function saveVehicle(event) {
+    event.preventDefault();
+
+    const form = document.getElementById('profileForm');
+    const formData = new FormData(form);
+
+    try {
+        const result = await postFormData('/api/vehicle', formData);
+
+        if (result.success) {
+            showAlert('Vehicle profile saved successfully!', 'success');
+            form.reset();
+            document.getElementById('picturePreview').textContent = '';
+            await loadVehicle();
+        }
+    } catch (error) {
+        console.error('Error saving vehicle:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadVehicle);
+</script>
+{% endblock %}

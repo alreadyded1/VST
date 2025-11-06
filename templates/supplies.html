@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+
+{% block title %}Supplies Inventory - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Supplies Inventory</h1>
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Inventory</h2>
+        <button class="btn btn-primary" onclick="openModal('addSupplyModal')">Add Supply</button>
+    </div>
+
+    <div class="table-container">
+        <table id="suppliesTable">
+            <thead>
+                <tr>
+                    <th class="sortable">Name</th>
+                    <th class="sortable">Cost per Unit</th>
+                    <th class="sortable">Quantity</th>
+                    <th>Unit</th>
+                    <th class="sortable">Total Value</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="suppliesTableBody">
+                <tr>
+                    <td colspan="6" class="text-center">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Supply Modal -->
+<div id="addSupplyModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Supply</h3>
+            <button class="close" onclick="closeModal('addSupplyModal')">&times;</button>
+        </div>
+        <form id="supplyForm" onsubmit="addSupply(event)">
+            <div class="form-group">
+                <label for="supplyName">Name *</label>
+                <input type="text" id="supplyName" name="name" required>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="supplyCost">Cost per Unit *</label>
+                    <input type="number" id="supplyCost" name="cost" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="supplyQuantity">Quantity *</label>
+                    <input type="number" id="supplyQuantity" name="quantity" step="0.1" min="0" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="supplyUnit">Unit</label>
+                <select id="supplyUnit" name="unit">
+                    <option value="units">Units</option>
+                    <option value="quarts">Quarts</option>
+                    <option value="gallons">Gallons</option>
+                    <option value="liters">Liters</option>
+                    <option value="bottles">Bottles</option>
+                    <option value="cans">Cans</option>
+                    <option value="boxes">Boxes</option>
+                    <option value="filters">Filters</option>
+                    <option value="sets">Sets</option>
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-success">Add Supply</button>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Supply Modal -->
+<div id="editSupplyModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Supply</h3>
+            <button class="close" onclick="closeModal('editSupplyModal')">&times;</button>
+        </div>
+        <form id="editSupplyForm" onsubmit="updateSupply(event)">
+            <input type="hidden" id="editSupplyId">
+
+            <div class="form-group">
+                <label for="editSupplyName">Name *</label>
+                <input type="text" id="editSupplyName" name="name" required>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="editSupplyCost">Cost per Unit *</label>
+                    <input type="number" id="editSupplyCost" name="cost" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="editSupplyQuantity">Quantity *</label>
+                    <input type="number" id="editSupplyQuantity" name="quantity" step="0.1" min="0" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="editSupplyUnit">Unit</label>
+                <select id="editSupplyUnit" name="unit">
+                    <option value="units">Units</option>
+                    <option value="quarts">Quarts</option>
+                    <option value="gallons">Gallons</option>
+                    <option value="liters">Liters</option>
+                    <option value="bottles">Bottles</option>
+                    <option value="cans">Cans</option>
+                    <option value="boxes">Boxes</option>
+                    <option value="filters">Filters</option>
+                    <option value="sets">Sets</option>
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-success">Update Supply</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allSupplies = [];
+
+async function loadSupplies() {
+    try {
+        const supplies = await fetchAPI('/api/supplies');
+        allSupplies = supplies;
+        displaySupplies(supplies);
+        makeSortable(document.getElementById('suppliesTable'));
+    } catch (error) {
+        console.error('Error loading supplies:', error);
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="6" class="text-center">Error loading supplies</td></tr>';
+    }
+}
+
+function displaySupplies(supplies) {
+    const tbody = document.getElementById('suppliesTableBody');
+
+    if (supplies.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">No supplies in inventory. Click "Add Supply" to get started.</td></tr>';
+        return;
+    }
+
+    let html = '';
+    supplies.forEach(supply => {
+        const totalValue = supply.cost * supply.quantity;
+        html += `
+            <tr>
+                <td>${supply.name}</td>
+                <td>${formatCurrency(supply.cost)}</td>
+                <td>${supply.quantity}</td>
+                <td>${supply.unit}</td>
+                <td>${formatCurrency(totalValue)}</td>
+                <td>
+                    <button class="btn btn-small btn-secondary" onclick="editSupply(${supply.id})">Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteSupply(${supply.id})">Delete</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+async function addSupply(event) {
+    event.preventDefault();
+
+    const form = document.getElementById('supplyForm');
+    const formData = new FormData(form);
+
+    const data = {
+        name: formData.get('name'),
+        cost: parseFloat(formData.get('cost')),
+        quantity: parseFloat(formData.get('quantity')),
+        unit: formData.get('unit')
+    };
+
+    try {
+        const result = await postJSON('/api/supplies', data);
+
+        if (result.success) {
+            showAlert('Supply added successfully!', 'success');
+            form.reset();
+            closeModal('addSupplyModal');
+            await loadSupplies();
+        }
+    } catch (error) {
+        console.error('Error adding supply:', error);
+    }
+}
+
+function editSupply(supplyId) {
+    const supply = allSupplies.find(s => s.id === supplyId);
+
+    if (!supply) return;
+
+    document.getElementById('editSupplyId').value = supply.id;
+    document.getElementById('editSupplyName').value = supply.name;
+    document.getElementById('editSupplyCost').value = supply.cost;
+    document.getElementById('editSupplyQuantity').value = supply.quantity;
+    document.getElementById('editSupplyUnit').value = supply.unit;
+
+    openModal('editSupplyModal');
+}
+
+async function updateSupply(event) {
+    event.preventDefault();
+
+    const supplyId = document.getElementById('editSupplyId').value;
+    const form = document.getElementById('editSupplyForm');
+    const formData = new FormData(form);
+
+    const data = {
+        name: formData.get('name'),
+        cost: parseFloat(formData.get('cost')),
+        quantity: parseFloat(formData.get('quantity')),
+        unit: formData.get('unit')
+    };
+
+    try {
+        const result = await putJSON(`/api/supplies/${supplyId}`, data);
+
+        if (result.success) {
+            showAlert('Supply updated successfully!', 'success');
+            form.reset();
+            closeModal('editSupplyModal');
+            await loadSupplies();
+        }
+    } catch (error) {
+        console.error('Error updating supply:', error);
+    }
+}
+
+async function deleteSupply(supplyId) {
+    if (!confirm('Are you sure you want to delete this supply?')) {
+        return;
+    }
+
+    try {
+        await deleteAPI(`/api/supplies/${supplyId}`);
+        showAlert('Supply deleted successfully!', 'success');
+        await loadSupplies();
+    } catch (error) {
+        console.error('Error deleting supply:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadSupplies);
+</script>
+{% endblock %}

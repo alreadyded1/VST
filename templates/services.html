@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+
+{% block title %}Service Records - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Service Records</h1>
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Service History</h2>
+        <button class="btn btn-primary" onclick="openModal('addServiceModal')">Add Service Record</button>
+    </div>
+
+    <div class="search-container">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search services by provider, comments, or repairs..." onkeyup="searchServices()">
+    </div>
+
+    <div class="table-container">
+        <table id="servicesTable">
+            <thead>
+                <tr>
+                    <th class="sortable">Date</th>
+                    <th class="sortable">Service Provider</th>
+                    <th class="sortable">Labor Cost</th>
+                    <th class="sortable">Supplies Cost</th>
+                    <th class="sortable">Total Cost</th>
+                    <th>Repairs Completed</th>
+                    <th>Comments</th>
+                    <th>Receipt</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="servicesTableBody">
+                <tr>
+                    <td colspan="9" class="text-center">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Service Modal -->
+<div id="addServiceModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Service Record</h3>
+            <button class="close" onclick="closeModal('addServiceModal')">&times;</button>
+        </div>
+        <form id="serviceForm" onsubmit="addService(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="serviceDate">Date *</label>
+                    <input type="date" id="serviceDate" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="serviceCost">Labor Cost *</label>
+                    <input type="number" id="serviceCost" name="cost" step="0.01" min="0" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="serviceProvider">Service Provider *</label>
+                <input type="text" id="serviceProvider" name="service_provider" required>
+            </div>
+
+            <div class="form-group">
+                <label for="repairsCompleted">Repairs Completed</label>
+                <textarea id="repairsCompleted" name="repairs_completed" rows="3"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="serviceComments">Comments</label>
+                <textarea id="serviceComments" name="comments" rows="3"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="serviceReceipt">Receipt</label>
+                <input type="file" id="serviceReceipt" name="receipt" accept="image/*,.pdf" onchange="handleFilePreview(this, 'receiptPreview')">
+                <div id="receiptPreview" class="file-preview"></div>
+            </div>
+
+            <div class="form-group">
+                <label>Supplies Used</label>
+                <div id="suppliesContainer">
+                    <p id="noSupplies">Loading available supplies...</p>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-success">Save Service Record</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allServices = [];
+let availableSupplies = [];
+
+async function loadServices() {
+    try {
+        const services = await fetchAPI('/api/services');
+        allServices = services;
+        displayServices(services);
+        makeSortable(document.getElementById('servicesTable'));
+    } catch (error) {
+        console.error('Error loading services:', error);
+        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Error loading services</td></tr>';
+    }
+}
+
+async function loadSupplies() {
+    try {
+        availableSupplies = await fetchAPI('/api/supplies');
+        displaySuppliesCheckboxes();
+    } catch (error) {
+        console.error('Error loading supplies:', error);
+    }
+}
+
+function displaySuppliesCheckboxes() {
+    const container = document.getElementById('suppliesContainer');
+
+    if (availableSupplies.length === 0) {
+        container.innerHTML = '<p id="noSupplies">No supplies available. <a href="/supplies">Add supplies</a> first.</p>';
+        return;
+    }
+
+    let html = '<div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 5px;">';
+
+    availableSupplies.forEach(supply => {
+        html += `
+            <div style="margin-bottom: 10px;">
+                <label style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" class="supply-check" data-supply-id="${supply.id}" data-supply-cost="${supply.cost}" onchange="toggleSupplyQuantity(${supply.id})">
+                    <span>${supply.name} (${supply.quantity} ${supply.unit} available @ ${formatCurrency(supply.cost)} each)</span>
+                </label>
+                <div id="supply-quantity-${supply.id}" style="display: none; margin-left: 30px; margin-top: 5px;">
+                    <input type="number" id="quantity-${supply.id}" min="0.1" max="${supply.quantity}" step="0.1" value="1" style="width: 100px; padding: 5px;">
+                    <span>${supply.unit} used</span>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function toggleSupplyQuantity(supplyId) {
+    const checkbox = document.querySelector(`.supply-check[data-supply-id="${supplyId}"]`);
+    const quantityDiv = document.getElementById(`supply-quantity-${supplyId}`);
+
+    if (checkbox.checked) {
+        quantityDiv.style.display = 'block';
+    } else {
+        quantityDiv.style.display = 'none';
+    }
+}
+
+function displayServices(services) {
+    const tbody = document.getElementById('servicesTableBody');
+
+    if (services.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
+        return;
+    }
+
+    let html = '';
+    services.forEach(service => {
+        const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
+        html += `
+            <tr>
+                <td>${formatDate(service.date)}</td>
+                <td>${service.service_provider}</td>
+                <td>${formatCurrency(service.cost)}</td>
+                <td>${formatCurrency(service.supplies_cost || 0)}</td>
+                <td>${formatCurrency(totalCost)}</td>
+                <td>${service.repairs_completed || 'N/A'}</td>
+                <td>${service.comments || 'N/A'}</td>
+                <td>
+                    ${service.receipt_path ? `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-small btn-secondary">View</a>` : 'N/A'}
+                </td>
+                <td>
+                    <button class="btn btn-small btn-danger" onclick="deleteService(${service.id})">Delete</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+function searchServices() {
+    const query = document.getElementById('searchInput').value.toLowerCase();
+
+    if (!query) {
+        displayServices(allServices);
+        return;
+    }
+
+    const filtered = allServices.filter(service => {
+        return (service.service_provider && service.service_provider.toLowerCase().includes(query)) ||
+               (service.comments && service.comments.toLowerCase().includes(query)) ||
+               (service.repairs_completed && service.repairs_completed.toLowerCase().includes(query));
+    });
+
+    displayServices(filtered);
+}
+
+async function addService(event) {
+    event.preventDefault();
+
+    const form = document.getElementById('serviceForm');
+    const formData = new FormData(form);
+
+    // Collect selected supplies
+    const selectedSupplies = [];
+    const checkboxes = document.querySelectorAll('.supply-check:checked');
+
+    checkboxes.forEach(checkbox => {
+        const supplyId = checkbox.dataset.supplyId;
+        const quantity = parseFloat(document.getElementById(`quantity-${supplyId}`).value);
+
+        selectedSupplies.push({
+            id: parseInt(supplyId),
+            quantity: quantity
+        });
+    });
+
+    formData.append('supplies', JSON.stringify(selectedSupplies));
+
+    try {
+        const result = await postFormData('/api/services', formData);
+
+        if (result.success) {
+            showAlert('Service record added successfully!', 'success');
+            form.reset();
+            document.getElementById('receiptPreview').textContent = '';
+            closeModal('addServiceModal');
+            await loadServices();
+            await loadSupplies(); // Reload supplies to update quantities
+        }
+    } catch (error) {
+        console.error('Error adding service:', error);
+    }
+}
+
+async function deleteService(serviceId) {
+    if (!confirm('Are you sure you want to delete this service record?')) {
+        return;
+    }
+
+    try {
+        await deleteAPI(`/api/services/${serviceId}`);
+        showAlert('Service record deleted successfully!', 'success');
+        await loadServices();
+    } catch (error) {
+        console.error('Error deleting service:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadServices();
+    loadSupplies();
+
+    // Set default date to today
+    document.getElementById('serviceDate').valueAsDate = new Date();
+});
+</script>
+{% endblock %}

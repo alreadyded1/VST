@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block title %}Service Reminders - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Service Reminders</h1>
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Active Reminders</h2>
+        <button class="btn btn-primary" onclick="openModal('addReminderModal')">Add Reminder</button>
+    </div>
+
+    <div id="activeReminders">
+        <p>Loading...</p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Completed Reminders</h2>
+    <div id="completedReminders">
+        <p>Loading...</p>
+    </div>
+</div>
+
+<!-- Add Reminder Modal -->
+<div id="addReminderModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Service Reminder</h3>
+            <button class="close" onclick="closeModal('addReminderModal')">&times;</button>
+        </div>
+        <form id="reminderForm" onsubmit="addReminder(event)">
+            <div class="form-group">
+                <label for="serviceType">Service Type *</label>
+                <input type="text" id="serviceType" name="service_type" placeholder="e.g., Oil Change, Tire Rotation" required>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="dueDate">Due Date</label>
+                    <input type="date" id="dueDate" name="due_date">
+                </div>
+                <div class="form-group">
+                    <label for="dueMileage">Due Mileage</label>
+                    <input type="number" id="dueMileage" name="due_mileage" min="0" placeholder="e.g., 50000">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="reminderNotes">Notes</label>
+                <textarea id="reminderNotes" name="notes" rows="3" placeholder="Additional information..."></textarea>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>Note:</strong> You can set a due date, due mileage, or both.
+            </div>
+
+            <button type="submit" class="btn btn-success">Add Reminder</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allReminders = [];
+
+async function loadReminders() {
+    try {
+        const reminders = await fetchAPI('/api/reminders');
+        allReminders = reminders;
+        displayReminders(reminders);
+    } catch (error) {
+        console.error('Error loading reminders:', error);
+        document.getElementById('activeReminders').innerHTML = '<p>Error loading reminders</p>';
+    }
+}
+
+function displayReminders(reminders) {
+    const activeReminders = reminders.filter(r => !r.completed);
+    const completedReminders = reminders.filter(r => r.completed);
+
+    displayActiveReminders(activeReminders);
+    displayCompletedReminders(completedReminders);
+}
+
+function displayActiveReminders(reminders) {
+    const container = document.getElementById('activeReminders');
+
+    if (reminders.length === 0) {
+        container.innerHTML = '<p>No active reminders. Click "Add Reminder" to create one.</p>';
+        return;
+    }
+
+    let html = '';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    reminders.forEach(reminder => {
+        let isOverdue = false;
+        if (reminder.due_date) {
+            const dueDate = new Date(reminder.due_date);
+            dueDate.setHours(0, 0, 0, 0);
+            isOverdue = dueDate < today;
+        }
+
+        const className = isOverdue ? 'reminder-item overdue' : 'reminder-item';
+
+        html += `
+            <div class="${className}">
+                <div class="reminder-header">
+                    <span class="reminder-title">${reminder.service_type}</span>
+                    <div class="flex gap-1">
+                        ${isOverdue ? '<span style="color: var(--danger-color); font-weight: bold; margin-right: 10px;">OVERDUE</span>' : ''}
+                        <button class="btn btn-small btn-success" onclick="markComplete(${reminder.id})">Mark Complete</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteReminder(${reminder.id})">Delete</button>
+                    </div>
+                </div>
+                ${reminder.due_date ? `<p><strong>Due Date:</strong> ${formatDate(reminder.due_date)}</p>` : ''}
+                ${reminder.due_mileage ? `<p><strong>Due at:</strong> ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
+                ${reminder.notes ? `<p><strong>Notes:</strong> ${reminder.notes}</p>` : ''}
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function displayCompletedReminders(reminders) {
+    const container = document.getElementById('completedReminders');
+
+    if (reminders.length === 0) {
+        container.innerHTML = '<p>No completed reminders.</p>';
+        return;
+    }
+
+    let html = '';
+
+    reminders.forEach(reminder => {
+        html += `
+            <div class="reminder-item completed">
+                <div class="reminder-header">
+                    <span class="reminder-title">${reminder.service_type}</span>
+                    <div class="flex gap-1">
+                        <button class="btn btn-small btn-secondary" onclick="markIncomplete(${reminder.id})">Mark Incomplete</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteReminder(${reminder.id})">Delete</button>
+                    </div>
+                </div>
+                ${reminder.due_date ? `<p><strong>Due Date:</strong> ${formatDate(reminder.due_date)}</p>` : ''}
+                ${reminder.due_mileage ? `<p><strong>Due at:</strong> ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
+                ${reminder.notes ? `<p><strong>Notes:</strong> ${reminder.notes}</p>` : ''}
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+async function addReminder(event) {
+    event.preventDefault();
+
+    const form = document.getElementById('reminderForm');
+    const formData = new FormData(form);
+
+    const data = {
+        service_type: formData.get('service_type'),
+        due_date: formData.get('due_date') || null,
+        due_mileage: formData.get('due_mileage') ? parseInt(formData.get('due_mileage')) : null,
+        notes: formData.get('notes') || ''
+    };
+
+    // Validate that at least one due field is set
+    if (!data.due_date && !data.due_mileage) {
+        showAlert('Please set either a due date or due mileage.', 'warning');
+        return;
+    }
+
+    try {
+        const result = await postJSON('/api/reminders', data);
+
+        if (result.success) {
+            showAlert('Reminder added successfully!', 'success');
+            form.reset();
+            closeModal('addReminderModal');
+            await loadReminders();
+        }
+    } catch (error) {
+        console.error('Error adding reminder:', error);
+    }
+}
+
+async function markComplete(reminderId) {
+    try {
+        await putJSON(`/api/reminders/${reminderId}`, { completed: 1 });
+        showAlert('Reminder marked as complete!', 'success');
+        await loadReminders();
+    } catch (error) {
+        console.error('Error updating reminder:', error);
+    }
+}
+
+async function markIncomplete(reminderId) {
+    try {
+        await putJSON(`/api/reminders/${reminderId}`, { completed: 0 });
+        showAlert('Reminder marked as incomplete!', 'success');
+        await loadReminders();
+    } catch (error) {
+        console.error('Error updating reminder:', error);
+    }
+}
+
+async function deleteReminder(reminderId) {
+    if (!confirm('Are you sure you want to delete this reminder?')) {
+        return;
+    }
+
+    try {
+        await deleteAPI(`/api/reminders/${reminderId}`);
+        showAlert('Reminder deleted successfully!', 'success');
+        await loadReminders();
+    } catch (error) {
+        console.error('Error deleting reminder:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadReminders);
+</script>
+{% endblock %}
