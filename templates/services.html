@@ -8,7 +8,7 @@
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Service History</h2>
-        <button class="btn btn-primary" onclick="openModal('addServiceModal')">Add Service Record</button>
+        <button class="btn btn-primary" onclick="openAddServiceModal()">Add Service Record</button>
     </div>
 
     <div class="search-container">
@@ -81,8 +81,28 @@
 
             <div class="form-group">
                 <label>Supplies Used</label>
-                <div id="suppliesContainer">
-                    <p id="noSupplies">Loading available supplies...</p>
+                <div style="margin-bottom: 1rem;">
+                    <div style="display: grid; grid-template-columns: 1fr 150px 100px; gap: 10px; align-items: end;">
+                        <div>
+                            <label for="supplySelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Select Supply</label>
+                            <select id="supplySelect" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                                <option value="">-- Select a supply --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="supplyQuantity" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Quantity</label>
+                            <input type="number" id="supplyQuantity" min="0.1" step="0.1" value="1" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="addSupplyToList()" style="padding: 0.5rem 1rem;">Add</button>
+                    </div>
+                </div>
+
+                <div id="suppliesListContainer" style="display: none; margin-top: 1rem;">
+                    <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">Supplies to be used:</h4>
+                    <div id="suppliesList" style="background: #f8f9fa; padding: 1rem; border-radius: 5px; border: 1px solid var(--border-color);"></div>
+                    <div style="margin-top: 0.5rem; text-align: right; font-weight: bold; font-size: 1.1rem;">
+                        Total Supplies Cost: <span id="totalSuppliesCost">$0.00</span>
+                    </div>
                 </div>
             </div>
 
@@ -97,6 +117,7 @@
 let allServices = [];
 let availableSupplies = [];
 let currentEditServiceId = null;
+let selectedSupplies = []; // Track supplies to be used in this service
 
 async function loadServices() {
     const vehicleId = getCurrentVehicleId();
@@ -124,50 +145,126 @@ async function loadSupplies() {
 
     try {
         availableSupplies = await fetchAPI(`/api/supplies?vehicle_id=${vehicleId}`);
-        displaySuppliesCheckboxes();
+        populateSuppliesDropdown();
     } catch (error) {
         console.error('Error loading supplies:', error);
     }
 }
 
-function displaySuppliesCheckboxes() {
-    const container = document.getElementById('suppliesContainer');
+function populateSuppliesDropdown() {
+    const select = document.getElementById('supplySelect');
+
+    // Clear existing options except the first one
+    select.innerHTML = '<option value="">-- Select a supply --</option>';
 
     if (availableSupplies.length === 0) {
-        container.innerHTML = '<p id="noSupplies">No supplies available. <a href="/supplies">Add supplies</a> first.</p>';
+        select.innerHTML = '<option value="">No supplies available</option>';
+        select.disabled = true;
         return;
     }
 
-    let html = '<div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 5px;">';
-
+    select.disabled = false;
     availableSupplies.forEach(supply => {
+        const option = document.createElement('option');
+        option.value = supply.id;
+        option.textContent = `${supply.name} (${supply.quantity} ${supply.unit} @ ${formatCurrency(supply.cost)} each)`;
+        option.dataset.supplyName = supply.name;
+        option.dataset.supplyCost = supply.cost;
+        option.dataset.supplyUnit = supply.unit;
+        option.dataset.supplyMaxQty = supply.quantity;
+        select.appendChild(option);
+    });
+}
+
+function addSupplyToList() {
+    const select = document.getElementById('supplySelect');
+    const quantityInput = document.getElementById('supplyQuantity');
+
+    if (!select.value) {
+        showAlert('Please select a supply', 'warning');
+        return;
+    }
+
+    const selectedOption = select.options[select.selectedIndex];
+    const supplyId = parseInt(select.value);
+    const quantity = parseFloat(quantityInput.value);
+    const maxQty = parseFloat(selectedOption.dataset.supplyMaxQty);
+
+    if (quantity <= 0) {
+        showAlert('Quantity must be greater than 0', 'warning');
+        return;
+    }
+
+    if (quantity > maxQty) {
+        showAlert(`Only ${maxQty} ${selectedOption.dataset.supplyUnit} available`, 'warning');
+        return;
+    }
+
+    // Check if supply already added
+    const existingIndex = selectedSupplies.findIndex(s => s.id === supplyId);
+    if (existingIndex >= 0) {
+        selectedSupplies[existingIndex].quantity = quantity;
+    } else {
+        selectedSupplies.push({
+            id: supplyId,
+            name: selectedOption.dataset.supplyName,
+            quantity: quantity,
+            cost: parseFloat(selectedOption.dataset.supplyCost),
+            unit: selectedOption.dataset.supplyUnit
+        });
+    }
+
+    updateSuppliesList();
+
+    // Reset form
+    select.value = '';
+    quantityInput.value = 1;
+}
+
+function removeSupplyFromList(supplyId) {
+    selectedSupplies = selectedSupplies.filter(s => s.id !== supplyId);
+    updateSuppliesList();
+}
+
+function clearSuppliesList() {
+    selectedSupplies = [];
+    updateSuppliesList();
+    document.getElementById('supplySelect').value = '';
+    document.getElementById('supplyQuantity').value = 1;
+}
+
+function updateSuppliesList() {
+    const container = document.getElementById('suppliesListContainer');
+    const listDiv = document.getElementById('suppliesList');
+    const totalCostSpan = document.getElementById('totalSuppliesCost');
+
+    if (selectedSupplies.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'block';
+
+    let html = '';
+    let totalCost = 0;
+
+    selectedSupplies.forEach(supply => {
+        const itemCost = supply.cost * supply.quantity;
+        totalCost += itemCost;
+
         html += `
-            <div style="margin-bottom: 10px;">
-                <label style="display: flex; align-items: center; gap: 10px;">
-                    <input type="checkbox" class="supply-check" data-supply-id="${supply.id}" data-supply-cost="${supply.cost}" onchange="toggleSupplyQuantity(${supply.id})">
-                    <span>${supply.name} (${supply.quantity} ${supply.unit} available @ ${formatCurrency(supply.cost)} each)</span>
-                </label>
-                <div id="supply-quantity-${supply.id}" style="display: none; margin-left: 30px; margin-top: 5px;">
-                    <input type="number" id="quantity-${supply.id}" min="0.1" max="${supply.quantity}" step="0.1" value="1" style="width: 100px; padding: 5px;">
-                    <span>${supply.unit} used</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); margin-bottom: 0.5rem;">
+                <div>
+                    <strong>${supply.name}</strong><br>
+                    <small>${supply.quantity} ${supply.unit} × ${formatCurrency(supply.cost)} = ${formatCurrency(itemCost)}</small>
                 </div>
+                <button type="button" class="btn btn-small btn-danger" onclick="removeSupplyFromList(${supply.id})">Remove</button>
             </div>
         `;
     });
 
-    html += '</div>';
-    container.innerHTML = html;
-}
-
-function toggleSupplyQuantity(supplyId) {
-    const checkbox = document.querySelector(`.supply-check[data-supply-id="${supplyId}"]`);
-    const quantityDiv = document.getElementById(`supply-quantity-${supplyId}`);
-
-    if (checkbox.checked) {
-        quantityDiv.style.display = 'block';
-    } else {
-        quantityDiv.style.display = 'none';
-    }
+    listDiv.innerHTML = html;
+    totalCostSpan.textContent = formatCurrency(totalCost);
 }
 
 function displayServices(services) {
@@ -228,6 +325,9 @@ async function editService(serviceId) {
 
         currentEditServiceId = serviceId;
 
+        // Clear supplies list when editing
+        clearSuppliesList();
+
         // Populate form
         document.getElementById('serviceDate').value = service.date;
         document.getElementById('serviceCost').value = service.cost;
@@ -244,6 +344,16 @@ async function editService(serviceId) {
     }
 }
 
+function openAddServiceModal() {
+    clearSuppliesList();
+    document.getElementById('serviceForm').reset();
+    document.getElementById('receiptPreview').textContent = '';
+    document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
+    currentEditServiceId = null;
+    document.getElementById('serviceDate').valueAsDate = new Date();
+    openModal('addServiceModal');
+}
+
 async function addService(event) {
     event.preventDefault();
 
@@ -257,21 +367,13 @@ async function addService(event) {
     const formData = new FormData(form);
     formData.append('vehicle_id', vehicleId);
 
-    // Collect selected supplies
-    const selectedSupplies = [];
-    const checkboxes = document.querySelectorAll('.supply-check:checked');
+    // Add selected supplies (use the global selectedSupplies array)
+    const suppliesToSend = selectedSupplies.map(s => ({
+        id: s.id,
+        quantity: s.quantity
+    }));
 
-    checkboxes.forEach(checkbox => {
-        const supplyId = checkbox.dataset.supplyId;
-        const quantity = parseFloat(document.getElementById(`quantity-${supplyId}`).value);
-
-        selectedSupplies.push({
-            id: parseInt(supplyId),
-            quantity: quantity
-        });
-    });
-
-    formData.append('supplies', JSON.stringify(selectedSupplies));
+    formData.append('supplies', JSON.stringify(suppliesToSend));
 
     try {
         let result;
@@ -294,6 +396,7 @@ async function addService(event) {
             document.getElementById('receiptPreview').textContent = '';
             document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
             currentEditServiceId = null;
+            clearSuppliesList(); // Clear the supplies list
             closeModal('addServiceModal');
             await loadServices();
             await loadSupplies(); // Reload supplies to update quantities
