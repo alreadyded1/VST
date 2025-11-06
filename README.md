@@ -86,7 +86,7 @@ apt-get install -y git
 
 # Clone or upload this repository to the container
 # Option A: If using git
-git clone <repository-url> /tmp/vehicle-tracker
+git clone https://github.com/alreadyded1/VST.git /tmp/vehicle-tracker
 cd /tmp/vehicle-tracker
 
 # Option B: If copying files manually, upload to /tmp/vehicle-tracker
