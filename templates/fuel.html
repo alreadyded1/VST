@@ -8,9 +8,8 @@
 <div class="card">
     <h2>Fuel Economy Statistics</h2>
     <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
-        <div class="stat-card">
-            <h3>Average MPG</h3>
-            <div class="stat-value" id="avgMpg">0</div>
+        <div class="stat-card" style="padding: 2rem 0 4rem 0;">
+            <div id="avgMpgGauge"></div>
         </div>
         <div class="stat-card">
             <h3>Total Fuel Purchased</h3>
@@ -20,9 +19,8 @@
             <h3>Total Spent</h3>
             <div class="stat-value" id="totalSpent">$0.00</div>
         </div>
-        <div class="stat-card">
-            <h3>Best MPG</h3>
-            <div class="stat-value" id="bestMpg">0</div>
+        <div class="stat-card" style="padding: 2rem 0 4rem 0;">
+            <div id="bestMpgGauge"></div>
         </div>
     </div>
 </div>
@@ -103,6 +101,40 @@
 
 {% block scripts %}
 <script>
+// Create Fuel Gauge Component
+function createFuelGauge(containerId, value, label, maxValue = 50) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Clamp value between 0 and maxValue
+    const clampedValue = Math.max(0, Math.min(value, maxValue));
+
+    // Calculate needle rotation (-90deg to 90deg, total 180deg)
+    const percentage = clampedValue / maxValue;
+    const rotation = -90 + (percentage * 180);
+
+    // Determine color based on value
+    let color = '#27ae60'; // Green
+    if (percentage < 0.3) {
+        color = '#e74c3c'; // Red
+    } else if (percentage < 0.5) {
+        color = '#f39c12'; // Orange
+    }
+
+    container.innerHTML = `
+        <div class="fuel-gauge">
+            <div class="fuel-gauge-arc">
+                <div class="fuel-gauge-background"></div>
+                <div class="fuel-gauge-fill" style="border-color: ${color}; clip-path: inset(0 ${100 - (percentage * 100)}% 0 0);"></div>
+                <div class="fuel-gauge-needle" style="transform: translateX(-50%) rotate(${rotation}deg);"></div>
+                <div class="fuel-gauge-center"></div>
+            </div>
+            <div class="fuel-gauge-value">${value.toFixed(1)}</div>
+            <div class="fuel-gauge-label">${label}</div>
+        </div>
+    `;
+}
+
 let allFuelRecords = [];
 
 async function loadFuelRecords() {
@@ -156,10 +188,10 @@ function displayFuelRecords(records) {
 
 function calculateStats(records) {
     if (records.length === 0) {
-        document.getElementById('avgMpg').textContent = '0';
+        createFuelGauge('avgMpgGauge', 0, 'Average MPG', 50);
         document.getElementById('totalGallons').textContent = '0 gal';
         document.getElementById('totalSpent').textContent = '$0.00';
-        document.getElementById('bestMpg').textContent = '0';
+        createFuelGauge('bestMpgGauge', 0, 'Best MPG', 50);
         return;
     }
 
@@ -175,14 +207,14 @@ function calculateStats(records) {
     const recordsWithMpg = records.filter(r => r.mpg !== null && r.mpg > 0);
     if (recordsWithMpg.length > 0) {
         const avgMpg = recordsWithMpg.reduce((sum, r) => sum + r.mpg, 0) / recordsWithMpg.length;
-        document.getElementById('avgMpg').textContent = avgMpg.toFixed(2);
+        createFuelGauge('avgMpgGauge', avgMpg, 'Average MPG', 50);
 
         // Find best MPG
         const bestMpg = Math.max(...recordsWithMpg.map(r => r.mpg));
-        document.getElementById('bestMpg').textContent = bestMpg.toFixed(2);
+        createFuelGauge('bestMpgGauge', bestMpg, 'Best MPG', 50);
     } else {
-        document.getElementById('avgMpg').textContent = 'N/A';
-        document.getElementById('bestMpg').textContent = 'N/A';
+        createFuelGauge('avgMpgGauge', 0, 'Average MPG', 50);
+        createFuelGauge('bestMpgGauge', 0, 'Best MPG', 50);
     }
 }
 

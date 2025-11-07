@@ -157,9 +157,8 @@ async function saveVehicle(event) {
     try {
         let result;
         if (vehicleId) {
-            // Update existing vehicle using PUT with FormData workaround
-            formData.append('_method', 'PUT');
-            result = await postFormData(`/api/vehicle/${vehicleId}`, formData);
+            // Update existing vehicle using PUT
+            result = await putFormData(`/api/vehicle/${vehicleId}`, formData);
         } else {
             // Add new vehicle
             result = await postFormData('/api/vehicle', formData);

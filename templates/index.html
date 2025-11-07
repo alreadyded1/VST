@@ -14,9 +14,8 @@
         <h3>Total Spent</h3>
         <div class="stat-value" id="totalSpent">$0.00</div>
     </div>
-    <div class="stat-card">
-        <h3>Average MPG</h3>
-        <div class="stat-value" id="avgMpg">0</div>
+    <div class="stat-card" style="padding: 2rem 0 4rem 0;">
+        <div id="avgMpgGauge"></div>
     </div>
     <div class="stat-card">
         <h3>Pending Reminders</h3>
@@ -41,6 +40,40 @@
 
 {% block scripts %}
 <script>
+// Create Fuel Gauge Component
+function createFuelGauge(containerId, value, label, maxValue = 50) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Clamp value between 0 and maxValue
+    const clampedValue = Math.max(0, Math.min(value, maxValue));
+
+    // Calculate needle rotation (-90deg to 90deg, total 180deg)
+    const percentage = clampedValue / maxValue;
+    const rotation = -90 + (percentage * 180);
+
+    // Determine color based on value
+    let color = '#27ae60'; // Green
+    if (percentage < 0.3) {
+        color = '#e74c3c'; // Red
+    } else if (percentage < 0.5) {
+        color = '#f39c12'; // Orange
+    }
+
+    container.innerHTML = `
+        <div class="fuel-gauge">
+            <div class="fuel-gauge-arc">
+                <div class="fuel-gauge-background"></div>
+                <div class="fuel-gauge-fill" style="border-color: ${color}; clip-path: inset(0 ${100 - (percentage * 100)}% 0 0);"></div>
+                <div class="fuel-gauge-needle" style="transform: translateX(-50%) rotate(${rotation}deg);"></div>
+                <div class="fuel-gauge-center"></div>
+            </div>
+            <div class="fuel-gauge-value">${value.toFixed(1)}</div>
+            <div class="fuel-gauge-label">${label}</div>
+        </div>
+    `;
+}
+
 async function loadDashboard() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
@@ -54,7 +87,7 @@ async function loadDashboard() {
         const stats = await fetchAPI(`/api/stats?vehicle_id=${vehicleId}`);
         document.getElementById('totalServices').textContent = stats.total_services;
         document.getElementById('totalSpent').textContent = formatCurrency(stats.total_spent);
-        document.getElementById('avgMpg').textContent = stats.avg_mpg.toFixed(1);
+        createFuelGauge('avgMpgGauge', stats.avg_mpg, 'Average MPG', 50);
         document.getElementById('pendingReminders').textContent = stats.pending_reminders;
 
         // Load recent services

@@ -348,3 +348,22 @@ async function putJSON(url, data) {
         throw error;
     }
 }
+
+async function putFormData(url, formData) {
+    try {
+        const response = await fetch(url, {
+            method: 'PUT',
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error('API Error:', error);
+        showAlert('An error occurred. Please try again.', 'danger');
+        throw error;
+    }
+}
