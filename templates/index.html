@@ -45,13 +45,15 @@ function createFuelGauge(containerId, value, label, bestMpg = null) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    // Determine max value for gauge scale
-    const maxValue = bestMpg ? Math.max(bestMpg * 1.1, 50) : 50;
+    // Use best MPG as max value (right side of gauge = best MPG)
+    // If no best MPG, use 50 as default
+    const maxValue = bestMpg && bestMpg > 0 ? bestMpg : 50;
 
     // Clamp value between 0 and maxValue
     const clampedValue = Math.max(0, Math.min(value, maxValue));
 
     // Calculate needle rotation (-90deg to 90deg, total 180deg)
+    // When value = maxValue (best MPG), needle points all the way right
     const percentage = clampedValue / maxValue;
     const rotation = -90 + (percentage * 180);
 
