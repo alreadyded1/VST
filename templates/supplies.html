@@ -77,11 +77,8 @@
                 </select>
             </div>
 
-            <div class="form-group">
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                    <input type="checkbox" id="remindReorder" name="remind_reorder" style="width: auto; cursor: pointer;">
-                    <span>Remind me to re-order</span>
-                </label>
+            <div class="alert alert-info">
+                <strong>Note:</strong> A reminder will automatically be created when the quantity reaches 1.
             </div>
 
             <button type="submit" class="btn btn-success">Add Supply</button>
@@ -219,20 +216,18 @@ async function addSupply(event) {
         const result = await postJSON('/api/supplies', data);
 
         if (result.success) {
-            // Check if reminder checkbox is checked
-            const remindCheckbox = document.getElementById('remindReorder');
-            if (remindCheckbox.checked) {
-                // Create a reminder for this supply
+            // Auto-create reminder if quantity is 1
+            if (data.quantity === 1) {
                 const reminderData = {
                     vehicle_id: vehicleId,
                     service_type: `Re-order ${data.name}${data.brand ? ' (' + data.brand + ')' : ''}`,
-                    notes: `Supply inventory running low. Consider re-ordering.`,
+                    notes: `Supply quantity is at 1. Consider re-ordering soon.`,
                     completed: false
                 };
 
                 try {
                     await postJSON('/api/reminders', reminderData);
-                    showAlert('Supply added and reminder created!', 'success');
+                    showAlert('Supply added and low inventory reminder created!', 'success');
                 } catch (error) {
                     console.error('Error creating reminder:', error);
                     showAlert('Supply added but reminder creation failed', 'warning');
@@ -268,6 +263,7 @@ function editSupply(supplyId) {
 async function updateSupply(event) {
     event.preventDefault();
 
+    const vehicleId = getCurrentVehicleId();
     const supplyId = document.getElementById('editSupplyId').value;
     const form = document.getElementById('editSupplyForm');
     const formData = new FormData(form);
@@ -284,7 +280,26 @@ async function updateSupply(event) {
         const result = await putJSON(`/api/supplies/${supplyId}`, data);
 
         if (result.success) {
-            showAlert('Supply updated successfully!', 'success');
+            // Auto-create reminder if quantity is 1
+            if (data.quantity === 1) {
+                const reminderData = {
+                    vehicle_id: vehicleId,
+                    service_type: `Re-order ${data.name}${data.brand ? ' (' + data.brand + ')' : ''}`,
+                    notes: `Supply quantity is at 1. Consider re-ordering soon.`,
+                    completed: false
+                };
+
+                try {
+                    await postJSON('/api/reminders', reminderData);
+                    showAlert('Supply updated and low inventory reminder created!', 'success');
+                } catch (error) {
+                    console.error('Error creating reminder:', error);
+                    showAlert('Supply updated but reminder creation failed', 'warning');
+                }
+            } else {
+                showAlert('Supply updated successfully!', 'success');
+            }
+
             form.reset();
             closeModal('editSupplyModal');
             await loadSupplies();

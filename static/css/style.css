@@ -176,7 +176,7 @@ nav {
 }
 
 .stat-card {
-    padding: 1rem 0;
+    padding: 1rem 0 0.5rem 0;
     text-align: center;
     border-bottom: 3px solid var(--secondary-color);
 }
@@ -194,6 +194,8 @@ nav {
     font-size: 2.5rem;
     font-weight: 700;
     color: var(--dark-text);
+    line-height: 1;
+    margin-bottom: 0.3rem;
 }
 
 /* Forms */

@@ -41,9 +41,12 @@
 {% block scripts %}
 <script>
 // Create Fuel Gauge Component
-function createFuelGauge(containerId, value, label, maxValue = 50) {
+function createFuelGauge(containerId, value, label, bestMpg = null) {
     const container = document.getElementById(containerId);
     if (!container) return;
+
+    // Determine max value for gauge scale
+    const maxValue = bestMpg ? Math.max(bestMpg * 1.1, 50) : 50;
 
     // Clamp value between 0 and maxValue
     const clampedValue = Math.max(0, Math.min(value, maxValue));
@@ -52,12 +55,18 @@ function createFuelGauge(containerId, value, label, maxValue = 50) {
     const percentage = clampedValue / maxValue;
     const rotation = -90 + (percentage * 180);
 
-    // Determine color based on value
-    let color = '#27ae60'; // Green
-    if (percentage < 0.3) {
-        color = '#e74c3c'; // Red
-    } else if (percentage < 0.5) {
-        color = '#f39c12'; // Orange
+    // Determine color based on best MPG if available
+    let color = '#27ae60'; // Green default
+    if (bestMpg && bestMpg > 0 && value > 0) {
+        const lossPercentage = ((bestMpg - value) / bestMpg) * 100;
+
+        if (lossPercentage <= 3) {
+            color = '#27ae60'; // Green - within 3% of best
+        } else if (lossPercentage <= 11) {
+            color = '#f39c12'; // Orange - 3-11% loss
+        } else {
+            color = '#e74c3c'; // Red - more than 11% loss
+        }
     }
 
     container.innerHTML = `
@@ -68,7 +77,7 @@ function createFuelGauge(containerId, value, label, maxValue = 50) {
                 <div class="fuel-gauge-needle" style="transform: translateX(-50%) rotate(${rotation}deg);"></div>
                 <div class="fuel-gauge-center"></div>
             </div>
-            <div class="fuel-gauge-value">${value.toFixed(1)}</div>
+            <div class="fuel-gauge-value">${value > 0 ? value.toFixed(1) : '0.0'}</div>
             <div class="fuel-gauge-label">${label}</div>
         </div>
     `;
@@ -87,8 +96,15 @@ async function loadDashboard() {
         const stats = await fetchAPI(`/api/stats?vehicle_id=${vehicleId}`);
         document.getElementById('totalServices').textContent = stats.total_services;
         document.getElementById('totalSpent').textContent = formatCurrency(stats.total_spent);
-        createFuelGauge('avgMpgGauge', stats.avg_mpg, 'Average MPG', 50);
         document.getElementById('pendingReminders').textContent = stats.pending_reminders;
+
+        // Load fuel records to get best MPG
+        const fuelRecords = await fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`);
+        const recordsWithMpg = fuelRecords.filter(r => r.mpg !== null && r.mpg > 0);
+        const bestMpg = recordsWithMpg.length > 0 ? Math.max(...recordsWithMpg.map(r => r.mpg)) : null;
+
+        // Create gauge with best MPG for color calculation
+        createFuelGauge('avgMpgGauge', stats.avg_mpg, 'Average MPG', bestMpg);
 
         // Load recent services
         const services = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
