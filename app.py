@@ -1,5 +1,8 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
+from functools import wraps
 import sqlite3
 import os
 from werkzeug.utils import secure_filename
@@ -13,17 +16,57 @@ app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'webp'}
 
 DATABASE = 'instance/vehicle_tracker.db'
 
+# Flask-Login setup
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'Please log in to access this page.'
+
 def get_db():
     """Create database connection"""
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
 
+# User class for Flask-Login
+class User(UserMixin):
+    def __init__(self, id, username, is_admin):
+        self.id = id
+        self.username = username
+        self.is_admin = is_admin
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Load user for Flask-Login"""
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+    db.close()
+    if user:
+        return User(user['id'], user['username'], user['is_admin'])
+    return None
+
+def admin_required(f):
+    """Decorator to require admin privileges"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            return jsonify({'error': 'Admin privileges required'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 def init_db():
     """Initialize database with schema"""
     with app.app_context():
         db = get_db()
         db.executescript('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_admin BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS vehicle (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 manufacturer TEXT NOT NULL,
@@ -104,6 +147,15 @@ def init_db():
             # Column already exists
             pass
 
+        # Create default admin user if no users exist
+        admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
+        if admin_exists['count'] == 0:
+            # Default admin credentials: username=admin, password=admin
+            admin_password_hash = generate_password_hash('admin')
+            db.execute('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)',
+                      ('admin', admin_password_hash, 1))
+            db.commit()
+
         db.commit()
         db.close()
 
@@ -112,46 +164,195 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+# Authentication Routes
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """User login"""
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        data = request.form
+        username = data.get('username')
+        password = data.get('password')
+
+        db = get_db()
+        user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        db.close()
+
+        if user and check_password_hash(user['password_hash'], password):
+            user_obj = User(user['id'], user['username'], user['is_admin'])
+            login_user(user_obj)
+            next_page = request.args.get('next')
+            return redirect(next_page if next_page else url_for('index'))
+        else:
+            flash('Invalid username or password', 'error')
+
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    """User logout"""
+    logout_user()
+    return redirect(url_for('login'))
+
+@app.route('/profile')
+@login_required
+def profile_page():
+    """User profile page"""
+    return render_template('profile.html')
+
+@app.route('/admin')
+@login_required
+@admin_required
+def admin_page():
+    """Admin panel page"""
+    return render_template('admin.html')
+
 # Routes
 @app.route('/')
+@login_required
 def index():
     """Main dashboard"""
     return render_template('index.html')
 
 @app.route('/vehicle')
+@login_required
 def vehicle_page():
     """Vehicle profile page (legacy - redirects to vehicles)"""
     return render_template('vehicles.html')
 
 @app.route('/vehicles')
+@login_required
 def vehicles_page():
     """Vehicles management page"""
     return render_template('vehicles.html')
 
 @app.route('/services')
+@login_required
 def services_page():
     """Service records page"""
     return render_template('services.html')
 
 @app.route('/supplies')
+@login_required
 def supplies_page():
     """Supplies inventory page"""
     return render_template('supplies.html')
 
 @app.route('/fuel')
+@login_required
 def fuel_page():
     """Fuel tracker page"""
     return render_template('fuel.html')
 
 @app.route('/reminders')
+@login_required
 def reminders_page():
     """Service reminders page"""
     return render_template('reminders.html')
 
 # API Endpoints
 
+# User Management APIs
+@app.route('/api/users', methods=['GET'])
+@login_required
+@admin_required
+def get_users():
+    """Get all users (admin only)"""
+    db = get_db()
+    users = db.execute('SELECT id, username, is_admin, created_at FROM users ORDER BY created_at DESC').fetchall()
+    db.close()
+    return jsonify([dict(row) for row in users])
+
+@app.route('/api/users', methods=['POST'])
+@login_required
+@admin_required
+def create_user():
+    """Create new user (admin only)"""
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    is_admin = data.get('is_admin', False)
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+
+    db = get_db()
+    # Check if username already exists
+    existing = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+    if existing:
+        db.close()
+        return jsonify({'error': 'Username already exists'}), 400
+
+    password_hash = generate_password_hash(password)
+    cursor = db.execute('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)',
+                       (username, password_hash, is_admin))
+    user_id = cursor.lastrowid
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'id': user_id})
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_user(user_id):
+    """Delete a user (admin only)"""
+    if user_id == current_user.id:
+        return jsonify({'error': 'Cannot delete your own account'}), 400
+
+    db = get_db()
+    db.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/users/<int:user_id>/reset-password', methods=['POST'])
+@login_required
+@admin_required
+def reset_user_password(user_id):
+    """Reset user password (admin only)"""
+    data = request.json
+    new_password = data.get('password')
+
+    if not new_password:
+        return jsonify({'error': 'New password is required'}), 400
+
+    db = get_db()
+    password_hash = generate_password_hash(new_password)
+    db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, user_id))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """Change own password"""
+    data = request.json
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+
+    if not current_password or not new_password:
+        return jsonify({'error': 'Current and new password are required'}), 400
+
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
+
+    if not check_password_hash(user['password_hash'], current_password):
+        db.close()
+        return jsonify({'error': 'Current password is incorrect'}), 400
+
+    password_hash = generate_password_hash(new_password)
+    db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, current_user.id))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
 # Vehicle endpoints
 @app.route('/api/vehicles', methods=['GET'])
+@login_required
 def get_vehicles():
     """Get all vehicles"""
     db = get_db()
@@ -160,6 +361,7 @@ def get_vehicles():
     return jsonify([dict(row) for row in vehicles])
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['GET'])
+@login_required
 def get_vehicle(vehicle_id):
     """Get specific vehicle profile"""
     db = get_db()
@@ -170,6 +372,7 @@ def get_vehicle(vehicle_id):
     return jsonify(None)
 
 @app.route('/api/vehicle', methods=['POST'])
+@login_required
 def add_vehicle():
     """Add new vehicle"""
     data = request.form
@@ -197,6 +400,7 @@ def add_vehicle():
     return jsonify({'success': True, 'id': vehicle_id})
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['PUT'])
+@login_required
 def update_vehicle(vehicle_id):
     """Update existing vehicle"""
     data = request.form
@@ -230,6 +434,7 @@ def update_vehicle(vehicle_id):
     return jsonify({'success': True})
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['DELETE'])
+@login_required
 def delete_vehicle(vehicle_id):
     """Delete a vehicle"""
     db = get_db()
@@ -245,6 +450,7 @@ def delete_vehicle(vehicle_id):
 
 # Service records endpoints
 @app.route('/api/services', methods=['GET'])
+@login_required
 def get_services():
     """Get all service records for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -276,6 +482,7 @@ def get_services():
     return jsonify([dict(row) for row in services])
 
 @app.route('/api/services/<int:service_id>', methods=['GET'])
+@login_required
 def get_service(service_id):
     """Get a specific service record"""
     db = get_db()
@@ -294,6 +501,7 @@ def get_service(service_id):
     return jsonify(None), 404
 
 @app.route('/api/services/search', methods=['GET'])
+@login_required
 def search_services():
     """Search service records"""
     query = request.args.get('q', '').lower()
@@ -333,6 +541,7 @@ def search_services():
     return jsonify([dict(row) for row in services])
 
 @app.route('/api/services', methods=['POST'])
+@login_required
 def add_service():
     """Add new service record"""
     data = request.form
@@ -379,6 +588,7 @@ def add_service():
     return jsonify({'success': True, 'id': service_id})
 
 @app.route('/api/services/<int:service_id>', methods=['PUT'])
+@login_required
 def update_service(service_id):
     """Update existing service record"""
     data = request.form
@@ -431,6 +641,7 @@ def update_service(service_id):
     return jsonify({'success': True})
 
 @app.route('/api/services/<int:service_id>', methods=['DELETE'])
+@login_required
 def delete_service(service_id):
     """Delete a service record"""
     db = get_db()
@@ -442,6 +653,7 @@ def delete_service(service_id):
 
 # Supplies endpoints
 @app.route('/api/supplies', methods=['GET'])
+@login_required
 def get_supplies():
     """Get all supplies for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -456,6 +668,7 @@ def get_supplies():
     return jsonify([dict(row) for row in supplies])
 
 @app.route('/api/supplies', methods=['POST'])
+@login_required
 def add_supply():
     """Add new supply"""
     data = request.json
@@ -476,6 +689,7 @@ def add_supply():
     return jsonify({'success': True, 'id': supply_id})
 
 @app.route('/api/supplies/<int:supply_id>', methods=['PUT'])
+@login_required
 def update_supply(supply_id):
     """Update supply"""
     data = request.json
@@ -487,6 +701,7 @@ def update_supply(supply_id):
     return jsonify({'success': True})
 
 @app.route('/api/supplies/<int:supply_id>', methods=['DELETE'])
+@login_required
 def delete_supply(supply_id):
     """Delete a supply"""
     db = get_db()
@@ -497,6 +712,7 @@ def delete_supply(supply_id):
 
 # Fuel endpoints
 @app.route('/api/fuel', methods=['GET'])
+@login_required
 def get_fuel_records():
     """Get all fuel records for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -511,6 +727,7 @@ def get_fuel_records():
     return jsonify([dict(row) for row in records])
 
 @app.route('/api/fuel', methods=['POST'])
+@login_required
 def add_fuel_record():
     """Add new fuel record and calculate MPG"""
     data = request.json
@@ -545,6 +762,7 @@ def add_fuel_record():
     return jsonify({'success': True, 'id': record_id, 'mpg': mpg})
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['DELETE'])
+@login_required
 def delete_fuel_record(fuel_id):
     """Delete a fuel record"""
     db = get_db()
@@ -555,6 +773,7 @@ def delete_fuel_record(fuel_id):
 
 # Service reminders endpoints
 @app.route('/api/reminders', methods=['GET'])
+@login_required
 def get_reminders():
     """Get all service reminders for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -569,6 +788,7 @@ def get_reminders():
     return jsonify([dict(row) for row in reminders])
 
 @app.route('/api/reminders', methods=['POST'])
+@login_required
 def add_reminder():
     """Add new service reminder"""
     data = request.json
@@ -590,6 +810,7 @@ def add_reminder():
     return jsonify({'success': True, 'id': reminder_id})
 
 @app.route('/api/reminders/<int:reminder_id>', methods=['PUT'])
+@login_required
 def update_reminder(reminder_id):
     """Update reminder completion status"""
     data = request.json
@@ -601,6 +822,7 @@ def update_reminder(reminder_id):
     return jsonify({'success': True})
 
 @app.route('/api/reminders/<int:reminder_id>', methods=['DELETE'])
+@login_required
 def delete_reminder(reminder_id):
     """Delete a reminder"""
     db = get_db()
@@ -611,6 +833,7 @@ def delete_reminder(reminder_id):
 
 # Dashboard stats
 @app.route('/api/stats', methods=['GET'])
+@login_required
 def get_stats():
     """Get dashboard statistics for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')

@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}Profile - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<style>
+    .profile-container {
+        max-width: 600px;
+        margin: 40px auto;
+    }
+    .profile-header {
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    .profile-header h2 {
+        margin: 0 0 10px 0;
+        color: #333;
+    }
+    .profile-header p {
+        margin: 0;
+        color: #666;
+    }
+    .password-form {
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .password-form h3 {
+        margin: 0 0 20px 0;
+        color: #333;
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        color: #333;
+        font-weight: 500;
+    }
+    .form-group input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+    .form-group input:focus {
+        outline: none;
+        border-color: #667eea;
+    }
+    .btn-change-password {
+        padding: 10px 20px;
+        background: #667eea;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.3s;
+    }
+    .btn-change-password:hover {
+        background: #5568d3;
+    }
+    .alert {
+        padding: 12px;
+        margin-bottom: 20px;
+        border-radius: 5px;
+    }
+    .alert-success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+    .alert-error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+</style>
+
+<div class="profile-container">
+    <div class="profile-header">
+        <h2>User Profile</h2>
+        <p><strong>Username:</strong> {{ current_user.username }}</p>
+        <p><strong>Role:</strong> {{ 'Administrator' if current_user.is_admin else 'User' }}</p>
+    </div>
+
+    <div class="password-form">
+        <h3>Change Password</h3>
+        <div id="alertContainer"></div>
+        <form id="passwordForm">
+            <div class="form-group">
+                <label for="currentPassword">Current Password</label>
+                <input type="password" id="currentPassword" name="current_password" required>
+            </div>
+            <div class="form-group">
+                <label for="newPassword">New Password</label>
+                <input type="password" id="newPassword" name="new_password" required minlength="4">
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">Confirm New Password</label>
+                <input type="password" id="confirmPassword" name="confirm_password" required minlength="4">
+            </div>
+            <button type="submit" class="btn-change-password">Change Password</button>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('passwordForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    const alertContainer = document.getElementById('alertContainer');
+
+    // Clear previous alerts
+    alertContainer.innerHTML = '';
+
+    // Validate passwords match
+    if (newPassword !== confirmPassword) {
+        alertContainer.innerHTML = '<div class="alert alert-error">New passwords do not match!</div>';
+        return;
+    }
+
+    // Validate password length
+    if (newPassword.length < 4) {
+        alertContainer.innerHTML = '<div class="alert alert-error">Password must be at least 4 characters long!</div>';
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/change-password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            alertContainer.innerHTML = '<div class="alert alert-success">Password changed successfully!</div>';
+            document.getElementById('passwordForm').reset();
+        } else {
+            alertContainer.innerHTML = `<div class="alert alert-error">${data.error || 'Failed to change password'}</div>`;
+        }
+    } catch (error) {
+        alertContainer.innerHTML = '<div class="alert alert-error">An error occurred. Please try again.</div>';
+    }
+});
+</script>
+{% endblock %}

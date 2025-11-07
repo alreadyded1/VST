@@ -28,6 +28,13 @@
                 <li><a href="/supplies">Supplies</a></li>
                 <li><a href="/fuel">Fuel Tracker</a></li>
                 <li><a href="/reminders">Reminders</a></li>
+                {% if current_user.is_authenticated %}
+                    {% if current_user.is_admin %}
+                        <li><a href="/admin">Admin Panel</a></li>
+                    {% endif %}
+                    <li><a href="/profile">Profile</a></li>
+                    <li><a href="/logout">Logout ({{ current_user.username }})</a></li>
+                {% endif %}
             </ul>
         </div>
     </nav>
