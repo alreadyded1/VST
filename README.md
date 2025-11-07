@@ -92,7 +92,7 @@ apt-get update && apt-get upgrade -y
 apt-get install -y git
 
 # Clone the repository from GitHub
-git clone https://github.com/alreadyded1/VST.git /tmp/vehicle-tracker
+git clone --branch claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC https://github.com/alreadyded1/VST.git /tmp/vehicle-tracker
 cd /tmp/vehicle-tracker
 
 # Run the installation script
@@ -129,7 +129,7 @@ apt-get update
 apt-get install -y python3 python3-pip python3-venv git
 
 # Clone the repository
-git clone https://github.com/alreadyded1/VST.git /opt/vehicle-tracker
+git clone --branch claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC https://github.com/alreadyded1/VST.git /opt/vehicle-tracker
 cd /opt/vehicle-tracker
 
 # Create virtual environment
@@ -214,7 +214,7 @@ When a new version is available, use the automated update script to upgrade your
 
 ```bash
 # Option 1: Download and run update script directly from GitHub
-curl -o /tmp/update.sh https://raw.githubusercontent.com/alreadyded1/VST/main/update.sh
+curl -o /tmp/update.sh https://raw.githubusercontent.com/alreadyded1/VST/claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC/update.sh
 chmod +x /tmp/update.sh
 sudo bash /tmp/update.sh
 ```

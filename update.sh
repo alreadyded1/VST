@@ -50,7 +50,7 @@ if ! command -v git &> /dev/null; then
 fi
 
 # Clone latest code to temp directory
-git clone --depth 1 --branch main "$GITHUB_REPO" "$TEMP_DIR" 2>&1 | grep -v "Cloning into" || true
+git clone --depth 1 --branch claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC "$GITHUB_REPO" "$TEMP_DIR" 2>&1 | grep -v "Cloning into" || true
 
 if [ ! -d "$TEMP_DIR" ]; then
     echo "ERROR: Failed to download updates from GitHub"
