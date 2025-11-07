@@ -5,21 +5,24 @@
 {% block content %}
 <h1>Dashboard</h1>
 
-<div class="stats-grid" id="statsGrid">
-    <div class="stat-card">
-        <h3>Total Services</h3>
-        <div class="stat-value" id="totalServices">0</div>
-    </div>
-    <div class="stat-card">
-        <h3>Total Spent</h3>
-        <div class="stat-value" id="totalSpent">$0.00</div>
-    </div>
-    <div class="stat-card" style="padding: 2rem 0 4rem 0;">
-        <div id="avgMpgGauge"></div>
-    </div>
-    <div class="stat-card">
-        <h3>Pending Reminders</h3>
-        <div class="stat-value" id="pendingReminders">0</div>
+<div class="card">
+    <h2>Vehicle Statistics</h2>
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+            <h3>Total Services</h3>
+            <div class="stat-value" id="totalServices">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Spent</h3>
+            <div class="stat-value" id="totalSpent">$0.00</div>
+        </div>
+        <div class="stat-card" style="padding: 2rem 0 4rem 0;">
+            <div id="avgMpgGauge"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Pending Reminders</h3>
+            <div class="stat-value" id="pendingReminders">0</div>
+        </div>
     </div>
 </div>
 
