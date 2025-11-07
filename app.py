@@ -53,6 +53,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 vehicle_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
+                brand TEXT,
                 cost REAL NOT NULL,
                 quantity INTEGER NOT NULL,
                 unit TEXT DEFAULT 'units',
@@ -94,6 +95,15 @@ def init_db():
                 FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
             );
         ''')
+
+        # Migration: Add brand column to supplies table if it doesn't exist
+        try:
+            db.execute('ALTER TABLE supplies ADD COLUMN brand TEXT')
+            db.commit()
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
         db.commit()
         db.close()
 
@@ -455,10 +465,10 @@ def add_supply():
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
     db = get_db()
-    cursor = db.execute('''INSERT INTO supplies (vehicle_id, name, cost, quantity, unit)
-                          VALUES (?, ?, ?, ?, ?)''',
-                       (vehicle_id, data['name'], data['cost'],
-                        data['quantity'], data.get('unit', 'units')))
+    cursor = db.execute('''INSERT INTO supplies (vehicle_id, name, brand, cost, quantity, unit)
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                       (vehicle_id, data['name'], data.get('brand', ''),
+                        data['cost'], data['quantity'], data.get('unit', 'units')))
 
     db.commit()
     supply_id = cursor.lastrowid
@@ -470,8 +480,8 @@ def update_supply(supply_id):
     """Update supply"""
     data = request.json
     db = get_db()
-    db.execute('''UPDATE supplies SET name=?, cost=?, quantity=?, unit=? WHERE id=?''',
-              (data['name'], data['cost'], data['quantity'], data.get('unit', 'units'), supply_id))
+    db.execute('''UPDATE supplies SET name=?, brand=?, cost=?, quantity=?, unit=? WHERE id=?''',
+              (data['name'], data.get('brand', ''), data['cost'], data['quantity'], data.get('unit', 'units'), supply_id))
     db.commit()
     db.close()
     return jsonify({'success': True})

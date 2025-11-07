@@ -531,6 +531,14 @@ table tr:hover {
         font-size: 14px;
     }
 
+    body.mobile-view .hide-mobile {
+        display: none !important;
+    }
+
+    body.mobile-view input[type="date"] {
+        max-width: 150px;
+    }
+
     .header-content {
         flex-direction: column;
         gap: 0.5rem;

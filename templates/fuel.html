@@ -41,8 +41,8 @@
                     <th class="sortable">Odometer</th>
                     <th class="sortable">Gallons</th>
                     <th class="sortable">Cost</th>
-                    <th class="sortable">Price/Gal</th>
-                    <th>Location</th>
+                    <th class="sortable hide-mobile">Price/Gal</th>
+                    <th class="hide-mobile">Location</th>
                     <th class="sortable">MPG</th>
                     <th>Actions</th>
                 </tr>
@@ -141,8 +141,8 @@ function displayFuelRecords(records) {
                 <td>${record.odometer.toLocaleString()}</td>
                 <td>${record.gallons.toFixed(3)}</td>
                 <td>${formatCurrency(record.cost)}</td>
-                <td>${formatCurrency(pricePerGal)}</td>
-                <td>${record.location}</td>
+                <td class="hide-mobile">${formatCurrency(pricePerGal)}</td>
+                <td class="hide-mobile">${record.location}</td>
                 <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
                 <td>
                     <button class="btn btn-small btn-danger" onclick="deleteFuelRecord(${record.id})">Delete</button>

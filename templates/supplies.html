@@ -16,6 +16,7 @@
             <thead>
                 <tr>
                     <th class="sortable">Name</th>
+                    <th class="sortable">Brand</th>
                     <th class="sortable">Cost per Unit</th>
                     <th class="sortable">Quantity</th>
                     <th>Unit</th>
@@ -25,7 +26,7 @@
             </thead>
             <tbody id="suppliesTableBody">
                 <tr>
-                    <td colspan="6" class="text-center">Loading...</td>
+                    <td colspan="7" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
@@ -43,6 +44,11 @@
             <div class="form-group">
                 <label for="supplyName">Name *</label>
                 <input type="text" id="supplyName" name="name" required>
+            </div>
+
+            <div class="form-group">
+                <label for="supplyBrand">Brand</label>
+                <input type="text" id="supplyBrand" name="brand" placeholder="Optional">
             </div>
 
             <div class="form-row">
@@ -71,6 +77,13 @@
                 </select>
             </div>
 
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="remindReorder" name="remind_reorder" style="width: auto; cursor: pointer;">
+                    <span>Remind me to re-order</span>
+                </label>
+            </div>
+
             <button type="submit" class="btn btn-success">Add Supply</button>
         </form>
     </div>
@@ -89,6 +102,11 @@
             <div class="form-group">
                 <label for="editSupplyName">Name *</label>
                 <input type="text" id="editSupplyName" name="name" required>
+            </div>
+
+            <div class="form-group">
+                <label for="editSupplyBrand">Brand</label>
+                <input type="text" id="editSupplyBrand" name="brand" placeholder="Optional">
             </div>
 
             <div class="form-row">
@@ -130,7 +148,7 @@ let allSupplies = [];
 async function loadSupplies() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="6" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -141,7 +159,7 @@ async function loadSupplies() {
         makeSortable(document.getElementById('suppliesTable'));
     } catch (error) {
         console.error('Error loading supplies:', error);
-        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="6" class="text-center">Error loading supplies</td></tr>';
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Error loading supplies</td></tr>';
     }
 }
 
@@ -149,18 +167,20 @@ function displaySupplies(supplies) {
     const tbody = document.getElementById('suppliesTableBody');
 
     if (supplies.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center">No supplies in inventory. Click "Add Supply" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No supplies in inventory. Click "Add Supply" to get started.</td></tr>';
         return;
     }
 
     let html = '';
     supplies.forEach(supply => {
         const totalValue = supply.cost * supply.quantity;
+        const quantityClass = supply.quantity === 0 ? 'style="color: red; font-weight: bold;"' : '';
         html += `
             <tr>
                 <td>${supply.name}</td>
+                <td>${supply.brand || '-'}</td>
                 <td>${formatCurrency(supply.cost)}</td>
-                <td>${supply.quantity}</td>
+                <td ${quantityClass}>${supply.quantity}</td>
                 <td>${supply.unit}</td>
                 <td>${formatCurrency(totalValue)}</td>
                 <td>
@@ -189,6 +209,7 @@ async function addSupply(event) {
     const data = {
         vehicle_id: vehicleId,
         name: formData.get('name'),
+        brand: formData.get('brand'),
         cost: parseFloat(formData.get('cost')),
         quantity: parseFloat(formData.get('quantity')),
         unit: formData.get('unit')
@@ -198,7 +219,28 @@ async function addSupply(event) {
         const result = await postJSON('/api/supplies', data);
 
         if (result.success) {
-            showAlert('Supply added successfully!', 'success');
+            // Check if reminder checkbox is checked
+            const remindCheckbox = document.getElementById('remindReorder');
+            if (remindCheckbox.checked) {
+                // Create a reminder for this supply
+                const reminderData = {
+                    vehicle_id: vehicleId,
+                    service_type: `Re-order ${data.name}${data.brand ? ' (' + data.brand + ')' : ''}`,
+                    notes: `Supply inventory running low. Consider re-ordering.`,
+                    completed: false
+                };
+
+                try {
+                    await postJSON('/api/reminders', reminderData);
+                    showAlert('Supply added and reminder created!', 'success');
+                } catch (error) {
+                    console.error('Error creating reminder:', error);
+                    showAlert('Supply added but reminder creation failed', 'warning');
+                }
+            } else {
+                showAlert('Supply added successfully!', 'success');
+            }
+
             form.reset();
             closeModal('addSupplyModal');
             await loadSupplies();
@@ -215,6 +257,7 @@ function editSupply(supplyId) {
 
     document.getElementById('editSupplyId').value = supply.id;
     document.getElementById('editSupplyName').value = supply.name;
+    document.getElementById('editSupplyBrand').value = supply.brand || '';
     document.getElementById('editSupplyCost').value = supply.cost;
     document.getElementById('editSupplyQuantity').value = supply.quantity;
     document.getElementById('editSupplyUnit').value = supply.unit;
@@ -231,6 +274,7 @@ async function updateSupply(event) {
 
     const data = {
         name: formData.get('name'),
+        brand: formData.get('brand'),
         cost: parseFloat(formData.get('cost')),
         quantity: parseFloat(formData.get('quantity')),
         unit: formData.get('unit')
