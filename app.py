@@ -676,7 +676,6 @@ def export_services_csv():
             FROM service_records
             ORDER BY date DESC
         ''').fetchall()
-    db.close()
 
     # Create CSV in memory
     output = io.StringIO()
@@ -697,6 +696,8 @@ def export_services_csv():
             service['repairs_completed'] or '',
             service['comments'] or ''
         ])
+
+    db.close()
 
     # Create response
     output.seek(0)
