@@ -6,6 +6,24 @@
 <h1>Fuel Tracker</h1>
 
 <style>
+/* Fix table overflow for dropdown menus */
+.table-container {
+    overflow-x: auto;
+    overflow-y: visible;
+}
+
+#fuelTable {
+    position: relative;
+}
+
+#fuelTable tbody {
+    position: relative;
+}
+
+#fuelTable tr {
+    position: relative;
+}
+
 /* Hamburger menu styles */
 .action-menu {
     position: relative;
@@ -29,6 +47,7 @@
     display: none;
     position: absolute;
     right: 0;
+    top: 100%;
     background-color: white;
     min-width: 150px;
     box-shadow: 0 4px 8px rgba(0,0,0,0.2);
