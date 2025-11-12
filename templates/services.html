@@ -5,6 +5,70 @@
 {% block content %}
 <h1>Service Records</h1>
 
+<style>
+/* Hamburger menu styles */
+.action-menu {
+    position: relative;
+    display: inline-block;
+}
+
+.menu-button {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    color: var(--dark-text);
+}
+
+.menu-button:hover {
+    color: var(--secondary-color);
+}
+
+.menu-dropdown {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 150px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    border-radius: 5px;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.menu-dropdown.show {
+    display: block;
+}
+
+.menu-dropdown button {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.menu-dropdown button:hover {
+    background-color: var(--light-bg);
+}
+
+.menu-dropdown button.danger:hover {
+    background-color: #fee;
+    color: var(--danger-color);
+}
+
+/* Date column width */
+#servicesTable th:first-child,
+#servicesTable td:first-child {
+    min-width: 110px;
+}
+</style>
+
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Service History</h2>
@@ -32,14 +96,13 @@
                     <th class="sortable">Supplies Cost</th>
                     <th class="sortable">Total Cost</th>
                     <th>Repairs Completed</th>
-                    <th>Comments</th>
                     <th>Receipt</th>
-                    <th>Actions</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody id="servicesTableBody">
                 <tr>
-                    <td colspan="10" class="text-center">Loading...</td>
+                    <td colspan="9" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
@@ -121,6 +184,63 @@
         </form>
     </div>
 </div>
+
+<!-- View Service Modal -->
+<div id="viewServiceModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>View Service Record</h3>
+            <button class="close" onclick="closeModal('viewServiceModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Date</label>
+                    <p id="viewDate" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                </div>
+                <div class="form-group">
+                    <label>Cost</label>
+                    <p id="viewCost" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                </div>
+                <div class="form-group">
+                    <label>Odometer</label>
+                    <p id="viewOdometer" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Service Provider</label>
+                <p id="viewProvider" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Supplies Cost</label>
+                    <p id="viewSuppliesCost" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                </div>
+                <div class="form-group">
+                    <label>Total Cost</label>
+                    <p id="viewTotalCost" style="font-size: 1.1rem; font-weight: bold; margin: 0.5rem 0;"></p>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Repairs Completed</label>
+                <p id="viewRepairs" style="margin: 0.5rem 0; white-space: pre-wrap;"></p>
+            </div>
+
+            <div class="form-group">
+                <label>Comments</label>
+                <p id="viewComments" style="margin: 0.5rem 0; white-space: pre-wrap;"></p>
+            </div>
+
+            <div class="form-group">
+                <label>Receipt</label>
+                <div id="viewReceipt" style="margin: 0.5rem 0;"></div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -133,7 +253,7 @@ let selectedSupplies = []; // Track supplies to be used in this service
 async function loadServices() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="10" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -144,7 +264,7 @@ async function loadServices() {
         makeSortable(document.getElementById('servicesTable'));
     } catch (error) {
         console.error('Error loading services:', error);
-        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="10" class="text-center">Error loading services</td></tr>';
+        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Error loading services</td></tr>';
     }
 }
 
@@ -282,7 +402,7 @@ function displayServices(services) {
     const tbody = document.getElementById('servicesTableBody');
 
     if (services.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
         return;
     }
 
@@ -298,13 +418,18 @@ function displayServices(services) {
                 <td>${formatCurrency(service.supplies_cost || 0)}</td>
                 <td>${formatCurrency(totalCost)}</td>
                 <td>${service.repairs_completed || 'N/A'}</td>
-                <td>${service.comments || 'N/A'}</td>
                 <td>
                     ${service.receipt_path ? `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-small btn-secondary">View</a>` : 'N/A'}
                 </td>
                 <td>
-                    <button class="btn btn-small btn-secondary" onclick="editService(${service.id})">Edit</button>
-                    <button class="btn btn-small btn-danger" onclick="deleteService(${service.id})">Delete</button>
+                    <div class="action-menu">
+                        <button class="menu-button" onclick="toggleMenu(event, ${service.id})">&#8942;</button>
+                        <div class="menu-dropdown" id="menu-${service.id}">
+                            <button onclick="viewService(${service.id})">View</button>
+                            <button onclick="editService(${service.id})">Edit</button>
+                            <button class="danger" onclick="deleteService(${service.id})">Delete</button>
+                        </div>
+                    </div>
                 </td>
             </tr>
         `;
@@ -416,6 +541,57 @@ async function addService(event) {
         }
     } catch (error) {
         console.error('Error saving service:', error);
+    }
+}
+
+function toggleMenu(event, serviceId) {
+    event.stopPropagation();
+    const menu = document.getElementById(`menu-${serviceId}`);
+
+    // Close all other menus
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+    });
+
+    menu.classList.toggle('show');
+}
+
+// Close menus when clicking outside
+document.addEventListener('click', () => {
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        m.classList.remove('show');
+    });
+});
+
+async function viewService(serviceId) {
+    try {
+        const service = await fetchAPI(`/api/services/${serviceId}`);
+        if (!service) return;
+
+        // Populate view modal
+        document.getElementById('viewDate').textContent = formatDate(service.date);
+        document.getElementById('viewCost').textContent = formatCurrency(service.cost);
+        document.getElementById('viewOdometer').textContent = service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A';
+        document.getElementById('viewProvider').textContent = service.service_provider;
+        document.getElementById('viewSuppliesCost').textContent = formatCurrency(service.supplies_cost || 0);
+
+        const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
+        document.getElementById('viewTotalCost').textContent = formatCurrency(totalCost);
+
+        document.getElementById('viewRepairs').textContent = service.repairs_completed || 'N/A';
+        document.getElementById('viewComments').textContent = service.comments || 'N/A';
+
+        // Handle receipt
+        const receiptDiv = document.getElementById('viewReceipt');
+        if (service.receipt_path) {
+            receiptDiv.innerHTML = `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-secondary">View Receipt</a>`;
+        } else {
+            receiptDiv.innerHTML = '<p>No receipt attached</p>';
+        }
+
+        openModal('viewServiceModal');
+    } catch (error) {
+        console.error('Error loading service:', error);
     }
 }
 
