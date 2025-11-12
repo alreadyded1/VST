@@ -6,28 +6,19 @@
 <h1>Fuel Tracker</h1>
 
 <style>
-/* Fix table overflow for dropdown menus */
+/* Ensure containers don't clip dropdown menus */
+.card {
+    overflow: visible !important;
+}
+
 .table-container {
     overflow-x: auto;
-    overflow-y: visible;
-}
-
-#fuelTable {
-    position: relative;
-}
-
-#fuelTable tbody {
-    position: relative;
-}
-
-#fuelTable tr {
-    position: relative;
+    overflow-y: visible !important;
 }
 
 /* Hamburger menu styles */
 .action-menu {
-    position: relative;
-    display: inline-block;
+    position: static;
 }
 
 .menu-button {
@@ -45,14 +36,12 @@
 
 .menu-dropdown {
     display: none;
-    position: absolute;
-    right: 0;
-    top: 100%;
+    position: fixed;
     background-color: white;
     min-width: 150px;
     box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     border-radius: 5px;
-    z-index: 1000;
+    z-index: 9999;
     overflow: hidden;
 }
 
@@ -70,15 +59,19 @@
     cursor: pointer;
     font-size: 0.9rem;
     transition: background-color 0.2s;
+    color: var(--dark-text);
 }
 
 .menu-dropdown button:hover {
     background-color: var(--light-bg);
 }
 
+.menu-dropdown button.danger {
+    color: var(--danger-color);
+}
+
 .menu-dropdown button.danger:hover {
     background-color: #fee;
-    color: var(--danger-color);
 }
 
 /* Date column width */
@@ -324,12 +317,20 @@ let currentEditFuelId = null;
 
 function toggleFuelMenu(event, fuelId) {
     event.stopPropagation();
+    const button = event.target;
     const menu = document.getElementById(`fuel-menu-${fuelId}`);
 
     // Close all other menus
     document.querySelectorAll('.menu-dropdown').forEach(m => {
         if (m !== menu) m.classList.remove('show');
     });
+
+    // If menu is being shown, position it
+    if (!menu.classList.contains('show')) {
+        const rect = button.getBoundingClientRect();
+        menu.style.top = `${rect.bottom}px`;
+        menu.style.left = `${rect.right - 150}px`; // 150px is the menu width
+    }
 
     menu.classList.toggle('show');
 }
