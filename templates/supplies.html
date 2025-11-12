@@ -1,49 +1,63 @@
 {% extends "base.html" %}
 
-{% block title %}Supplies Inventory - Vehicle Maintenance Tracker{% endblock %}
+{% block title %}Parts & Supplies - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
-<h1>Supplies Inventory</h1>
+<h1>Parts & Supplies</h1>
 
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Inventory</h2>
-        <button class="btn btn-primary" onclick="openModal('addSupplyModal')">Add Supply</button>
+        <button class="btn btn-primary" onclick="openModal('addSupplyModal')">Add Part/Supply</button>
     </div>
 
     <div class="table-container">
         <table id="suppliesTable">
             <thead>
                 <tr>
-                    <th class="sortable">Name</th>
-                    <th class="sortable">Brand</th>
-                    <th class="sortable">Cost per Unit</th>
+                    <th class="sortable">Part Name</th>
+                    <th>Part Number</th>
+                    <th>Manufacturer</th>
                     <th class="sortable">Quantity</th>
-                    <th>Unit</th>
+                    <th class="sortable">Cost/Unit</th>
                     <th class="sortable">Total Value</th>
+                    <th>Warranty</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody id="suppliesTableBody">
                 <tr>
-                    <td colspan="7" class="text-center">Loading...</td>
+                    <td colspan="8" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
     </div>
 </div>
 
-<!-- Add Supply Modal -->
+<!-- Add/Edit Supply Modal -->
 <div id="addSupplyModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Add Supply</h3>
+            <h3>Add Part/Supply</h3>
             <button class="close" onclick="closeModal('addSupplyModal')">&times;</button>
         </div>
         <form id="supplyForm" onsubmit="addSupply(event)">
+            <input type="hidden" id="editSupplyId">
+
             <div class="form-group">
-                <label for="supplyName">Name *</label>
+                <label for="supplyName">Part Name *</label>
                 <input type="text" id="supplyName" name="name" required>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="supplyPartNumber">Part Number</label>
+                    <input type="text" id="supplyPartNumber" name="part_number" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label for="supplyManufacturer">Manufacturer</label>
+                    <input type="text" id="supplyManufacturer" name="manufacturer" placeholder="Optional">
+                </div>
             </div>
 
             <div class="form-group">
@@ -60,92 +74,80 @@
                     <label for="supplyQuantity">Quantity *</label>
                     <input type="number" id="supplyQuantity" name="quantity" step="0.1" min="0" required>
                 </div>
+                <div class="form-group">
+                    <label for="supplyUnit">Unit</label>
+                    <select id="supplyUnit" name="unit">
+                        <option value="units">Units</option>
+                        <option value="quarts">Quarts</option>
+                        <option value="gallons">Gallons</option>
+                        <option value="liters">Liters</option>
+                        <option value="bottles">Bottles</option>
+                        <option value="cans">Cans</option>
+                        <option value="boxes">Boxes</option>
+                        <option value="filters">Filters</option>
+                        <option value="sets">Sets</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="warrantyStartDate">Warranty Start Date</label>
+                    <input type="date" id="warrantyStartDate" name="warranty_start_date">
+                </div>
+                <div class="form-group">
+                    <label for="warrantyMonths">Warranty Period (Months)</label>
+                    <input type="number" id="warrantyMonths" name="warranty_months" min="0" placeholder="e.g., 12, 24, 36">
+                </div>
             </div>
 
             <div class="form-group">
-                <label for="supplyUnit">Unit</label>
-                <select id="supplyUnit" name="unit">
-                    <option value="units">Units</option>
-                    <option value="quarts">Quarts</option>
-                    <option value="gallons">Gallons</option>
-                    <option value="liters">Liters</option>
-                    <option value="bottles">Bottles</option>
-                    <option value="cans">Cans</option>
-                    <option value="boxes">Boxes</option>
-                    <option value="filters">Filters</option>
-                    <option value="sets">Sets</option>
-                </select>
+                <label for="supplyReceipt">Receipt</label>
+                <input type="file" id="supplyReceipt" name="receipt" accept="image/*,.pdf" onchange="handleFilePreview(this, 'receiptPreview')">
+                <div id="receiptPreview" class="file-preview"></div>
             </div>
 
             <div class="alert alert-info">
                 <strong>Note:</strong> A reminder will automatically be created when the quantity reaches 1.
             </div>
 
-            <button type="submit" class="btn btn-success">Add Supply</button>
+            <button type="submit" class="btn btn-success">Save Part/Supply</button>
         </form>
     </div>
 </div>
 
-<!-- Edit Supply Modal -->
-<div id="editSupplyModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Edit Supply</h3>
-            <button class="close" onclick="closeModal('editSupplyModal')">&times;</button>
-        </div>
-        <form id="editSupplyForm" onsubmit="updateSupply(event)">
-            <input type="hidden" id="editSupplyId">
-
-            <div class="form-group">
-                <label for="editSupplyName">Name *</label>
-                <input type="text" id="editSupplyName" name="name" required>
-            </div>
-
-            <div class="form-group">
-                <label for="editSupplyBrand">Brand</label>
-                <input type="text" id="editSupplyBrand" name="brand" placeholder="Optional">
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="editSupplyCost">Cost per Unit *</label>
-                    <input type="number" id="editSupplyCost" name="cost" step="0.01" min="0" required>
-                </div>
-                <div class="form-group">
-                    <label for="editSupplyQuantity">Quantity *</label>
-                    <input type="number" id="editSupplyQuantity" name="quantity" step="0.1" min="0" required>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="editSupplyUnit">Unit</label>
-                <select id="editSupplyUnit" name="unit">
-                    <option value="units">Units</option>
-                    <option value="quarts">Quarts</option>
-                    <option value="gallons">Gallons</option>
-                    <option value="liters">Liters</option>
-                    <option value="bottles">Bottles</option>
-                    <option value="cans">Cans</option>
-                    <option value="boxes">Boxes</option>
-                    <option value="filters">Filters</option>
-                    <option value="sets">Sets</option>
-                </select>
-            </div>
-
-            <button type="submit" class="btn btn-success">Update Supply</button>
-        </form>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 let allSupplies = [];
 
+// Calculate warranty status
+function getWarrantyStatus(supply) {
+    if (!supply.warranty_start_date || !supply.warranty_months) {
+        return '-';
+    }
+
+    const startDate = new Date(supply.warranty_start_date);
+    const expirationDate = new Date(startDate);
+    expirationDate.setMonth(expirationDate.getMonth() + supply.warranty_months);
+
+    const now = new Date();
+    const daysRemaining = Math.floor((expirationDate - now) / (1000 * 60 * 60 * 24));
+
+    if (daysRemaining < 0) {
+        return '<span style="color: var(--danger-color);">Expired</span>';
+    } else if (daysRemaining < 30) {
+        return `<span style="color: var(--warning-color);">Expires ${formatDate(expirationDate)}</span>`;
+    } else {
+        return `<span style="color: var(--success-color);">Valid until ${formatDate(expirationDate)}</span>`;
+    }
+}
+
 async function loadSupplies() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -156,7 +158,7 @@ async function loadSupplies() {
         makeSortable(document.getElementById('suppliesTable'));
     } catch (error) {
         console.error('Error loading supplies:', error);
-        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Error loading supplies</td></tr>';
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading supplies</td></tr>';
     }
 }
 
@@ -164,7 +166,7 @@ function displaySupplies(supplies) {
     const tbody = document.getElementById('suppliesTableBody');
 
     if (supplies.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No supplies in inventory. Click "Add Supply" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No parts or supplies in inventory. Click "Add Part/Supply" to get started.</td></tr>';
         return;
     }
 
@@ -172,14 +174,17 @@ function displaySupplies(supplies) {
     supplies.forEach(supply => {
         const totalValue = supply.cost * supply.quantity;
         const quantityClass = supply.quantity === 0 ? 'style="color: red; font-weight: bold;"' : '';
+        const warrantyStatus = getWarrantyStatus(supply);
+
         html += `
             <tr>
                 <td>${supply.name}</td>
-                <td>${supply.brand || '-'}</td>
+                <td>${supply.part_number || '-'}</td>
+                <td>${supply.manufacturer || '-'}</td>
+                <td ${quantityClass}>${supply.quantity} ${supply.unit}</td>
                 <td>${formatCurrency(supply.cost)}</td>
-                <td ${quantityClass}>${supply.quantity}</td>
-                <td>${supply.unit}</td>
                 <td>${formatCurrency(totalValue)}</td>
+                <td>${warrantyStatus}</td>
                 <td>
                     <button class="btn btn-small btn-secondary" onclick="editSupply(${supply.id})">Edit</button>
                     <button class="btn btn-small btn-danger" onclick="deleteSupply(${supply.id})">Delete</button>
@@ -202,46 +207,35 @@ async function addSupply(event) {
 
     const form = document.getElementById('supplyForm');
     const formData = new FormData(form);
-
-    const data = {
-        vehicle_id: vehicleId,
-        name: formData.get('name'),
-        brand: formData.get('brand'),
-        cost: parseFloat(formData.get('cost')),
-        quantity: parseFloat(formData.get('quantity')),
-        unit: formData.get('unit')
-    };
+    formData.append('vehicle_id', vehicleId);
 
     try {
-        const result = await postJSON('/api/supplies', data);
+        const editId = document.getElementById('editSupplyId').value;
+        let result;
+
+        if (editId) {
+            // Update existing part/supply
+            result = await putFormData(`/api/supplies/${editId}`, formData);
+            showAlert('Part/Supply updated successfully!', 'success');
+        } else {
+            // Add new part/supply
+            result = await postFormData('/api/supplies', formData);
+            showAlert('Part/Supply added successfully!', 'success');
+        }
 
         if (result.success) {
-            // Auto-create reminder if quantity is 1
-            if (data.quantity === 1) {
-                const reminderData = {
-                    vehicle_id: vehicleId,
-                    service_type: `Re-order ${data.name}${data.brand ? ' (' + data.brand + ')' : ''}`,
-                    notes: `Supply quantity is at 1. Consider re-ordering soon.`,
-                    completed: false
-                };
-
-                try {
-                    await postJSON('/api/reminders', reminderData);
-                    showAlert('Supply added and low inventory reminder created!', 'success');
-                } catch (error) {
-                    console.error('Error creating reminder:', error);
-                    showAlert('Supply added but reminder creation failed', 'warning');
-                }
-            } else {
-                showAlert('Supply added successfully!', 'success');
-            }
-
             form.reset();
+            document.getElementById('editSupplyId').value = '';
+            document.getElementById('receiptPreview').textContent = '';
+
+            // Reset modal title
+            document.querySelector('#addSupplyModal h3').textContent = 'Add Part/Supply';
+
             closeModal('addSupplyModal');
             await loadSupplies();
         }
     } catch (error) {
-        console.error('Error adding supply:', error);
+        console.error('Error saving part/supply:', error);
     }
 }
 
@@ -250,63 +244,30 @@ function editSupply(supplyId) {
 
     if (!supply) return;
 
+    // Populate form with supply data
     document.getElementById('editSupplyId').value = supply.id;
-    document.getElementById('editSupplyName').value = supply.name;
-    document.getElementById('editSupplyBrand').value = supply.brand || '';
-    document.getElementById('editSupplyCost').value = supply.cost;
-    document.getElementById('editSupplyQuantity').value = supply.quantity;
-    document.getElementById('editSupplyUnit').value = supply.unit;
+    document.getElementById('supplyName').value = supply.name;
+    document.getElementById('supplyPartNumber').value = supply.part_number || '';
+    document.getElementById('supplyManufacturer').value = supply.manufacturer || '';
+    document.getElementById('supplyBrand').value = supply.brand || '';
+    document.getElementById('supplyCost').value = supply.cost;
+    document.getElementById('supplyQuantity').value = supply.quantity;
+    document.getElementById('supplyUnit').value = supply.unit;
+    document.getElementById('warrantyStartDate').value = supply.warranty_start_date || '';
+    document.getElementById('warrantyMonths').value = supply.warranty_months || '';
 
-    openModal('editSupplyModal');
-}
-
-async function updateSupply(event) {
-    event.preventDefault();
-
-    const vehicleId = getCurrentVehicleId();
-    const supplyId = document.getElementById('editSupplyId').value;
-    const form = document.getElementById('editSupplyForm');
-    const formData = new FormData(form);
-
-    const data = {
-        name: formData.get('name'),
-        brand: formData.get('brand'),
-        cost: parseFloat(formData.get('cost')),
-        quantity: parseFloat(formData.get('quantity')),
-        unit: formData.get('unit')
-    };
-
-    try {
-        const result = await putJSON(`/api/supplies/${supplyId}`, data);
-
-        if (result.success) {
-            // Auto-create reminder if quantity is 1
-            if (data.quantity === 1) {
-                const reminderData = {
-                    vehicle_id: vehicleId,
-                    service_type: `Re-order ${data.name}${data.brand ? ' (' + data.brand + ')' : ''}`,
-                    notes: `Supply quantity is at 1. Consider re-ordering soon.`,
-                    completed: false
-                };
-
-                try {
-                    await postJSON('/api/reminders', reminderData);
-                    showAlert('Supply updated and low inventory reminder created!', 'success');
-                } catch (error) {
-                    console.error('Error creating reminder:', error);
-                    showAlert('Supply updated but reminder creation failed', 'warning');
-                }
-            } else {
-                showAlert('Supply updated successfully!', 'success');
-            }
-
-            form.reset();
-            closeModal('editSupplyModal');
-            await loadSupplies();
-        }
-    } catch (error) {
-        console.error('Error updating supply:', error);
+    // Show existing receipt if any
+    const receiptPreview = document.getElementById('receiptPreview');
+    if (supply.receipt_path) {
+        receiptPreview.innerHTML = `Current: <a href="/static/${supply.receipt_path}" target="_blank">View Receipt</a>`;
+    } else {
+        receiptPreview.textContent = '';
     }
+
+    // Update modal title
+    document.querySelector('#addSupplyModal h3').textContent = 'Edit Part/Supply';
+
+    openModal('addSupplyModal');
 }
 
 async function deleteSupply(supplyId) {
