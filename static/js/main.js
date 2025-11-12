@@ -112,20 +112,20 @@ function sortTable(table, columnIndex, header) {
         const aValue = a.cells[columnIndex].textContent.trim();
         const bValue = b.cells[columnIndex].textContent.trim();
 
+        // Try to parse as date first (before numbers)
+        const aDate = new Date(aValue);
+        const bDate = new Date(bValue);
+
+        if (!isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
+            return isAscending ? aDate - bDate : bDate - aDate;
+        }
+
         // Try to parse as number
         const aNum = parseFloat(aValue.replace(/[^0-9.-]/g, ''));
         const bNum = parseFloat(bValue.replace(/[^0-9.-]/g, ''));
 
         if (!isNaN(aNum) && !isNaN(bNum)) {
             return isAscending ? aNum - bNum : bNum - aNum;
-        }
-
-        // Try to parse as date
-        const aDate = new Date(aValue);
-        const bDate = new Date(bValue);
-
-        if (!isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
-            return isAscending ? aDate - bDate : bDate - aDate;
         }
 
         // Sort as string
