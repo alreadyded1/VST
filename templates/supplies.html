@@ -4,6 +4,24 @@
 
 {% block content %}
 <style>
+/* Fix table overflow for dropdown menus */
+#suppliesTable {
+    position: relative;
+}
+
+#suppliesTable tbody {
+    position: relative;
+}
+
+#suppliesTable tr {
+    position: relative;
+}
+
+#suppliesTable tr:last-child .menu-dropdown {
+    bottom: 0;
+    top: auto;
+}
+
 /* Hamburger menu styles */
 .action-menu {
     position: relative;
@@ -27,6 +45,7 @@
     display: none;
     position: absolute;
     right: 0;
+    top: 100%;
     background-color: white;
     min-width: 150px;
     box-shadow: 0 4px 8px rgba(0,0,0,0.2);
