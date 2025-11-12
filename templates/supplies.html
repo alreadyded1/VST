@@ -270,31 +270,6 @@ async function loadSupplies() {
     }
 }
 
-// Toggle hamburger menu
-function toggleMenu(event, supplyId) {
-    event.stopPropagation();
-
-    // Close all other menus
-    document.querySelectorAll('.menu-dropdown').forEach(menu => {
-        if (menu.id !== `menu-${supplyId}`) {
-            menu.classList.remove('show');
-        }
-    });
-
-    // Toggle current menu
-    const menu = document.getElementById(`menu-${supplyId}`);
-    menu.classList.toggle('show');
-}
-
-// Close menus when clicking outside
-document.addEventListener('click', function(event) {
-    if (!event.target.closest('.action-menu')) {
-        document.querySelectorAll('.menu-dropdown').forEach(menu => {
-            menu.classList.remove('show');
-        });
-    }
-});
-
 function displaySupplies(supplies) {
     const tbody = document.getElementById('suppliesTableBody');
 
@@ -460,6 +435,25 @@ async function deleteSupply(supplyId) {
         console.error('Error deleting supply:', error);
     }
 }
+
+function toggleMenu(event, supplyId) {
+    event.stopPropagation();
+    const menu = document.getElementById(`menu-${supplyId}`);
+
+    // Close all other menus
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+    });
+
+    menu.classList.toggle('show');
+}
+
+// Close menus when clicking outside
+document.addEventListener('click', () => {
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        m.classList.remove('show');
+    });
+});
 
 document.addEventListener('DOMContentLoaded', loadSupplies);
 </script>
