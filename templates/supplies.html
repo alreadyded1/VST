@@ -3,6 +3,71 @@
 {% block title %}Parts & Supplies - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
+<style>
+/* Hamburger menu styles */
+.action-menu {
+    position: relative;
+    display: inline-block;
+}
+
+.menu-button {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    color: var(--dark-text);
+}
+
+.menu-button:hover {
+    background-color: var(--hover-color);
+    border-radius: 5px;
+}
+
+.menu-dropdown {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 150px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    border-radius: 5px;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.menu-dropdown.show {
+    display: block;
+}
+
+.menu-dropdown button {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.menu-dropdown button:hover {
+    background-color: var(--hover-color);
+}
+
+.menu-dropdown button.danger {
+    color: var(--danger-color);
+}
+
+.menu-dropdown button.danger:hover {
+    background-color: #ffebee;
+}
+
+#viewSupplyModal .form-group label {
+    font-weight: bold;
+}
+</style>
+
 <h1>Parts & Supplies</h1>
 
 <div class="card">
@@ -17,6 +82,7 @@
                 <tr>
                     <th class="sortable">Part Name</th>
                     <th>Part Number</th>
+                    <th>Brand</th>
                     <th class="sortable">Quantity</th>
                     <th class="sortable">Cost/Unit</th>
                     <th class="sortable">Total Value</th>
@@ -26,7 +92,7 @@
             </thead>
             <tbody id="suppliesTableBody">
                 <tr>
-                    <td colspan="7" class="text-center">Loading...</td>
+                    <td colspan="8" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
@@ -95,6 +161,69 @@
     </div>
 </div>
 
+<!-- View Supply Modal -->
+<div id="viewSupplyModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>View Part/Supply</h3>
+            <button class="close" onclick="closeModal('viewSupplyModal')">&times;</button>
+        </div>
+        <div id="viewSupplyContent">
+            <div class="form-group">
+                <label>Part Name:</label>
+                <p id="viewName"></p>
+            </div>
+
+            <div class="form-group">
+                <label>Part Number:</label>
+                <p id="viewPartNumber"></p>
+            </div>
+
+            <div class="form-group">
+                <label>Brand:</label>
+                <p id="viewBrand"></p>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Cost per Unit:</label>
+                    <p id="viewCost"></p>
+                </div>
+                <div class="form-group">
+                    <label>Quantity:</label>
+                    <p id="viewQuantity"></p>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Total Value:</label>
+                <p id="viewTotalValue"></p>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Warranty Start Date:</label>
+                    <p id="viewWarrantyStartDate"></p>
+                </div>
+                <div class="form-group">
+                    <label>Warranty Period:</label>
+                    <p id="viewWarrantyMonths"></p>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Warranty Status:</label>
+                <p id="viewWarrantyStatus"></p>
+            </div>
+
+            <div class="form-group">
+                <label>Receipt:</label>
+                <p id="viewReceipt"></p>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -126,7 +255,7 @@ function getWarrantyStatus(supply) {
 async function loadSupplies() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -137,15 +266,40 @@ async function loadSupplies() {
         makeSortable(document.getElementById('suppliesTable'));
     } catch (error) {
         console.error('Error loading supplies:', error);
-        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Error loading supplies</td></tr>';
+        document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading supplies</td></tr>';
     }
 }
+
+// Toggle hamburger menu
+function toggleMenu(event, supplyId) {
+    event.stopPropagation();
+
+    // Close all other menus
+    document.querySelectorAll('.menu-dropdown').forEach(menu => {
+        if (menu.id !== `menu-${supplyId}`) {
+            menu.classList.remove('show');
+        }
+    });
+
+    // Toggle current menu
+    const menu = document.getElementById(`menu-${supplyId}`);
+    menu.classList.toggle('show');
+}
+
+// Close menus when clicking outside
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('.action-menu')) {
+        document.querySelectorAll('.menu-dropdown').forEach(menu => {
+            menu.classList.remove('show');
+        });
+    }
+});
 
 function displaySupplies(supplies) {
     const tbody = document.getElementById('suppliesTableBody');
 
     if (supplies.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No parts or supplies in inventory. Click "Add Part/Supply" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No parts or supplies in inventory. Click "Add Part/Supply" to get started.</td></tr>';
         return;
     }
 
@@ -159,19 +313,66 @@ function displaySupplies(supplies) {
             <tr>
                 <td>${supply.name}</td>
                 <td>${supply.part_number || '-'}</td>
+                <td>${supply.brand || '-'}</td>
                 <td ${quantityClass}>${supply.quantity}</td>
                 <td>${formatCurrency(supply.cost)}</td>
                 <td>${formatCurrency(totalValue)}</td>
                 <td>${warrantyStatus}</td>
                 <td>
-                    <button class="btn btn-small btn-secondary" onclick="editSupply(${supply.id})">Edit</button>
-                    <button class="btn btn-small btn-danger" onclick="deleteSupply(${supply.id})">Delete</button>
+                    <div class="action-menu">
+                        <button class="menu-button" onclick="toggleMenu(event, ${supply.id})">&#8942;</button>
+                        <div class="menu-dropdown" id="menu-${supply.id}">
+                            <button onclick="viewSupply(${supply.id})">View</button>
+                            <button onclick="editSupply(${supply.id})">Edit</button>
+                            <button class="danger" onclick="deleteSupply(${supply.id})">Delete</button>
+                        </div>
+                    </div>
                 </td>
             </tr>
         `;
     });
 
     tbody.innerHTML = html;
+}
+
+function viewSupply(supplyId) {
+    const supply = allSupplies.find(s => s.id === supplyId);
+
+    if (!supply) return;
+
+    // Populate view modal with supply data
+    document.getElementById('viewName').textContent = supply.name;
+    document.getElementById('viewPartNumber').textContent = supply.part_number || 'N/A';
+    document.getElementById('viewBrand').textContent = supply.brand || 'N/A';
+    document.getElementById('viewCost').textContent = formatCurrency(supply.cost);
+    document.getElementById('viewQuantity').textContent = supply.quantity;
+    document.getElementById('viewTotalValue').textContent = formatCurrency(supply.cost * supply.quantity);
+
+    // Warranty information
+    if (supply.warranty_start_date) {
+        document.getElementById('viewWarrantyStartDate').textContent = formatDate(supply.warranty_start_date);
+    } else {
+        document.getElementById('viewWarrantyStartDate').textContent = 'N/A';
+    }
+
+    if (supply.warranty_months) {
+        document.getElementById('viewWarrantyMonths').textContent = `${supply.warranty_months} months`;
+    } else {
+        document.getElementById('viewWarrantyMonths').textContent = 'N/A';
+    }
+
+    // Warranty status
+    const warrantyStatusHtml = getWarrantyStatus(supply);
+    document.getElementById('viewWarrantyStatus').innerHTML = warrantyStatusHtml;
+
+    // Receipt
+    if (supply.receipt_path) {
+        document.getElementById('viewReceipt').innerHTML = `<a href="/static/${supply.receipt_path}" target="_blank" class="btn btn-small btn-secondary">View Receipt</a>`;
+    } else {
+        document.getElementById('viewReceipt').textContent = 'N/A';
+    }
+
+    openModal('viewSupplyModal');
 }
 
 async function addSupply(event) {
