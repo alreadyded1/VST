@@ -5,6 +5,11 @@
 {% block content %}
 <style>
 /* Fix table overflow for dropdown menus */
+.table-container {
+    overflow-x: auto;
+    overflow-y: visible;
+}
+
 #suppliesTable {
     position: relative;
 }
@@ -15,11 +20,6 @@
 
 #suppliesTable tr {
     position: relative;
-}
-
-#suppliesTable tr:last-child .menu-dropdown {
-    bottom: 0;
-    top: auto;
 }
 
 /* Hamburger menu styles */
