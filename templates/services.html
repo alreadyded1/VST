@@ -27,6 +27,7 @@
                 <tr>
                     <th class="sortable">Date</th>
                     <th class="sortable">Service Provider</th>
+                    <th class="sortable">Odometer</th>
                     <th class="sortable">Cost</th>
                     <th class="sortable">Supplies Cost</th>
                     <th class="sortable">Total Cost</th>
@@ -38,7 +39,7 @@
             </thead>
             <tbody id="servicesTableBody">
                 <tr>
-                    <td colspan="9" class="text-center">Loading...</td>
+                    <td colspan="10" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
@@ -61,6 +62,10 @@
                 <div class="form-group">
                     <label for="serviceCost">Cost *</label>
                     <input type="number" id="serviceCost" name="cost" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="serviceOdometer">Odometer</label>
+                    <input type="number" id="serviceOdometer" name="odometer" min="0" step="1" placeholder="Miles">
                 </div>
             </div>
 
@@ -128,7 +133,7 @@ let selectedSupplies = []; // Track supplies to be used in this service
 async function loadServices() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="10" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -139,7 +144,7 @@ async function loadServices() {
         makeSortable(document.getElementById('servicesTable'));
     } catch (error) {
         console.error('Error loading services:', error);
-        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Error loading services</td></tr>';
+        document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="10" class="text-center">Error loading services</td></tr>';
     }
 }
 
@@ -277,7 +282,7 @@ function displayServices(services) {
     const tbody = document.getElementById('servicesTableBody');
 
     if (services.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
         return;
     }
 
@@ -288,6 +293,7 @@ function displayServices(services) {
             <tr>
                 <td>${formatDate(service.date)}</td>
                 <td>${service.service_provider}</td>
+                <td>${service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A'}</td>
                 <td>${formatCurrency(service.cost)}</td>
                 <td>${formatCurrency(service.supplies_cost || 0)}</td>
                 <td>${formatCurrency(totalCost)}</td>
@@ -337,6 +343,7 @@ async function editService(serviceId) {
         // Populate form
         document.getElementById('serviceDate').value = service.date;
         document.getElementById('serviceCost').value = service.cost;
+        document.getElementById('serviceOdometer').value = service.odometer || '';
         document.getElementById('serviceProvider').value = service.service_provider;
         document.getElementById('repairsCompleted').value = service.repairs_completed || '';
         document.getElementById('serviceComments').value = service.comments || '';

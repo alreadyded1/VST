@@ -87,6 +87,7 @@ def init_db():
                 date DATE NOT NULL,
                 cost REAL NOT NULL,
                 service_provider TEXT NOT NULL,
+                odometer INTEGER,
                 comments TEXT,
                 repairs_completed TEXT,
                 receipt_path TEXT,
@@ -144,6 +145,14 @@ def init_db():
         # Migration: Add brand column to supplies table if it doesn't exist
         try:
             db.execute('ALTER TABLE supplies ADD COLUMN brand TEXT')
+            db.commit()
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
+        # Migration: Add odometer column to service_records table if it doesn't exist
+        try:
+            db.execute('ALTER TABLE service_records ADD COLUMN odometer INTEGER')
             db.commit()
         except sqlite3.OperationalError:
             # Column already exists
@@ -566,9 +575,10 @@ def add_service():
 
     db = get_db()
     cursor = db.execute('''INSERT INTO service_records
-                          (vehicle_id, date, cost, service_provider, comments, repairs_completed, receipt_path)
-                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (vehicle_id, date, cost, service_provider, odometer, comments, repairs_completed, receipt_path)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['date'], data['cost'], data['service_provider'],
+                        int(data['odometer']) if data.get('odometer') else None,
                         data.get('comments', ''), data.get('repairs_completed', ''), receipt_path))
 
     service_id = cursor.lastrowid
@@ -615,15 +625,17 @@ def update_service(service_id):
     # Update service record
     if receipt_path:
         db.execute('''UPDATE service_records
-                     SET date=?, cost=?, service_provider=?, comments=?, repairs_completed=?, receipt_path=?
+                     SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?, receipt_path=?
                      WHERE id=?''',
                   (data['date'], data['cost'], data['service_provider'],
+                   int(data['odometer']) if data.get('odometer') else None,
                    data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
     else:
         db.execute('''UPDATE service_records
-                     SET date=?, cost=?, service_provider=?, comments=?, repairs_completed=?
+                     SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?
                      WHERE id=?''',
                   (data['date'], data['cost'], data['service_provider'],
+                   int(data['odometer']) if data.get('odometer') else None,
                    data.get('comments', ''), data.get('repairs_completed', ''), service_id))
 
     # Add new supplies used
@@ -664,7 +676,7 @@ def export_services_csv():
         db = get_db()
         if vehicle_id:
             services = db.execute('''
-                SELECT s.date, s.service_provider, s.cost,
+                SELECT s.date, s.service_provider, s.odometer, s.cost,
                        COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost,
                        s.repairs_completed, s.comments
                 FROM service_records s
@@ -676,7 +688,7 @@ def export_services_csv():
             ''', (vehicle_id,)).fetchall()
         else:
             services = db.execute('''
-                SELECT s.date, s.service_provider, s.cost,
+                SELECT s.date, s.service_provider, s.odometer, s.cost,
                        COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost,
                        s.repairs_completed, s.comments
                 FROM service_records s
@@ -695,7 +707,7 @@ def export_services_csv():
         writer = csv.writer(output)
 
         # Write header
-        writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost',
+        writer.writerow(['date', 'service_provider', 'odometer', 'cost', 'supplies_cost',
                          'repairs_completed', 'comments'])
 
         # Write data
@@ -703,6 +715,7 @@ def export_services_csv():
             writer.writerow([
                 service.get('date', ''),
                 service.get('service_provider', ''),
+                service.get('odometer', '') or '',
                 service.get('cost', 0),
                 service.get('supplies_cost', 0) or 0,
                 service.get('repairs_completed', '') or '',
@@ -730,10 +743,10 @@ def download_services_template():
     writer = csv.writer(output)
 
     # Write header
-    writer.writerow(['date', 'service_provider', 'cost', 'repairs_completed', 'comments'])
+    writer.writerow(['date', 'service_provider', 'odometer', 'cost', 'repairs_completed', 'comments'])
 
     # Write example row
-    writer.writerow(['2024-01-15', 'Auto Shop', '150.00', 'Oil change, tire rotation', 'Regular maintenance'])
+    writer.writerow(['2024-01-15', 'Auto Shop', '50000', '150.00', 'Oil change, tire rotation', 'Regular maintenance'])
 
     output.seek(0)
     response = make_response(output.getvalue())
@@ -782,12 +795,13 @@ def import_services_csv():
                 # Insert service record
                 cursor = db.execute('''
                     INSERT INTO service_records
-                    (vehicle_id, date, service_provider, cost, repairs_completed, comments)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (vehicle_id, date, service_provider, odometer, cost, repairs_completed, comments)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     vehicle_id,
                     row['date'],
                     row['service_provider'],
+                    int(row['odometer']) if row.get('odometer') and row['odometer'].strip() else None,
                     float(row.get('cost', 0) or 0),
                     row.get('repairs_completed', ''),
                     row.get('comments', '')
