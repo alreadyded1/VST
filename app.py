@@ -658,53 +658,62 @@ def delete_service(service_id):
 @login_required
 def export_services_csv():
     """Export service records to CSV"""
-    vehicle_id = request.args.get('vehicle_id')
+    try:
+        vehicle_id = request.args.get('vehicle_id')
 
-    db = get_db()
-    if vehicle_id:
-        services = db.execute('''
-            SELECT id, vehicle_id, date, service_provider, cost, supplies_cost,
-                   odometer, repairs_completed, comments, receipt_path
-            FROM service_records
-            WHERE vehicle_id = ?
-            ORDER BY date DESC
-        ''', (vehicle_id,)).fetchall()
-    else:
-        services = db.execute('''
-            SELECT id, vehicle_id, date, service_provider, cost, supplies_cost,
-                   odometer, repairs_completed, comments, receipt_path
-            FROM service_records
-            ORDER BY date DESC
-        ''').fetchall()
+        db = get_db()
+        if vehicle_id:
+            services = db.execute('''
+                SELECT date, service_provider, cost, supplies_cost,
+                       odometer, repairs_completed, comments
+                FROM service_records
+                WHERE vehicle_id = ?
+                ORDER BY date DESC
+            ''', (vehicle_id,)).fetchall()
+        else:
+            services = db.execute('''
+                SELECT date, service_provider, cost, supplies_cost,
+                       odometer, repairs_completed, comments
+                FROM service_records
+                ORDER BY date DESC
+            ''').fetchall()
 
-    # Create CSV in memory
-    output = io.StringIO()
-    writer = csv.writer(output)
+        # Convert rows to dictionaries
+        services_list = [dict(row) for row in services]
+        db.close()
 
-    # Write header
-    writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost', 'odometer',
-                     'repairs_completed', 'comments'])
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
 
-    # Write data
-    for service in services:
-        writer.writerow([
-            service['date'],
-            service['service_provider'],
-            service['cost'],
-            service['supplies_cost'] or 0,
-            service['odometer'] or '',
-            service['repairs_completed'] or '',
-            service['comments'] or ''
-        ])
+        # Write header
+        writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost', 'odometer',
+                         'repairs_completed', 'comments'])
 
-    db.close()
+        # Write data
+        for service in services_list:
+            writer.writerow([
+                service.get('date', ''),
+                service.get('service_provider', ''),
+                service.get('cost', 0),
+                service.get('supplies_cost', 0) or 0,
+                service.get('odometer', '') or '',
+                service.get('repairs_completed', '') or '',
+                service.get('comments', '') or ''
+            ])
 
-    # Create response
-    output.seek(0)
-    response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = 'attachment; filename=service_records.csv'
-    return response
+        # Create response
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+        response.headers['Content-Disposition'] = 'attachment; filename=service_records.csv'
+        return response
+
+    except Exception as e:
+        print(f"Export CSV Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/services/template-csv', methods=['GET'])
 @login_required
