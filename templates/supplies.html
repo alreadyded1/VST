@@ -20,8 +20,7 @@
 }
 
 .menu-button:hover {
-    background-color: var(--hover-color);
-    border-radius: 5px;
+    color: var(--secondary-color);
 }
 
 .menu-dropdown {
@@ -49,10 +48,11 @@
     text-align: left;
     cursor: pointer;
     font-size: 0.9rem;
+    transition: background-color 0.2s;
 }
 
 .menu-dropdown button:hover {
-    background-color: var(--hover-color);
+    background-color: var(--light-bg);
 }
 
 .menu-dropdown button.danger {
@@ -87,7 +87,7 @@
                     <th class="sortable">Cost/Unit</th>
                     <th class="sortable">Total Value</th>
                     <th>Warranty</th>
-                    <th>Actions</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody id="suppliesTableBody">
