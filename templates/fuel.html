@@ -5,6 +5,70 @@
 {% block content %}
 <h1>Fuel Tracker</h1>
 
+<style>
+/* Hamburger menu styles */
+.action-menu {
+    position: relative;
+    display: inline-block;
+}
+
+.menu-button {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    color: var(--dark-text);
+}
+
+.menu-button:hover {
+    color: var(--secondary-color);
+}
+
+.menu-dropdown {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 150px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    border-radius: 5px;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.menu-dropdown.show {
+    display: block;
+}
+
+.menu-dropdown button {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.menu-dropdown button:hover {
+    background-color: var(--light-bg);
+}
+
+.menu-dropdown button.danger:hover {
+    background-color: #fee;
+    color: var(--danger-color);
+}
+
+/* Date column width */
+#fuelTable th:first-child,
+#fuelTable td:first-child {
+    min-width: 130px;
+}
+</style>
+
 <div class="card">
     <h2>Fuel Economy Statistics</h2>
     <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
@@ -28,7 +92,7 @@
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Fuel Records</h2>
-        <button class="btn btn-primary" onclick="openModal('addFuelModal')">Add Fuel Record</button>
+        <button class="btn btn-primary" onclick="openAddFuelModal()">Add Fuel Record</button>
     </div>
 
     <div class="table-container">
@@ -42,7 +106,7 @@
                     <th class="sortable hide-mobile">Price/Gal</th>
                     <th class="hide-mobile">Location</th>
                     <th class="sortable">MPG</th>
-                    <th>Actions</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody id="fuelTableBody">
@@ -188,7 +252,13 @@ function displayFuelRecords(records) {
                 <td class="hide-mobile">${record.location}</td>
                 <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
                 <td>
-                    <button class="btn btn-small btn-danger" onclick="deleteFuelRecord(${record.id})">Delete</button>
+                    <div class="action-menu">
+                        <button class="menu-button" onclick="toggleFuelMenu(event, ${record.id})">&#8942;</button>
+                        <div class="menu-dropdown" id="fuel-menu-${record.id}">
+                            <button onclick="editFuelRecord(${record.id})">Edit</button>
+                            <button class="danger" onclick="deleteFuelRecord(${record.id})">Delete</button>
+                        </div>
+                    </div>
                 </td>
             </tr>
         `;
@@ -231,6 +301,58 @@ function calculateStats(records) {
     }
 }
 
+let currentEditFuelId = null;
+
+function toggleFuelMenu(event, fuelId) {
+    event.stopPropagation();
+    const menu = document.getElementById(`fuel-menu-${fuelId}`);
+
+    // Close all other menus
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+    });
+
+    menu.classList.toggle('show');
+}
+
+// Close menus when clicking outside
+document.addEventListener('click', () => {
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        m.classList.remove('show');
+    });
+});
+
+async function editFuelRecord(fuelId) {
+    try {
+        const record = await fetchAPI(`/api/fuel/${fuelId}`);
+        if (!record) return;
+
+        currentEditFuelId = fuelId;
+
+        // Populate form
+        document.getElementById('fuelDate').value = record.date;
+        document.getElementById('odometer').value = record.odometer;
+        document.getElementById('gallons').value = record.gallons;
+        document.getElementById('fuelCost').value = record.cost;
+        document.getElementById('location').value = record.location;
+
+        // Update modal title
+        document.querySelector('#addFuelModal h3').textContent = 'Edit Fuel Record';
+
+        openModal('addFuelModal');
+    } catch (error) {
+        console.error('Error loading fuel record:', error);
+    }
+}
+
+function openAddFuelModal() {
+    currentEditFuelId = null;
+    document.getElementById('fuelForm').reset();
+    document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
+    document.getElementById('fuelDate').valueAsDate = new Date();
+    openModal('addFuelModal');
+}
+
 async function addFuelRecord(event) {
     event.preventDefault();
 
@@ -253,21 +375,31 @@ async function addFuelRecord(event) {
     };
 
     try {
-        const result = await postJSON('/api/fuel', data);
+        let result;
+        if (currentEditFuelId) {
+            // Update existing record
+            result = await putJSON(`/api/fuel/${currentEditFuelId}`, data);
+            showAlert('Fuel record updated successfully!', 'success');
+        } else {
+            // Add new record
+            result = await postJSON('/api/fuel', data);
+            showAlert('Fuel record added successfully!', 'success');
+        }
 
         if (result.success) {
-            showAlert('Fuel record added successfully!', 'success');
             form.reset();
+            currentEditFuelId = null;
+            document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
             closeModal('addFuelModal');
             await loadFuelRecords();
 
-            // Show MPG popup if calculated
-            if (result.mpg) {
+            // Show MPG popup if calculated (only for new records)
+            if (result.mpg && !currentEditFuelId) {
                 showMpgPopup(result.mpg, data.gallons, data.cost);
             }
         }
     } catch (error) {
-        console.error('Error adding fuel record:', error);
+        console.error('Error saving fuel record:', error);
     }
 }
 
