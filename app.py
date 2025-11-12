@@ -99,10 +99,15 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 vehicle_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
+                part_number TEXT,
+                manufacturer TEXT,
                 brand TEXT,
                 cost REAL NOT NULL,
                 quantity INTEGER NOT NULL,
                 unit TEXT DEFAULT 'units',
+                warranty_start_date DATE,
+                warranty_months INTEGER,
+                receipt_path TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
             );
@@ -157,6 +162,23 @@ def init_db():
         except sqlite3.OperationalError:
             # Column already exists
             pass
+
+        # Migration: Add new columns to supplies table for Parts & Supplies functionality
+        migrations = [
+            'ALTER TABLE supplies ADD COLUMN part_number TEXT',
+            'ALTER TABLE supplies ADD COLUMN manufacturer TEXT',
+            'ALTER TABLE supplies ADD COLUMN warranty_start_date DATE',
+            'ALTER TABLE supplies ADD COLUMN warranty_months INTEGER',
+            'ALTER TABLE supplies ADD COLUMN receipt_path TEXT'
+        ]
+
+        for migration in migrations:
+            try:
+                db.execute(migration)
+                db.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
 
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
@@ -844,32 +866,110 @@ def get_supplies():
 @app.route('/api/supplies', methods=['POST'])
 @login_required
 def add_supply():
-    """Add new supply"""
-    data = request.json
+    """Add new supply/part"""
+    data = request.form
     vehicle_id = data.get('vehicle_id')
 
     if not vehicle_id:
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
+    receipt_path = None
+
+    if 'receipt' in request.files:
+        file = request.files['receipt']
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
+            file.save(filepath)
+            receipt_path = f'uploads/receipts/{filename}'
+
     db = get_db()
-    cursor = db.execute('''INSERT INTO supplies (vehicle_id, name, brand, cost, quantity, unit)
-                          VALUES (?, ?, ?, ?, ?, ?)''',
-                       (vehicle_id, data['name'], data.get('brand', ''),
-                        data['cost'], data['quantity'], data.get('unit', 'units')))
+    cursor = db.execute('''INSERT INTO supplies
+                          (vehicle_id, name, part_number, manufacturer, brand, cost, quantity, unit,
+                           warranty_start_date, warranty_months, receipt_path)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                       (vehicle_id, data['name'], data.get('part_number', ''),
+                        data.get('manufacturer', ''), data.get('brand', ''),
+                        data['cost'], data['quantity'], data.get('unit', 'units'),
+                        data.get('warranty_start_date', None),
+                        int(data['warranty_months']) if data.get('warranty_months') else None,
+                        receipt_path))
+
+    # Auto-create reminder if quantity is 1
+    supply_id = cursor.lastrowid
+    if int(data['quantity']) == 1:
+        part_name = f"{data['name']}"
+        if data.get('part_number'):
+            part_name += f" ({data.get('part_number')})"
+
+        db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, notes, completed)
+                     VALUES (?, ?, ?, ?)''',
+                  (vehicle_id, f"Re-order {part_name}",
+                   'Part quantity is at 1. Consider re-ordering soon.', 0))
 
     db.commit()
-    supply_id = cursor.lastrowid
     db.close()
     return jsonify({'success': True, 'id': supply_id})
 
 @app.route('/api/supplies/<int:supply_id>', methods=['PUT'])
 @login_required
 def update_supply(supply_id):
-    """Update supply"""
-    data = request.json
+    """Update supply/part"""
+    data = request.form
+    receipt_path = None
+
+    # Check if we're updating the receipt
+    if 'receipt' in request.files:
+        file = request.files['receipt']
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
+            file.save(filepath)
+            receipt_path = f'uploads/receipts/{filename}'
+
     db = get_db()
-    db.execute('''UPDATE supplies SET name=?, brand=?, cost=?, quantity=?, unit=? WHERE id=?''',
-              (data['name'], data.get('brand', ''), data['cost'], data['quantity'], data.get('unit', 'units'), supply_id))
+
+    # Get current supply for vehicle_id
+    current_supply = db.execute('SELECT * FROM supplies WHERE id = ?', (supply_id,)).fetchone()
+    vehicle_id = current_supply['vehicle_id']
+
+    # Update supply record
+    if receipt_path:
+        db.execute('''UPDATE supplies
+                     SET name=?, part_number=?, manufacturer=?, brand=?, cost=?, quantity=?, unit=?,
+                         warranty_start_date=?, warranty_months=?, receipt_path=?
+                     WHERE id=?''',
+                  (data['name'], data.get('part_number', ''), data.get('manufacturer', ''),
+                   data.get('brand', ''), data['cost'], data['quantity'], data.get('unit', 'units'),
+                   data.get('warranty_start_date', None),
+                   int(data['warranty_months']) if data.get('warranty_months') else None,
+                   receipt_path, supply_id))
+    else:
+        db.execute('''UPDATE supplies
+                     SET name=?, part_number=?, manufacturer=?, brand=?, cost=?, quantity=?, unit=?,
+                         warranty_start_date=?, warranty_months=?
+                     WHERE id=?''',
+                  (data['name'], data.get('part_number', ''), data.get('manufacturer', ''),
+                   data.get('brand', ''), data['cost'], data['quantity'], data.get('unit', 'units'),
+                   data.get('warranty_start_date', None),
+                   int(data['warranty_months']) if data.get('warranty_months') else None,
+                   supply_id))
+
+    # Auto-create reminder if quantity is now 1
+    if int(data['quantity']) == 1:
+        part_name = f"{data['name']}"
+        if data.get('part_number'):
+            part_name += f" ({data.get('part_number')})"
+
+        db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, notes, completed)
+                     VALUES (?, ?, ?, ?)''',
+                  (vehicle_id, f"Re-order {part_name}",
+                   'Part quantity is at 1. Consider re-ordering soon.', 0))
+
     db.commit()
     db.close()
     return jsonify({'success': True})
