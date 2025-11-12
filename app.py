@@ -935,6 +935,55 @@ def add_fuel_record():
     db.close()
     return jsonify({'success': True, 'id': record_id, 'mpg': mpg})
 
+@app.route('/api/fuel/<int:fuel_id>', methods=['GET'])
+@login_required
+def get_fuel_record(fuel_id):
+    """Get a specific fuel record"""
+    db = get_db()
+    record = db.execute('SELECT * FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
+    db.close()
+
+    if record:
+        return jsonify(dict(record))
+    return jsonify({'error': 'Fuel record not found'}), 404
+
+@app.route('/api/fuel/<int:fuel_id>', methods=['PUT'])
+@login_required
+def update_fuel_record(fuel_id):
+    """Update an existing fuel record"""
+    data = request.json
+
+    db = get_db()
+
+    # Update the fuel record
+    db.execute('''UPDATE fuel_records
+                 SET date=?, gallons=?, cost=?, odometer=?, location=?
+                 WHERE id=?''',
+              (data['date'], data['gallons'], data['cost'],
+               data['odometer'], data['location'], fuel_id))
+
+    # Recalculate MPG for this record
+    record = db.execute('SELECT * FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
+    vehicle_id = record['vehicle_id']
+
+    # Get previous fuel record to recalculate MPG
+    prev_record = db.execute('''SELECT * FROM fuel_records
+                               WHERE vehicle_id = ? AND odometer < ?
+                               ORDER BY odometer DESC LIMIT 1''',
+                            (vehicle_id, data['odometer'])).fetchone()
+
+    mpg = None
+    if prev_record:
+        miles_driven = data['odometer'] - prev_record['odometer']
+        if miles_driven > 0 and data['gallons'] > 0:
+            mpg = round(miles_driven / data['gallons'], 2)
+
+    db.execute('UPDATE fuel_records SET mpg=? WHERE id=?', (mpg, fuel_id))
+
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'mpg': mpg})
+
 @app.route('/api/fuel/<int:fuel_id>', methods=['DELETE'])
 @login_required
 def delete_fuel_record(fuel_id):
