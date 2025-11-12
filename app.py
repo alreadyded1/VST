@@ -100,11 +100,9 @@ def init_db():
                 vehicle_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 part_number TEXT,
-                manufacturer TEXT,
                 brand TEXT,
                 cost REAL NOT NULL,
                 quantity INTEGER NOT NULL,
-                unit TEXT DEFAULT 'units',
                 warranty_start_date DATE,
                 warranty_months INTEGER,
                 receipt_path TEXT,
@@ -887,12 +885,11 @@ def add_supply():
 
     db = get_db()
     cursor = db.execute('''INSERT INTO supplies
-                          (vehicle_id, name, part_number, manufacturer, brand, cost, quantity, unit,
+                          (vehicle_id, name, part_number, brand, cost, quantity,
                            warranty_start_date, warranty_months, receipt_path)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['name'], data.get('part_number', ''),
-                        data.get('manufacturer', ''), data.get('brand', ''),
-                        data['cost'], data['quantity'], data.get('unit', 'units'),
+                        data.get('brand', ''), data['cost'], data['quantity'],
                         data.get('warranty_start_date', None),
                         int(data['warranty_months']) if data.get('warranty_months') else None,
                         receipt_path))
@@ -940,21 +937,21 @@ def update_supply(supply_id):
     # Update supply record
     if receipt_path:
         db.execute('''UPDATE supplies
-                     SET name=?, part_number=?, manufacturer=?, brand=?, cost=?, quantity=?, unit=?,
+                     SET name=?, part_number=?, brand=?, cost=?, quantity=?,
                          warranty_start_date=?, warranty_months=?, receipt_path=?
                      WHERE id=?''',
-                  (data['name'], data.get('part_number', ''), data.get('manufacturer', ''),
-                   data.get('brand', ''), data['cost'], data['quantity'], data.get('unit', 'units'),
+                  (data['name'], data.get('part_number', ''),
+                   data.get('brand', ''), data['cost'], data['quantity'],
                    data.get('warranty_start_date', None),
                    int(data['warranty_months']) if data.get('warranty_months') else None,
                    receipt_path, supply_id))
     else:
         db.execute('''UPDATE supplies
-                     SET name=?, part_number=?, manufacturer=?, brand=?, cost=?, quantity=?, unit=?,
+                     SET name=?, part_number=?, brand=?, cost=?, quantity=?,
                          warranty_start_date=?, warranty_months=?
                      WHERE id=?''',
-                  (data['name'], data.get('part_number', ''), data.get('manufacturer', ''),
-                   data.get('brand', ''), data['cost'], data['quantity'], data.get('unit', 'units'),
+                  (data['name'], data.get('part_number', ''),
+                   data.get('brand', ''), data['cost'], data['quantity'],
                    data.get('warranty_start_date', None),
                    int(data['warranty_months']) if data.get('warranty_months') else None,
                    supply_id))
