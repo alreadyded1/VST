@@ -659,45 +659,45 @@ table tr:hover {
 /* Fuel Gauge */
 .fuel-gauge {
     position: relative;
-    width: 200px;
-    height: 100px;
+    width: 150px;
+    height: 75px;
     margin: 0 auto;
 }
 
 .fuel-gauge-arc {
     position: relative;
-    width: 200px;
-    height: 100px;
+    width: 150px;
+    height: 75px;
 }
 
 .fuel-gauge-background {
     position: absolute;
-    width: 180px;
-    height: 90px;
-    border: 8px solid #e0e0e0;
+    width: 135px;
+    height: 67.5px;
+    border: 6px solid #e0e0e0;
     border-bottom: none;
-    border-radius: 180px 180px 0 0;
-    top: 10px;
-    left: 10px;
+    border-radius: 135px 135px 0 0;
+    top: 7.5px;
+    left: 7.5px;
 }
 
 .fuel-gauge-fill {
     position: absolute;
-    width: 180px;
-    height: 90px;
-    border: 8px solid;
+    width: 135px;
+    height: 67.5px;
+    border: 6px solid;
     border-bottom: none;
-    border-radius: 180px 180px 0 0;
-    top: 10px;
-    left: 10px;
+    border-radius: 135px 135px 0 0;
+    top: 7.5px;
+    left: 7.5px;
     clip-path: inset(0 0 0 0);
     transition: all 0.5s ease;
 }
 
 .fuel-gauge-needle {
     position: absolute;
-    width: 4px;
-    height: 80px;
+    width: 3px;
+    height: 60px;
     background: #333;
     bottom: 0;
     left: 50%;
@@ -710,11 +710,11 @@ table tr:hover {
 
 .fuel-gauge-center {
     position: absolute;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
     background: #333;
     border-radius: 50%;
-    bottom: -8px;
+    bottom: -6px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 3;
@@ -726,7 +726,7 @@ table tr:hover {
     bottom: -5px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 2rem;
+    font-size: 1.5rem;
     font-weight: 700;
     color: var(--dark-text);
     text-align: center;
@@ -735,10 +735,10 @@ table tr:hover {
 
 .fuel-gauge-label {
     position: absolute;
-    bottom: -35px;
+    bottom: -30px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     color: var(--light-text);
     text-transform: uppercase;
     letter-spacing: 0.5px;
