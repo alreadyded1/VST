@@ -186,7 +186,7 @@ nav {
 .stat-card h3 {
     font-size: 0.9rem;
     font-weight: 500;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.8rem;
     color: var(--light-text);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -738,7 +738,7 @@ table tr:hover {
     top: -25px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 0.75rem;
+    font-size: 0.9rem;
     color: var(--light-text);
     text-transform: uppercase;
     letter-spacing: 0.5px;
