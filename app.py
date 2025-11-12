@@ -664,18 +664,26 @@ def export_services_csv():
         db = get_db()
         if vehicle_id:
             services = db.execute('''
-                SELECT date, service_provider, cost, supplies_cost,
-                       odometer, repairs_completed, comments
-                FROM service_records
-                WHERE vehicle_id = ?
-                ORDER BY date DESC
+                SELECT s.date, s.service_provider, s.cost,
+                       COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost,
+                       s.repairs_completed, s.comments
+                FROM service_records s
+                LEFT JOIN service_supplies ss ON s.id = ss.service_id
+                LEFT JOIN supplies sup ON ss.supply_id = sup.id
+                WHERE s.vehicle_id = ?
+                GROUP BY s.id
+                ORDER BY s.date DESC
             ''', (vehicle_id,)).fetchall()
         else:
             services = db.execute('''
-                SELECT date, service_provider, cost, supplies_cost,
-                       odometer, repairs_completed, comments
-                FROM service_records
-                ORDER BY date DESC
+                SELECT s.date, s.service_provider, s.cost,
+                       COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost,
+                       s.repairs_completed, s.comments
+                FROM service_records s
+                LEFT JOIN service_supplies ss ON s.id = ss.service_id
+                LEFT JOIN supplies sup ON ss.supply_id = sup.id
+                GROUP BY s.id
+                ORDER BY s.date DESC
             ''').fetchall()
 
         # Convert rows to dictionaries
@@ -687,7 +695,7 @@ def export_services_csv():
         writer = csv.writer(output)
 
         # Write header
-        writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost', 'odometer',
+        writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost',
                          'repairs_completed', 'comments'])
 
         # Write data
@@ -697,7 +705,6 @@ def export_services_csv():
                 service.get('service_provider', ''),
                 service.get('cost', 0),
                 service.get('supplies_cost', 0) or 0,
-                service.get('odometer', '') or '',
                 service.get('repairs_completed', '') or '',
                 service.get('comments', '') or ''
             ])
@@ -723,16 +730,14 @@ def download_services_template():
     writer = csv.writer(output)
 
     # Write header
-    writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost', 'odometer',
-                     'repairs_completed', 'comments'])
+    writer.writerow(['date', 'service_provider', 'cost', 'repairs_completed', 'comments'])
 
     # Write example row
-    writer.writerow(['2024-01-15', 'Auto Shop', '150.00', '25.00', '50000',
-                     'Oil change, tire rotation', 'Regular maintenance'])
+    writer.writerow(['2024-01-15', 'Auto Shop', '150.00', 'Oil change, tire rotation', 'Regular maintenance'])
 
     output.seek(0)
     response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
     response.headers['Content-Disposition'] = 'attachment; filename=service_records_template.csv'
     return response
 
@@ -777,16 +782,13 @@ def import_services_csv():
                 # Insert service record
                 cursor = db.execute('''
                     INSERT INTO service_records
-                    (vehicle_id, date, service_provider, cost, supplies_cost, odometer,
-                     repairs_completed, comments)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (vehicle_id, date, service_provider, cost, repairs_completed, comments)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     vehicle_id,
                     row['date'],
                     row['service_provider'],
                     float(row.get('cost', 0) or 0),
-                    float(row.get('supplies_cost', 0) or 0),
-                    int(row['odometer']) if row.get('odometer') and row['odometer'].strip() else None,
                     row.get('repairs_completed', ''),
                     row.get('comments', '')
                 ))
