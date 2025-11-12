@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash, make_response
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -7,6 +7,8 @@ import sqlite3
 import os
 from werkzeug.utils import secure_filename
 import json
+import csv
+import io
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
@@ -650,6 +652,152 @@ def delete_service(service_id):
     db.commit()
     db.close()
     return jsonify({'success': True})
+
+# CSV Export/Import endpoints for services
+@app.route('/api/services/export-csv', methods=['GET'])
+@login_required
+def export_services_csv():
+    """Export service records to CSV"""
+    vehicle_id = request.args.get('vehicle_id')
+
+    db = get_db()
+    if vehicle_id:
+        services = db.execute('''
+            SELECT id, vehicle_id, date, service_provider, cost, supplies_cost,
+                   odometer, repairs_completed, comments, receipt_path
+            FROM service_records
+            WHERE vehicle_id = ?
+            ORDER BY date DESC
+        ''', (vehicle_id,)).fetchall()
+    else:
+        services = db.execute('''
+            SELECT id, vehicle_id, date, service_provider, cost, supplies_cost,
+                   odometer, repairs_completed, comments, receipt_path
+            FROM service_records
+            ORDER BY date DESC
+        ''').fetchall()
+    db.close()
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost', 'odometer',
+                     'repairs_completed', 'comments'])
+
+    # Write data
+    for service in services:
+        writer.writerow([
+            service['date'],
+            service['service_provider'],
+            service['cost'],
+            service['supplies_cost'] or 0,
+            service['odometer'] or '',
+            service['repairs_completed'] or '',
+            service['comments'] or ''
+        ])
+
+    # Create response
+    output.seek(0)
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = 'attachment; filename=service_records.csv'
+    return response
+
+@app.route('/api/services/template-csv', methods=['GET'])
+@login_required
+def download_services_template():
+    """Download a CSV template for importing service records"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(['date', 'service_provider', 'cost', 'supplies_cost', 'odometer',
+                     'repairs_completed', 'comments'])
+
+    # Write example row
+    writer.writerow(['2024-01-15', 'Auto Shop', '150.00', '25.00', '50000',
+                     'Oil change, tire rotation', 'Regular maintenance'])
+
+    output.seek(0)
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = 'attachment; filename=service_records_template.csv'
+    return response
+
+@app.route('/api/services/import-csv', methods=['POST'])
+@login_required
+def import_services_csv():
+    """Import service records from CSV"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    vehicle_id = request.form.get('vehicle_id')
+    if not vehicle_id:
+        return jsonify({'error': 'Vehicle ID is required'}), 400
+
+    try:
+        # Read CSV file
+        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        csv_reader = csv.DictReader(stream)
+
+        db = get_db()
+        imported_count = 0
+        errors = []
+
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 because of header
+            try:
+                # Validate required fields
+                if not row.get('date') or not row.get('service_provider'):
+                    errors.append(f"Row {row_num}: Missing required fields (date or service_provider)")
+                    continue
+
+                # Parse and validate date
+                try:
+                    datetime.strptime(row['date'], '%Y-%m-%d')
+                except ValueError:
+                    errors.append(f"Row {row_num}: Invalid date format (use YYYY-MM-DD)")
+                    continue
+
+                # Insert service record
+                cursor = db.execute('''
+                    INSERT INTO service_records
+                    (vehicle_id, date, service_provider, cost, supplies_cost, odometer,
+                     repairs_completed, comments)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    vehicle_id,
+                    row['date'],
+                    row['service_provider'],
+                    float(row.get('cost', 0) or 0),
+                    float(row.get('supplies_cost', 0) or 0),
+                    int(row['odometer']) if row.get('odometer') and row['odometer'].strip() else None,
+                    row.get('repairs_completed', ''),
+                    row.get('comments', '')
+                ))
+                imported_count += 1
+
+            except Exception as e:
+                errors.append(f"Row {row_num}: {str(e)}")
+
+        db.commit()
+        db.close()
+
+        response = {
+            'success': True,
+            'imported': imported_count,
+            'errors': errors
+        }
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to import CSV: {str(e)}'}), 400
 
 # Supplies endpoints
 @app.route('/api/supplies', methods=['GET'])
