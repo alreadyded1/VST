@@ -161,8 +161,11 @@
                 <div id="receiptPreview" class="file-preview"></div>
             </div>
 
-            <div class="alert alert-info">
-                <strong>Note:</strong> A reminder will automatically be created when the quantity reaches 1.
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="remindToReorder" name="remind_to_reorder" style="width: auto; margin: 0;">
+                    <span>Remind me to re-order this supply when quantity reaches 1</span>
+                </label>
             </div>
 
             <button type="submit" class="btn btn-success">Save Part/Supply</button>
@@ -416,6 +419,7 @@ function editSupply(supplyId) {
     document.getElementById('supplyQuantity').value = supply.quantity;
     document.getElementById('warrantyStartDate').value = supply.warranty_start_date || '';
     document.getElementById('warrantyMonths').value = supply.warranty_months || '';
+    document.getElementById('remindToReorder').checked = supply.remind_to_reorder ? true : false;
 
     // Show existing receipt if any
     const receiptPreview = document.getElementById('receiptPreview');

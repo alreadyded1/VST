@@ -106,6 +106,7 @@ def init_db():
                 warranty_start_date DATE,
                 warranty_months INTEGER,
                 receipt_path TEXT,
+                remind_to_reorder BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
             );
@@ -177,6 +178,14 @@ def init_db():
             except sqlite3.OperationalError:
                 # Column already exists
                 pass
+
+        # Migration: Add remind_to_reorder column to supplies table
+        try:
+            db.execute('ALTER TABLE supplies ADD COLUMN remind_to_reorder BOOLEAN DEFAULT 0')
+            db.commit()
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
 
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
@@ -883,20 +892,23 @@ def add_supply():
             file.save(filepath)
             receipt_path = f'uploads/receipts/{filename}'
 
+    # Get remind_to_reorder checkbox value (defaults to False if not checked)
+    remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
+
     db = get_db()
     cursor = db.execute('''INSERT INTO supplies
                           (vehicle_id, name, part_number, brand, cost, quantity,
-                           warranty_start_date, warranty_months, receipt_path)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                           warranty_start_date, warranty_months, receipt_path, remind_to_reorder)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['name'], data.get('part_number', ''),
                         data.get('brand', ''), data['cost'], data['quantity'],
                         data.get('warranty_start_date', None),
                         int(data['warranty_months']) if data.get('warranty_months') else None,
-                        receipt_path))
+                        receipt_path, remind_to_reorder))
 
-    # Auto-create reminder if quantity is 1
+    # Create reminder if quantity is 1 AND remind_to_reorder is checked
     supply_id = cursor.lastrowid
-    if int(data['quantity']) == 1:
+    if int(data['quantity']) == 1 and remind_to_reorder:
         part_name = f"{data['name']}"
         if data.get('part_number'):
             part_name += f" ({data.get('part_number')})"
@@ -928,6 +940,9 @@ def update_supply(supply_id):
             file.save(filepath)
             receipt_path = f'uploads/receipts/{filename}'
 
+    # Get remind_to_reorder checkbox value (defaults to False if not checked)
+    remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
+
     db = get_db()
 
     # Get current supply for vehicle_id
@@ -938,26 +953,26 @@ def update_supply(supply_id):
     if receipt_path:
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                         warranty_start_date=?, warranty_months=?, receipt_path=?
+                         warranty_start_date=?, warranty_months=?, receipt_path=?, remind_to_reorder=?
                      WHERE id=?''',
                   (data['name'], data.get('part_number', ''),
                    data.get('brand', ''), data['cost'], data['quantity'],
                    data.get('warranty_start_date', None),
                    int(data['warranty_months']) if data.get('warranty_months') else None,
-                   receipt_path, supply_id))
+                   receipt_path, remind_to_reorder, supply_id))
     else:
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                         warranty_start_date=?, warranty_months=?
+                         warranty_start_date=?, warranty_months=?, remind_to_reorder=?
                      WHERE id=?''',
                   (data['name'], data.get('part_number', ''),
                    data.get('brand', ''), data['cost'], data['quantity'],
                    data.get('warranty_start_date', None),
                    int(data['warranty_months']) if data.get('warranty_months') else None,
-                   supply_id))
+                   remind_to_reorder, supply_id))
 
-    # Auto-create reminder if quantity is now 1
-    if int(data['quantity']) == 1:
+    # Create reminder if quantity is 1 AND remind_to_reorder is checked
+    if int(data['quantity']) == 1 and remind_to_reorder:
         part_name = f"{data['name']}"
         if data.get('part_number'):
             part_name += f" ({data.get('part_number')})"
