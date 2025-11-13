@@ -585,6 +585,8 @@ table tr:hover {
 
     .table-container {
         font-size: 0.85rem;
+        width: 95%;
+        margin: 0 auto;
     }
 
     table th,

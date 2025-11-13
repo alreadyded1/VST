@@ -90,10 +90,12 @@
     <div class="flex-between mb-2">
         <h2>Service History</h2>
         <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <button class="btn btn-secondary" onclick="downloadTemplate()">Download CSV Template</button>
-            <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
-            <input type="file" id="csvFileInput" accept=".csv" style="display: none;" onchange="importCSV(event)">
-            <button class="btn btn-secondary" onclick="exportCSV()">Export CSV</button>
+            <div class="hide-mobile" style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="downloadTemplate()">Download CSV Template</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
+                <input type="file" id="csvFileInput" accept=".csv" style="display: none;" onchange="importCSV(event)">
+                <button class="btn btn-secondary" onclick="exportCSV()">Export CSV</button>
+            </div>
             <button class="btn btn-primary" onclick="openAddServiceModal()">Add Service Record</button>
         </div>
     </div>
