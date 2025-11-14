@@ -187,6 +187,20 @@ def init_db():
             # Column already exists
             pass
 
+        # Migration: Add mileage-based warranty tracking columns to supplies table
+        mileage_warranty_migrations = [
+            'ALTER TABLE supplies ADD COLUMN warranty_start_mileage INTEGER',
+            'ALTER TABLE supplies ADD COLUMN warranty_mileage_limit INTEGER'
+        ]
+
+        for migration in mileage_warranty_migrations:
+            try:
+                db.execute(migration)
+                db.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
         if admin_exists['count'] == 0:
@@ -898,12 +912,15 @@ def add_supply():
     db = get_db()
     cursor = db.execute('''INSERT INTO supplies
                           (vehicle_id, name, part_number, brand, cost, quantity,
-                           warranty_start_date, warranty_months, receipt_path, remind_to_reorder)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                           warranty_start_date, warranty_months, warranty_start_mileage,
+                           warranty_mileage_limit, receipt_path, remind_to_reorder)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['name'], data.get('part_number', ''),
                         data.get('brand', ''), data['cost'], data['quantity'],
                         data.get('warranty_start_date', None),
                         int(data['warranty_months']) if data.get('warranty_months') else None,
+                        int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
+                        int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
                         receipt_path, remind_to_reorder))
 
     # Create reminder if quantity is 1 AND remind_to_reorder is checked
@@ -953,22 +970,28 @@ def update_supply(supply_id):
     if receipt_path:
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                         warranty_start_date=?, warranty_months=?, receipt_path=?, remind_to_reorder=?
+                         warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
+                         warranty_mileage_limit=?, receipt_path=?, remind_to_reorder=?
                      WHERE id=?''',
                   (data['name'], data.get('part_number', ''),
                    data.get('brand', ''), data['cost'], data['quantity'],
                    data.get('warranty_start_date', None),
                    int(data['warranty_months']) if data.get('warranty_months') else None,
+                   int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
+                   int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
                    receipt_path, remind_to_reorder, supply_id))
     else:
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                         warranty_start_date=?, warranty_months=?, remind_to_reorder=?
+                         warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
+                         warranty_mileage_limit=?, remind_to_reorder=?
                      WHERE id=?''',
                   (data['name'], data.get('part_number', ''),
                    data.get('brand', ''), data['cost'], data['quantity'],
                    data.get('warranty_start_date', None),
                    int(data['warranty_months']) if data.get('warranty_months') else None,
+                   int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
+                   int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
                    remind_to_reorder, supply_id))
 
     # Create reminder if quantity is 1 AND remind_to_reorder is checked
