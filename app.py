@@ -1129,6 +1129,177 @@ def delete_fuel_record(fuel_id):
     db.close()
     return jsonify({'success': True})
 
+# CSV Export/Import endpoints for fuel records
+@app.route('/api/fuel/export-csv', methods=['GET'])
+@login_required
+def export_fuel_csv():
+    """Export fuel records to CSV"""
+    try:
+        vehicle_id = request.args.get('vehicle_id')
+
+        db = get_db()
+        if vehicle_id:
+            fuel_records = db.execute('''
+                SELECT date, odometer, gallons, cost, location, mpg
+                FROM fuel_records
+                WHERE vehicle_id = ?
+                ORDER BY date DESC, odometer DESC
+            ''', (vehicle_id,)).fetchall()
+        else:
+            fuel_records = db.execute('''
+                SELECT date, odometer, gallons, cost, location, mpg
+                FROM fuel_records
+                ORDER BY date DESC, odometer DESC
+            ''').fetchall()
+
+        # Convert rows to dictionaries
+        records_list = [dict(row) for row in fuel_records]
+        db.close()
+
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Write header
+        writer.writerow(['date', 'odometer', 'gallons', 'cost', 'location', 'mpg'])
+
+        # Write data
+        for record in records_list:
+            writer.writerow([
+                record.get('date', ''),
+                record.get('odometer', ''),
+                record.get('gallons', ''),
+                record.get('cost', ''),
+                record.get('location', ''),
+                record.get('mpg', '') or ''
+            ])
+
+        # Create response
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+        response.headers['Content-Disposition'] = 'attachment; filename=fuel_records.csv'
+        return response
+
+    except Exception as e:
+        print(f"Export CSV Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/fuel/template-csv', methods=['GET'])
+@login_required
+def download_fuel_template():
+    """Download a CSV template for importing fuel records"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(['date', 'odometer', 'gallons', 'cost', 'location'])
+
+    # Write example rows
+    writer.writerow(['2024-01-15', '50000', '12.5', '45.00', 'Shell Station'])
+    writer.writerow(['2024-01-22', '50350', '11.8', '42.50', 'BP Gas Station'])
+
+    output.seek(0)
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename=fuel_records_template.csv'
+    return response
+
+@app.route('/api/fuel/import-csv', methods=['POST'])
+@login_required
+def import_fuel_csv():
+    """Import fuel records from CSV"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    vehicle_id = request.form.get('vehicle_id')
+    if not vehicle_id:
+        return jsonify({'error': 'Vehicle ID is required'}), 400
+
+    try:
+        # Read CSV file
+        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        csv_reader = csv.DictReader(stream)
+
+        db = get_db()
+        imported_count = 0
+        errors = []
+
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 because of header
+            try:
+                # Validate required fields
+                if not row.get('date') or not row.get('odometer') or not row.get('gallons') or not row.get('cost') or not row.get('location'):
+                    errors.append(f"Row {row_num}: Missing required fields")
+                    continue
+
+                # Parse and validate date
+                try:
+                    datetime.strptime(row['date'], '%Y-%m-%d')
+                except ValueError:
+                    errors.append(f"Row {row_num}: Invalid date format (use YYYY-MM-DD)")
+                    continue
+
+                # Validate numeric fields
+                try:
+                    odometer = int(row['odometer'])
+                    gallons = float(row['gallons'])
+                    cost = float(row['cost'])
+                except ValueError:
+                    errors.append(f"Row {row_num}: Invalid numeric value")
+                    continue
+
+                # Calculate MPG if possible
+                prev_record = db.execute('''SELECT * FROM fuel_records
+                                           WHERE vehicle_id = ? AND odometer < ?
+                                           ORDER BY odometer DESC LIMIT 1''',
+                                        (vehicle_id, odometer)).fetchone()
+
+                mpg = None
+                if prev_record:
+                    miles_driven = odometer - prev_record['odometer']
+                    if miles_driven > 0 and gallons > 0:
+                        mpg = round(miles_driven / gallons, 2)
+
+                # Insert fuel record
+                db.execute('''
+                    INSERT INTO fuel_records
+                    (vehicle_id, date, odometer, gallons, cost, location, mpg)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    vehicle_id,
+                    row['date'],
+                    odometer,
+                    gallons,
+                    cost,
+                    row['location'],
+                    mpg
+                ))
+                imported_count += 1
+
+            except Exception as e:
+                errors.append(f"Row {row_num}: {str(e)}")
+
+        db.commit()
+        db.close()
+
+        response = {
+            'success': True,
+            'imported': imported_count,
+            'errors': errors
+        }
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to import CSV: {str(e)}'}), 400
+
+
 # Service reminders endpoints
 @app.route('/api/reminders', methods=['GET'])
 @login_required

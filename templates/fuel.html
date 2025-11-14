@@ -104,7 +104,15 @@
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Fuel Records</h2>
-        <button class="btn btn-primary" onclick="openAddFuelModal()">Add Fuel Record</button>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <div class="hide-mobile" style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="downloadTemplate()">Download CSV Template</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
+                <input type="file" id="csvFileInput" accept=".csv" style="display: none;" onchange="importCSV(event)">
+                <button class="btn btn-secondary" onclick="exportCSV()">Export CSV</button>
+            </div>
+            <button class="btn btn-primary" onclick="openAddFuelModal()">Add Fuel Record</button>
+        </div>
     </div>
 
     <div class="table-container">
@@ -470,5 +478,60 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set default date to today
     document.getElementById('fuelDate').valueAsDate = new Date();
 });
+
+// CSV Import/Export functions
+function downloadTemplate() {
+    window.location.href = '/api/fuel/template-csv';
+}
+
+function exportCSV() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first', 'error');
+        return;
+    }
+    window.location.href = `/api/fuel/export-csv?vehicle_id=${vehicleId}`;
+}
+
+async function importCSV(event) {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first', 'error');
+        return;
+    }
+
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('vehicle_id', vehicleId);
+
+    try {
+        const response = await fetch('/api/fuel/import-csv', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            let message = `Successfully imported ${result.imported} fuel records.`;
+            if (result.errors && result.errors.length > 0) {
+                message += `\n\nErrors:\n${result.errors.join('\n')}`;
+            }
+            showAlert(message, result.errors.length > 0 ? 'warning' : 'success');
+            await loadFuelRecords();
+        } else {
+            showAlert(result.error || 'Failed to import CSV', 'error');
+        }
+    } catch (error) {
+        console.error('Error importing CSV:', error);
+        showAlert('Failed to import CSV file', 'error');
+    }
+
+    // Reset file input
+    event.target.value = '';
+}
 </script>
 {% endblock %}
