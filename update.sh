@@ -1,4 +1,4 @@
-# !/bin/bash
+#!/bin/bash
 
 # Vehicle Maintenance Tracker Update Script for Proxmox LXC Container
 # This script updates an existing installation from GitHub
