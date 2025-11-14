@@ -58,7 +58,9 @@ function formatCurrency(amount) {
 
 // Format date for display
 function formatDate(dateString) {
-    const date = new Date(dateString);
+    // Parse date as local date to avoid timezone shifts
+    const [year, month, day] = dateString.split('-').map(num => parseInt(num, 10));
+    const date = new Date(year, month - 1, day); // month is 0-indexed
     return date.toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
