@@ -58,14 +58,13 @@ function formatCurrency(amount) {
 
 // Format date for display
 function formatDate(dateString) {
-    // Parse date as local date to avoid timezone shifts
-    const [year, month, day] = dateString.split('-').map(num => parseInt(num, 10));
-    const date = new Date(year, month - 1, day); // month is 0-indexed
-    return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-    });
+    // Parse date string directly without Date object to avoid any timezone issues
+    const [year, month, day] = dateString.split('-');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthIndex = parseInt(month, 10) - 1;
+    const dayNum = parseInt(day, 10);
+    return `${monthNames[monthIndex]} ${dayNum}, ${year}`;
 }
 
 // Show alert message
