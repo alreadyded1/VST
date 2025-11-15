@@ -48,6 +48,21 @@ function setActiveNav() {
     });
 }
 
+// Mobile menu toggle
+function toggleMobileMenu() {
+    const mobileMenu = document.getElementById('mobileMenu');
+    if (mobileMenu) {
+        mobileMenu.classList.toggle('open');
+    }
+}
+
+function closeMobileMenu() {
+    const mobileMenu = document.getElementById('mobileMenu');
+    if (mobileMenu) {
+        mobileMenu.classList.remove('open');
+    }
+}
+
 // Format currency
 function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', {

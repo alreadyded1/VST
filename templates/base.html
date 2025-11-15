@@ -19,7 +19,8 @@
         </div>
     </header>
 
-    <nav>
+    <!-- Desktop Navigation -->
+    <nav class="desktop-nav">
         <div class="nav-container">
             <ul class="nav-menu">
                 <li><a href="/">Dashboard</a></li>
@@ -37,6 +38,31 @@
                 {% endif %}
             </ul>
         </div>
+    </nav>
+
+    <!-- Mobile Navigation -->
+    <nav class="mobile-nav">
+        <div class="mobile-nav-header">
+            <button class="hamburger-btn" onclick="toggleMobileMenu()">
+                <span class="hamburger-icon">&#9776;</span>
+                <span class="menu-text">Menu</span>
+            </button>
+        </div>
+        <ul class="mobile-menu" id="mobileMenu">
+            <li><a href="/" onclick="closeMobileMenu()">Dashboard</a></li>
+            <li><a href="/vehicles" onclick="closeMobileMenu()">Vehicles</a></li>
+            <li><a href="/services" onclick="closeMobileMenu()">Service Records</a></li>
+            <li><a href="/supplies" onclick="closeMobileMenu()">Parts & Supplies</a></li>
+            <li><a href="/fuel" onclick="closeMobileMenu()">Fuel Tracker</a></li>
+            <li><a href="/reminders" onclick="closeMobileMenu()">Reminders</a></li>
+            {% if current_user.is_authenticated %}
+                {% if current_user.is_admin %}
+                    <li><a href="/admin" onclick="closeMobileMenu()">Admin Panel</a></li>
+                {% endif %}
+                <li><a href="/profile" onclick="closeMobileMenu()">Profile</a></li>
+                <li><a href="/logout" onclick="closeMobileMenu()">Logout ({{ current_user.username }})</a></li>
+            {% endif %}
+        </ul>
     </nav>
 
     <div class="container">
