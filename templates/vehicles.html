@@ -3,6 +3,13 @@
 {% block title %}Vehicles - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
+<style>
+/* View modal label styling */
+#viewVehicleModal .form-group label {
+    font-weight: bold;
+}
+</style>
+
 <h1>My Vehicles</h1>
 
 <div class="card">
@@ -69,6 +76,57 @@
         </form>
     </div>
 </div>
+
+<!-- View Vehicle Modal -->
+<div id="viewVehicleModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Vehicle Details</h3>
+            <button class="close" onclick="closeModal('viewVehicleModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="viewVehicleImage" style="margin-bottom: 1rem;"></div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Nickname:</label>
+                    <p id="viewNickname"></p>
+                </div>
+                <div class="form-group">
+                    <label>Year:</label>
+                    <p id="viewYear"></p>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Manufacturer:</label>
+                    <p id="viewManufacturer"></p>
+                </div>
+                <div class="form-group">
+                    <label>Model:</label>
+                    <p id="viewModel"></p>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Engine:</label>
+                    <p id="viewEngine"></p>
+                </div>
+                <div class="form-group">
+                    <label>VIN:</label>
+                    <p id="viewVIN"></p>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Created:</label>
+                <p id="viewCreated"></p>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -109,7 +167,8 @@ function displayVehicles(vehicles) {
                     <p><strong>${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}</strong></p>
                     ${vehicle.engine ? `<p>Engine: ${vehicle.engine}</p>` : ''}
                     ${vehicle.vin ? `<p><small>VIN: ${vehicle.vin}</small></p>` : ''}
-                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View</button>
                         <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
                         <button class="btn btn-small btn-primary" onclick="selectVehicle(${vehicle.id})">Select</button>
                         <button class="btn btn-small btn-danger" onclick="deleteVehicle(${vehicle.id})">Delete</button>
@@ -129,6 +188,43 @@ function selectVehicle(vehicleId) {
     setTimeout(() => {
         window.location.href = '/';
     }, 1000);
+}
+
+function viewVehicle(vehicleId) {
+    const vehicle = allVehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return;
+
+    // Display vehicle image
+    const imageContainer = document.getElementById('viewVehicleImage');
+    if (vehicle.picture) {
+        imageContainer.innerHTML = `<img src="/static/${vehicle.picture}" style="width: 100%; max-height: 300px; object-fit: cover; border-radius: 8px;">`;
+    } else {
+        imageContainer.innerHTML = '<div style="width: 100%; height: 200px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px;">No Image</div>';
+    }
+
+    // Populate vehicle details
+    document.getElementById('viewNickname').textContent = vehicle.nickname || 'N/A';
+    document.getElementById('viewYear').textContent = vehicle.year;
+    document.getElementById('viewManufacturer').textContent = vehicle.manufacturer;
+    document.getElementById('viewModel').textContent = vehicle.model;
+    document.getElementById('viewEngine').textContent = vehicle.engine || 'N/A';
+    document.getElementById('viewVIN').textContent = vehicle.vin || 'N/A';
+
+    // Format created_at date if available
+    if (vehicle.created_at) {
+        const createdDate = new Date(vehicle.created_at);
+        document.getElementById('viewCreated').textContent = createdDate.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } else {
+        document.getElementById('viewCreated').textContent = 'N/A';
+    }
+
+    openModal('viewVehicleModal');
 }
 
 function editVehicle(vehicleId) {
