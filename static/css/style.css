@@ -716,6 +716,21 @@ table tr:hover {
     body.mobile-view .mobile-nav {
         margin-bottom: 0.5rem;
     }
+
+    /* VIN decode button mobile optimization */
+    body.mobile-view #vin {
+        margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 480px) {
+        .form-group > div[style*="flex"] {
+            flex-direction: column !important;
+        }
+
+        .form-group > div[style*="flex"] button {
+            width: 100% !important;
+        }
+    }
 }
 
 /* Desktop-only optimizations */

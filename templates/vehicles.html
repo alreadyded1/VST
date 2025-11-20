@@ -58,7 +58,11 @@
             <div class="form-row">
                 <div class="form-group">
                     <label for="vin">VIN</label>
-                    <input type="text" id="vin" name="vin" maxlength="17" placeholder="17-character VIN">
+                    <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+                        <input type="text" id="vin" name="vin" maxlength="17" placeholder="17-character VIN" style="flex: 1;">
+                        <button type="button" class="btn btn-secondary" onclick="decodeVINForAdd()" id="decodeVINAddBtn" style="white-space: nowrap;">Decode VIN</button>
+                    </div>
+                    <small style="color: var(--light-text); font-size: 0.85rem;">Enter 17-character VIN and click Decode to auto-fill vehicle details</small>
                 </div>
                 <div class="form-group">
                     <label for="nickname">Nickname</label>
@@ -358,6 +362,58 @@ async function decodeVINFromView() {
         if (response.success && response.data) {
             displayVINDecodeResults(response.data);
             openModal('vinDecodeModal');
+        } else {
+            showAlert(response.error || 'Failed to decode VIN', 'error');
+        }
+    } catch (error) {
+        console.error('Error decoding VIN:', error);
+        const errorMsg = error.message || 'Error decoding VIN';
+        showAlert(errorMsg, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Decode VIN';
+    }
+}
+
+async function decodeVINForAdd() {
+    const vinInput = document.getElementById('vin');
+    const vin = vinInput.value.trim();
+
+    if (!vin) {
+        showAlert('Please enter a VIN', 'error');
+        return;
+    }
+
+    if (vin.length !== 17) {
+        showAlert('VIN must be exactly 17 characters', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('decodeVINAddBtn');
+    btn.disabled = true;
+    btn.textContent = 'Decoding...';
+
+    try {
+        const response = await fetchAPI(`/api/vehicle/decode-vin/${vin}`);
+
+        if (response.success && response.data) {
+            // Auto-fill form fields
+            const data = response.data;
+
+            if (data.manufacturer) {
+                document.getElementById('manufacturer').value = data.manufacturer;
+            }
+            if (data.model) {
+                document.getElementById('model').value = data.model;
+            }
+            if (data.year) {
+                document.getElementById('year').value = data.year;
+            }
+            if (data.engine) {
+                document.getElementById('engine').value = data.engine;
+            }
+
+            showAlert('VIN decoded successfully! Fields have been auto-filled.', 'success');
         } else {
             showAlert(response.error || 'Failed to decode VIN', 'error');
         }
