@@ -511,7 +511,11 @@ def decode_vin(vin):
     try:
         # NHTSA VIN Decoder API
         url = f'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json'
-        response = requests.get(url, timeout=10)
+        headers = {
+            'User-Agent': 'VST-Vehicle-Tracker/1.0',
+            'Accept': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
 
         if response.status_code == 200:
             data = response.json()
@@ -541,12 +545,17 @@ def decode_vin(vin):
             else:
                 return jsonify({'success': False, 'error': 'No data returned from NHTSA'}), 400
         else:
-            return jsonify({'success': False, 'error': 'Failed to contact NHTSA API'}), 500
+            error_msg = f'NHTSA API returned status {response.status_code}'
+            if response.text:
+                error_msg += f': {response.text[:100]}'
+            return jsonify({'success': False, 'error': error_msg}), 500
 
     except requests.exceptions.Timeout:
-        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out'}), 504
+        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out. Please try again.'}), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({'success': False, 'error': f'Network error: {str(e)}'}), 500
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
 @app.route('/api/vehicle/recalls', methods=['GET'])
 @login_required
@@ -562,7 +571,11 @@ def check_recalls():
 
         # NHTSA Recalls API
         url = f'https://api.nhtsa.gov/recalls/recallsByVehicle?make={make}&model={model}&modelYear={year}'
-        response = requests.get(url, timeout=10)
+        headers = {
+            'User-Agent': 'VST-Vehicle-Tracker/1.0',
+            'Accept': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
 
         if response.status_code == 200:
             data = response.json()
@@ -588,12 +601,17 @@ def check_recalls():
                 'recalls': recalls
             })
         else:
-            return jsonify({'success': False, 'error': 'Failed to contact NHTSA Recalls API'}), 500
+            error_msg = f'NHTSA Recalls API returned status {response.status_code}'
+            if response.text:
+                error_msg += f': {response.text[:100]}'
+            return jsonify({'success': False, 'error': error_msg}), 500
 
     except requests.exceptions.Timeout:
-        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out'}), 504
+        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out. Please try again.'}), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({'success': False, 'error': f'Network error: {str(e)}'}), 500
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
 @app.route('/api/vehicle/recalls-by-vin/<vin>', methods=['GET'])
 @login_required
@@ -602,7 +620,11 @@ def check_recalls_by_vin(vin):
     try:
         # NHTSA Recalls by VIN API
         url = f'https://api.nhtsa.gov/recalls/recallsByVehicle?vin={vin}'
-        response = requests.get(url, timeout=10)
+        headers = {
+            'User-Agent': 'VST-Vehicle-Tracker/1.0',
+            'Accept': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
 
         if response.status_code == 200:
             data = response.json()
@@ -628,12 +650,17 @@ def check_recalls_by_vin(vin):
                 'recalls': recalls
             })
         else:
-            return jsonify({'success': False, 'error': 'Failed to contact NHTSA Recalls API'}), 500
+            error_msg = f'NHTSA Recalls API returned status {response.status_code}'
+            if response.text:
+                error_msg += f': {response.text[:100]}'
+            return jsonify({'success': False, 'error': error_msg}), 500
 
     except requests.exceptions.Timeout:
-        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out'}), 504
+        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out. Please try again.'}), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({'success': False, 'error': f'Network error: {str(e)}'}), 500
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
 @app.route('/api/vehicle/recalls/create-reminders', methods=['POST'])
 @login_required

@@ -271,15 +271,17 @@ document.addEventListener('DOMContentLoaded', () => {
 async function fetchAPI(url, options = {}) {
     try {
         const response = await fetch(url, options);
+        const data = await response.json();
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            // If the response has an error message, use it
+            const errorMsg = data.error || `HTTP error! status: ${response.status}`;
+            throw new Error(errorMsg);
         }
 
-        return await response.json();
+        return data;
     } catch (error) {
         console.error('API Error:', error);
-        showAlert('An error occurred. Please try again.', 'danger');
         throw error;
     }
 }

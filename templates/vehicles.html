@@ -363,7 +363,8 @@ async function decodeVINFromView() {
         }
     } catch (error) {
         console.error('Error decoding VIN:', error);
-        showAlert('Error decoding VIN', 'error');
+        const errorMsg = error.message || 'Error decoding VIN';
+        showAlert(errorMsg, 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Decode VIN';
@@ -447,7 +448,8 @@ async function checkRecallsFromView() {
         }
     } catch (error) {
         console.error('Error checking recalls:', error);
-        showAlert('Error checking recalls', 'error');
+        const errorMsg = error.message || 'Error checking recalls';
+        showAlert(errorMsg, 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Check Recalls';
