@@ -577,29 +577,40 @@ def check_recalls():
         }
         response = requests.get(url, headers=headers, timeout=10)
 
-        if response.status_code == 200:
-            data = response.json()
+        # NHTSA API quirk: returns 400 even for successful queries with no results
+        # Check if we got valid JSON regardless of status code
+        if response.status_code in [200, 400]:
+            try:
+                data = response.json()
 
-            # Extract recall information
-            recalls = []
-            if data.get('results') and len(data['results']) > 0:
-                for recall in data['results']:
-                    recalls.append({
-                        'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
-                        'manufacturer': recall.get('Manufacturer', ''),
-                        'subject': recall.get('Subject', ''),
-                        'summary': recall.get('Summary', ''),
-                        'consequence': recall.get('Consequence', ''),
-                        'remedy': recall.get('Remedy', ''),
-                        'report_date': recall.get('ReportReceivedDate', ''),
-                        'component': recall.get('Component', '')
+                # Check if the API returned a valid response structure
+                if 'results' in data or 'Results' in data:
+                    # Extract recall information (handle both lowercase and uppercase keys)
+                    recalls = []
+                    results = data.get('results') or data.get('Results', [])
+
+                    if results and len(results) > 0:
+                        for recall in results:
+                            recalls.append({
+                                'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
+                                'manufacturer': recall.get('Manufacturer', ''),
+                                'subject': recall.get('Subject', ''),
+                                'summary': recall.get('Summary', ''),
+                                'consequence': recall.get('Consequence', ''),
+                                'remedy': recall.get('Remedy', ''),
+                                'report_date': recall.get('ReportReceivedDate', ''),
+                                'component': recall.get('Component', '')
+                            })
+
+                    return jsonify({
+                        'success': True,
+                        'count': len(recalls),
+                        'recalls': recalls
                     })
-
-            return jsonify({
-                'success': True,
-                'count': len(recalls),
-                'recalls': recalls
-            })
+                else:
+                    return jsonify({'success': False, 'error': 'Invalid response format from NHTSA'}), 500
+            except ValueError:
+                return jsonify({'success': False, 'error': 'Invalid JSON response from NHTSA'}), 500
         else:
             error_msg = f'NHTSA Recalls API returned status {response.status_code}'
             if response.text:
@@ -626,29 +637,40 @@ def check_recalls_by_vin(vin):
         }
         response = requests.get(url, headers=headers, timeout=10)
 
-        if response.status_code == 200:
-            data = response.json()
+        # NHTSA API quirk: returns 400 even for successful queries with no results
+        # Check if we got valid JSON regardless of status code
+        if response.status_code in [200, 400]:
+            try:
+                data = response.json()
 
-            # Extract recall information
-            recalls = []
-            if data.get('results') and len(data['results']) > 0:
-                for recall in data['results']:
-                    recalls.append({
-                        'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
-                        'manufacturer': recall.get('Manufacturer', ''),
-                        'subject': recall.get('Subject', ''),
-                        'summary': recall.get('Summary', ''),
-                        'consequence': recall.get('Consequence', ''),
-                        'remedy': recall.get('Remedy', ''),
-                        'report_date': recall.get('ReportReceivedDate', ''),
-                        'component': recall.get('Component', '')
+                # Check if the API returned a valid response structure
+                if 'results' in data or 'Results' in data:
+                    # Extract recall information (handle both lowercase and uppercase keys)
+                    recalls = []
+                    results = data.get('results') or data.get('Results', [])
+
+                    if results and len(results) > 0:
+                        for recall in results:
+                            recalls.append({
+                                'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
+                                'manufacturer': recall.get('Manufacturer', ''),
+                                'subject': recall.get('Subject', ''),
+                                'summary': recall.get('Summary', ''),
+                                'consequence': recall.get('Consequence', ''),
+                                'remedy': recall.get('Remedy', ''),
+                                'report_date': recall.get('ReportReceivedDate', ''),
+                                'component': recall.get('Component', '')
+                            })
+
+                    return jsonify({
+                        'success': True,
+                        'count': len(recalls),
+                        'recalls': recalls
                     })
-
-            return jsonify({
-                'success': True,
-                'count': len(recalls),
-                'recalls': recalls
-            })
+                else:
+                    return jsonify({'success': False, 'error': 'Invalid response format from NHTSA'}), 500
+            except ValueError:
+                return jsonify({'success': False, 'error': 'Invalid JSON response from NHTSA'}), 500
         else:
             error_msg = f'NHTSA Recalls API returned status {response.status_code}'
             if response.text:
