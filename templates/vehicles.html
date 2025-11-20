@@ -124,6 +124,40 @@
                 <label>Created:</label>
                 <p id="viewCreated"></p>
             </div>
+
+            <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
+                <h4 style="margin-bottom: 1rem;">NHTSA Services</h4>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-secondary" onclick="decodeVINFromView()" id="decodeVINBtn">Decode VIN</button>
+                    <button class="btn btn-secondary" onclick="checkRecallsFromView()" id="checkRecallsBtn">Check Recalls</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- VIN Decode Results Modal -->
+<div id="vinDecodeModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>VIN Decode Results</h3>
+            <button class="close" onclick="closeModal('vinDecodeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="vinDecodeResults"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Recalls Results Modal -->
+<div id="recallsModal" class="modal">
+    <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+            <h3>Vehicle Recalls</h3>
+            <button class="close" onclick="closeModal('recallsModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="recallsResults"></div>
         </div>
     </div>
 </div>
@@ -193,6 +227,9 @@ function selectVehicle(vehicleId) {
 function viewVehicle(vehicleId) {
     const vehicle = allVehicles.find(v => v.id === vehicleId);
     if (!vehicle) return;
+
+    // Store current vehicle for NHTSA functions
+    currentViewVehicle = vehicle;
 
     // Display vehicle image
     const imageContainer = document.getElementById('viewVehicleImage');
@@ -299,6 +336,165 @@ async function deleteVehicle(vehicleId) {
     } catch (error) {
         console.error('Error deleting vehicle:', error);
     }
+}
+
+// NHTSA Integration Functions
+let currentViewVehicle = null;
+
+async function decodeVINFromView() {
+    if (!currentViewVehicle || !currentViewVehicle.vin) {
+        showAlert('No VIN available for this vehicle', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('decodeVINBtn');
+    btn.disabled = true;
+    btn.textContent = 'Decoding...';
+
+    try {
+        const response = await fetchAPI(`/api/vehicle/decode-vin/${currentViewVehicle.vin}`);
+
+        if (response.success && response.data) {
+            displayVINDecodeResults(response.data);
+            openModal('vinDecodeModal');
+        } else {
+            showAlert(response.error || 'Failed to decode VIN', 'error');
+        }
+    } catch (error) {
+        console.error('Error decoding VIN:', error);
+        showAlert('Error decoding VIN', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Decode VIN';
+    }
+}
+
+function displayVINDecodeResults(data) {
+    const container = document.getElementById('vinDecodeResults');
+
+    let html = '<div style="display: grid; gap: 1rem;">';
+
+    // Check for errors
+    if (data.error_codes && data.error_codes !== '0') {
+        html += `<div class="alert alert-warning" style="padding: 1rem; background: var(--warning-color); color: white; border-radius: 8px;">
+            <strong>Warning:</strong> ${data.error_text || 'Some errors occurred during decoding'}
+        </div>`;
+    }
+
+    // Display vehicle information
+    html += '<div class="form-row">';
+    html += `<div class="form-group"><label>VIN:</label><p>${data.vin || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>Year:</label><p>${data.year || 'N/A'}</p></div>`;
+    html += '</div>';
+
+    html += '<div class="form-row">';
+    html += `<div class="form-group"><label>Manufacturer:</label><p>${data.manufacturer || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>Model:</label><p>${data.model || 'N/A'}</p></div>`;
+    html += '</div>';
+
+    html += '<div class="form-row">';
+    html += `<div class="form-group"><label>Body Type:</label><p>${data.body_type || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>Vehicle Type:</label><p>${data.vehicle_type || 'N/A'}</p></div>`;
+    html += '</div>';
+
+    html += '<div class="form-row">';
+    html += `<div class="form-group"><label>Engine:</label><p>${data.engine || 'N/A'}</p></div>`;
+    html += '</div>';
+
+    // Plant information
+    if (data.plant_city || data.plant_state || data.plant_country) {
+        html += '<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">';
+        html += '<h4>Manufacturing Plant</h4>';
+        html += '<div class="form-row">';
+        html += `<div class="form-group"><label>City:</label><p>${data.plant_city || 'N/A'}</p></div>`;
+        html += `<div class="form-group"><label>State:</label><p>${data.plant_state || 'N/A'}</p></div>`;
+        html += `<div class="form-group"><label>Country:</label><p>${data.plant_country || 'N/A'}</p></div>`;
+        html += '</div>';
+        html += '</div>';
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+async function checkRecallsFromView() {
+    if (!currentViewVehicle) {
+        showAlert('No vehicle selected', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('checkRecallsBtn');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+
+    try {
+        const response = await fetchAPI(`/api/vehicle/recalls?make=${encodeURIComponent(currentViewVehicle.manufacturer)}&model=${encodeURIComponent(currentViewVehicle.model)}&year=${currentViewVehicle.year}`);
+
+        if (response.success) {
+            displayRecallResults(response);
+            openModal('recallsModal');
+        } else {
+            showAlert(response.error || 'Failed to check recalls', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking recalls:', error);
+        showAlert('Error checking recalls', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Check Recalls';
+    }
+}
+
+function displayRecallResults(response) {
+    const container = document.getElementById('recallsResults');
+
+    let html = '';
+
+    if (response.count === 0) {
+        html = `<div class="alert alert-success" style="padding: 1.5rem; background: var(--success-color); color: white; border-radius: 8px; text-align: center;">
+            <h3 style="margin-bottom: 0.5rem;">No Recalls Found</h3>
+            <p>Great news! No recalls were found for this vehicle.</p>
+        </div>`;
+    } else {
+        html = `<div class="alert alert-danger" style="padding: 1rem; background: var(--danger-color); color: white; border-radius: 8px; margin-bottom: 1rem;">
+            <strong>⚠ ${response.count} Recall${response.count > 1 ? 's' : ''} Found</strong>
+        </div>`;
+
+        response.recalls.forEach((recall, index) => {
+            html += `<div class="card" style="margin-bottom: 1rem; border-left: 4px solid var(--danger-color);">
+                <h4 style="margin-bottom: 0.5rem;">Recall #${index + 1}: ${recall.nhtsa_campaign_number}</h4>
+                <p><strong>Manufacturer:</strong> ${recall.manufacturer}</p>
+                <p><strong>Component:</strong> ${recall.component || 'N/A'}</p>
+                <p><strong>Report Date:</strong> ${recall.report_date || 'N/A'}</p>
+
+                <div style="margin-top: 1rem;">
+                    <p><strong>Subject:</strong></p>
+                    <p>${recall.subject || 'N/A'}</p>
+                </div>
+
+                <div style="margin-top: 1rem;">
+                    <p><strong>Summary:</strong></p>
+                    <p>${recall.summary || 'N/A'}</p>
+                </div>
+
+                ${recall.consequence ? `
+                <div style="margin-top: 1rem;">
+                    <p><strong>Consequence:</strong></p>
+                    <p>${recall.consequence}</p>
+                </div>
+                ` : ''}
+
+                ${recall.remedy ? `
+                <div style="margin-top: 1rem;">
+                    <p><strong>Remedy:</strong></p>
+                    <p>${recall.remedy}</p>
+                </div>
+                ` : ''}
+            </div>`;
+        });
+    }
+
+    container.innerHTML = html;
 }
 
 document.addEventListener('DOMContentLoaded', loadVehicles);

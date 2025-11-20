@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 import json
 import csv
 import io
+import requests
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
@@ -501,6 +502,98 @@ def delete_vehicle(vehicle_id):
     db.commit()
     db.close()
     return jsonify({'success': True})
+
+# NHTSA API Integration endpoints
+@app.route('/api/vehicle/decode-vin/<vin>', methods=['GET'])
+@login_required
+def decode_vin(vin):
+    """Decode VIN using NHTSA API"""
+    try:
+        # NHTSA VIN Decoder API
+        url = f'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json'
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            # Extract relevant information from the response
+            if data.get('Results') and len(data['Results']) > 0:
+                result = data['Results'][0]
+
+                # Return simplified vehicle information
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'vin': result.get('VIN', ''),
+                        'manufacturer': result.get('Make', ''),
+                        'model': result.get('Model', ''),
+                        'year': result.get('ModelYear', ''),
+                        'engine': result.get('EngineModel', '') or result.get('EngineCylinders', ''),
+                        'body_type': result.get('BodyClass', ''),
+                        'vehicle_type': result.get('VehicleType', ''),
+                        'plant_city': result.get('PlantCity', ''),
+                        'plant_state': result.get('PlantState', ''),
+                        'plant_country': result.get('PlantCountry', ''),
+                        'error_codes': result.get('ErrorCode', ''),
+                        'error_text': result.get('ErrorText', '')
+                    }
+                })
+            else:
+                return jsonify({'success': False, 'error': 'No data returned from NHTSA'}), 400
+        else:
+            return jsonify({'success': False, 'error': 'Failed to contact NHTSA API'}), 500
+
+    except requests.exceptions.Timeout:
+        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out'}), 504
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/vehicle/recalls', methods=['GET'])
+@login_required
+def check_recalls():
+    """Check for recalls using NHTSA API"""
+    try:
+        make = request.args.get('make')
+        model = request.args.get('model')
+        year = request.args.get('year')
+
+        if not make or not model or not year:
+            return jsonify({'success': False, 'error': 'Make, model, and year are required'}), 400
+
+        # NHTSA Recalls API
+        url = f'https://api.nhtsa.gov/recalls/recallsByVehicle?make={make}&model={model}&modelYear={year}'
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            # Extract recall information
+            recalls = []
+            if data.get('results') and len(data['results']) > 0:
+                for recall in data['results']:
+                    recalls.append({
+                        'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
+                        'manufacturer': recall.get('Manufacturer', ''),
+                        'subject': recall.get('Subject', ''),
+                        'summary': recall.get('Summary', ''),
+                        'consequence': recall.get('Consequence', ''),
+                        'remedy': recall.get('Remedy', ''),
+                        'report_date': recall.get('ReportReceivedDate', ''),
+                        'component': recall.get('Component', '')
+                    })
+
+            return jsonify({
+                'success': True,
+                'count': len(recalls),
+                'recalls': recalls
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to contact NHTSA Recalls API'}), 500
+
+    except requests.exceptions.Timeout:
+        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out'}), 504
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Service records endpoints
 @app.route('/api/services', methods=['GET'])
