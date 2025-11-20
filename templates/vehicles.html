@@ -397,7 +397,7 @@ async function decodeVINForAdd() {
         const response = await fetchAPI(`/api/vehicle/decode-vin/${vin}`);
 
         if (response.success && response.data) {
-            // Auto-fill form fields
+            // Auto-fill form fields (manufacturer, model, year only)
             const data = response.data;
 
             if (data.manufacturer) {
@@ -409,11 +409,8 @@ async function decodeVINForAdd() {
             if (data.year) {
                 document.getElementById('year').value = data.year;
             }
-            if (data.engine) {
-                document.getElementById('engine').value = data.engine;
-            }
 
-            showAlert('VIN decoded successfully! Fields have been auto-filled.', 'success');
+            showAlert('VIN decoded successfully! Manufacturer, model, and year have been auto-filled.', 'success');
         } else {
             showAlert(response.error || 'Failed to decode VIN', 'error');
         }
