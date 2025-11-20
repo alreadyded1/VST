@@ -595,6 +595,97 @@ def check_recalls():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/vehicle/recalls-by-vin/<vin>', methods=['GET'])
+@login_required
+def check_recalls_by_vin(vin):
+    """Check for recalls by VIN using NHTSA API"""
+    try:
+        # NHTSA Recalls by VIN API
+        url = f'https://api.nhtsa.gov/recalls/recallsByVehicle?vin={vin}'
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            # Extract recall information
+            recalls = []
+            if data.get('results') and len(data['results']) > 0:
+                for recall in data['results']:
+                    recalls.append({
+                        'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
+                        'manufacturer': recall.get('Manufacturer', ''),
+                        'subject': recall.get('Subject', ''),
+                        'summary': recall.get('Summary', ''),
+                        'consequence': recall.get('Consequence', ''),
+                        'remedy': recall.get('Remedy', ''),
+                        'report_date': recall.get('ReportReceivedDate', ''),
+                        'component': recall.get('Component', '')
+                    })
+
+            return jsonify({
+                'success': True,
+                'count': len(recalls),
+                'recalls': recalls
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to contact NHTSA Recalls API'}), 500
+
+    except requests.exceptions.Timeout:
+        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out'}), 504
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/vehicle/recalls/create-reminders', methods=['POST'])
+@login_required
+def create_recall_reminders():
+    """Create reminders for vehicle recalls"""
+    try:
+        data = request.json
+        vehicle_id = data.get('vehicle_id')
+        recalls = data.get('recalls', [])
+
+        if not vehicle_id or not recalls:
+            return jsonify({'success': False, 'error': 'Vehicle ID and recalls are required'}), 400
+
+        db = get_db()
+        created_count = 0
+
+        for recall in recalls:
+            campaign_number = recall.get('nhtsa_campaign_number', '')
+            subject = recall.get('subject', '')
+            component = recall.get('component', '')
+
+            # Check if reminder already exists for this recall
+            existing = db.execute(
+                'SELECT id FROM service_reminders WHERE vehicle_id = ? AND service_type LIKE ? AND completed = 0',
+                (vehicle_id, f'%{campaign_number}%')
+            ).fetchone()
+
+            if not existing:
+                # Create reminder for this recall
+                service_type = f"Recall Repair: {campaign_number}"
+                notes = f"Component: {component}\n\nSubject: {subject}\n\n"
+                notes += f"Summary: {recall.get('summary', 'N/A')}\n\n"
+                notes += f"Remedy: {recall.get('remedy', 'N/A')}"
+
+                db.execute(
+                    'INSERT INTO service_reminders (vehicle_id, service_type, notes, completed) VALUES (?, ?, ?, ?)',
+                    (vehicle_id, service_type, notes, 0)
+                )
+                created_count += 1
+
+        db.commit()
+        db.close()
+
+        return jsonify({
+            'success': True,
+            'created': created_count,
+            'message': f'Created {created_count} recall reminder(s)'
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Service records endpoints
 @app.route('/api/services', methods=['GET'])
 @login_required

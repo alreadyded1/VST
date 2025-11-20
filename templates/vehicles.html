@@ -340,6 +340,7 @@ async function deleteVehicle(vehicleId) {
 
 // NHTSA Integration Functions
 let currentViewVehicle = null;
+let currentRecalls = [];
 
 async function decodeVINFromView() {
     if (!currentViewVehicle || !currentViewVehicle.vin) {
@@ -428,7 +429,15 @@ async function checkRecallsFromView() {
     btn.textContent = 'Checking...';
 
     try {
-        const response = await fetchAPI(`/api/vehicle/recalls?make=${encodeURIComponent(currentViewVehicle.manufacturer)}&model=${encodeURIComponent(currentViewVehicle.model)}&year=${currentViewVehicle.year}`);
+        let response;
+
+        // Prefer VIN-based recall check if VIN is available
+        if (currentViewVehicle.vin) {
+            response = await fetchAPI(`/api/vehicle/recalls-by-vin/${currentViewVehicle.vin}`);
+        } else {
+            // Fallback to make/model/year if no VIN
+            response = await fetchAPI(`/api/vehicle/recalls?make=${encodeURIComponent(currentViewVehicle.manufacturer)}&model=${encodeURIComponent(currentViewVehicle.model)}&year=${currentViewVehicle.year}`);
+        }
 
         if (response.success) {
             displayRecallResults(response);
@@ -448,6 +457,9 @@ async function checkRecallsFromView() {
 function displayRecallResults(response) {
     const container = document.getElementById('recallsResults');
 
+    // Store recalls for reminder creation
+    currentRecalls = response.recalls || [];
+
     let html = '';
 
     if (response.count === 0) {
@@ -458,6 +470,16 @@ function displayRecallResults(response) {
     } else {
         html = `<div class="alert alert-danger" style="padding: 1rem; background: var(--danger-color); color: white; border-radius: 8px; margin-bottom: 1rem;">
             <strong>⚠ ${response.count} Recall${response.count > 1 ? 's' : ''} Found</strong>
+        </div>`;
+
+        // Add button to create reminders for all recalls
+        html += `<div style="margin-bottom: 1rem; text-align: center;">
+            <button class="btn btn-primary" onclick="createRecallReminders()" id="createRemindersBtn">
+                Create Reminders for All Recalls
+            </button>
+            <p style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--light-text);">
+                This will create service reminders for each unrepaired recall
+            </p>
         </div>`;
 
         response.recalls.forEach((recall, index) => {
@@ -495,6 +517,55 @@ function displayRecallResults(response) {
     }
 
     container.innerHTML = html;
+}
+
+async function createRecallReminders() {
+    if (!currentViewVehicle || currentRecalls.length === 0) {
+        showAlert('No recalls to create reminders for', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('createRemindersBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Creating Reminders...';
+    }
+
+    try {
+        const response = await fetch('/api/vehicle/recalls/create-reminders', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                vehicle_id: currentViewVehicle.id,
+                recalls: currentRecalls
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showAlert(result.message || `Created ${result.created} reminder(s)`, 'success');
+            if (btn) {
+                btn.textContent = '✓ Reminders Created';
+                btn.style.backgroundColor = 'var(--success-color)';
+            }
+        } else {
+            showAlert(result.error || 'Failed to create reminders', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Create Reminders for All Recalls';
+            }
+        }
+    } catch (error) {
+        console.error('Error creating recall reminders:', error);
+        showAlert('Error creating reminders', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Create Reminders for All Recalls';
+        }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', loadVehicles);
