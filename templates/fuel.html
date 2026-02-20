@@ -137,6 +137,12 @@
         </div>
     </div>
 
+    <!-- Mobile Cards View -->
+    <div class="mobile-cards" id="fuelMobileCards">
+        <p class="text-center">Loading...</p>
+    </div>
+
+    <!-- Desktop Table View -->
     <div class="table-container">
         <table id="fuelTable">
             <thead>
@@ -291,10 +297,12 @@ async function loadFuelRecords() {
 
 function displayFuelRecords() {
     const tbody = document.getElementById('fuelTableBody');
+    const mobileCards = document.getElementById('fuelMobileCards');
     const paginationDiv = document.getElementById('fuelPaginationControls');
 
     if (filteredFuelRecords.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
+        mobileCards.innerHTML = '<p class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</p>';
         paginationDiv.innerHTML = '';
         return;
     }
@@ -302,10 +310,11 @@ function displayFuelRecords() {
     // Get paginated data
     const paginatedRecords = paginateArray(filteredFuelRecords, currentFuelPage, fuelItemsPerPage);
 
-    let html = '';
+    // Desktop table view
+    let tableHtml = '';
     paginatedRecords.forEach(record => {
         const pricePerGal = record.cost / record.gallons;
-        html += `
+        tableHtml += `
             <tr>
                 <td>${formatDate(record.date)}</td>
                 <td>${record.odometer.toLocaleString()}</td>
@@ -326,8 +335,38 @@ function displayFuelRecords() {
             </tr>
         `;
     });
+    tbody.innerHTML = tableHtml;
 
-    tbody.innerHTML = html;
+    // Mobile cards view
+    let cardsHtml = '';
+    paginatedRecords.forEach(record => {
+        const pricePerGal = record.cost / record.gallons;
+        const title = record.station || 'Fuel Fill-up';
+
+        const fields = [
+            { label: 'Date', value: formatDate(record.date) },
+            { label: 'Odometer', value: record.odometer.toLocaleString() + ' mi' },
+            { label: 'Gallons', value: record.gallons.toFixed(2) + ' gal' },
+            { label: 'Total Cost', value: formatCurrency(record.cost) },
+            { label: 'Price/Gal', value: formatCurrency(pricePerGal) }
+        ];
+
+        if (record.mpg) {
+            fields.push({ label: 'MPG', value: `<strong style="color: var(--success-color)">${record.mpg.toFixed(1)}</strong>` });
+        }
+
+        if (record.station) {
+            fields.push({ label: 'Station', value: record.station });
+        }
+
+        const actions = [
+            { label: 'Edit', class: 'btn-secondary', onclick: `editFuelRecord(${record.id})` },
+            { label: 'Delete', class: 'btn-danger', onclick: `deleteFuelRecord(${record.id})` }
+        ];
+
+        cardsHtml += createMobileCard(title, fields, actions);
+    });
+    mobileCards.innerHTML = cardsHtml;
 
     // Display pagination controls
     paginationDiv.innerHTML = createPagination(filteredFuelRecords.length, currentFuelPage, fuelItemsPerPage, 'goToFuelPage');

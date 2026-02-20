@@ -85,6 +85,12 @@
         <button class="btn btn-primary" onclick="openModal('addSupplyModal')">Add Part</button>
     </div>
 
+    <!-- Mobile Cards View -->
+    <div class="mobile-cards" id="suppliesMobileCards">
+        <p class="text-center">Loading...</p>
+    </div>
+
+    <!-- Desktop Table View -->
     <div class="table-container">
         <table id="suppliesTable">
             <thead>
@@ -452,10 +458,12 @@ async function loadSupplies() {
 
 function displaySupplies() {
     const tbody = document.getElementById('suppliesTableBody');
+    const mobileCards = document.getElementById('suppliesMobileCards');
     const paginationDiv = document.getElementById('suppliesPaginationControls');
 
     if (filteredSupplies.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No parts or supplies in inventory. Click "Add Part/Supply" to get started.</td></tr>';
+        mobileCards.innerHTML = '<p class="text-center">No parts or supplies in inventory. Click "Add Part" to get started.</p>';
         paginationDiv.innerHTML = '';
         return;
     }
@@ -463,13 +471,14 @@ function displaySupplies() {
     // Get paginated data
     const paginatedSupplies = paginateArray(filteredSupplies, currentSuppliesPage, suppliesItemsPerPage);
 
-    let html = '';
+    // Desktop table view
+    let tableHtml = '';
     paginatedSupplies.forEach(supply => {
         const totalValue = supply.cost * supply.quantity;
         const quantityClass = supply.quantity === 0 ? 'style="color: red; font-weight: bold;"' : '';
         const warrantyStatus = getWarrantyStatus(supply);
 
-        html += `
+        tableHtml += `
             <tr>
                 <td>${supply.name}</td>
                 <td>${supply.part_number || '-'}</td>
@@ -491,8 +500,44 @@ function displaySupplies() {
             </tr>
         `;
     });
+    tbody.innerHTML = tableHtml;
 
-    tbody.innerHTML = html;
+    // Mobile cards view
+    let cardsHtml = '';
+    paginatedSupplies.forEach(supply => {
+        const totalValue = supply.cost * supply.quantity;
+        const warrantyStatus = getWarrantyStatus(supply);
+        const title = supply.name;
+
+        const fields = [
+            { label: 'Part Number', value: supply.part_number || 'N/A' },
+            { label: 'Brand', value: supply.brand || 'N/A' },
+            { label: 'Quantity', value: supply.quantity === 0 ? `<strong style="color: var(--danger-color)">${supply.quantity} (Out of Stock)</strong>` : supply.quantity },
+            { label: 'Cost/Unit', value: formatCurrency(supply.cost) },
+            { label: 'Total Value', value: formatCurrency(totalValue) }
+        ];
+
+        if (warrantyStatus && warrantyStatus !== '-') {
+            fields.push({ label: 'Warranty', value: warrantyStatus });
+        }
+
+        if (supply.category) {
+            fields.push({ label: 'Category', value: supply.category });
+        }
+
+        if (supply.location) {
+            fields.push({ label: 'Location', value: supply.location });
+        }
+
+        const actions = [
+            { label: 'View', class: 'btn-secondary', onclick: `viewSupply(${supply.id})` },
+            { label: 'Edit', class: 'btn-secondary', onclick: `editSupply(${supply.id})` },
+            { label: 'Delete', class: 'btn-danger', onclick: `deleteSupply(${supply.id})` }
+        ];
+
+        cardsHtml += createMobileCard(title, fields, actions);
+    });
+    mobileCards.innerHTML = cardsHtml;
 
     // Display pagination controls
     paginationDiv.innerHTML = createPagination(filteredSupplies.length, currentSuppliesPage, suppliesItemsPerPage, 'goToSuppliesPage');
