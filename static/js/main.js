@@ -206,7 +206,7 @@ function validateForm(formId) {
     return isValid;
 }
 
-// Vehicle Management
+// Vehicle Management with Caching
 function getCurrentVehicleId() {
     return localStorage.getItem('currentVehicleId');
 }
@@ -215,9 +215,69 @@ function setCurrentVehicleId(vehicleId) {
     localStorage.setItem('currentVehicleId', vehicleId);
 }
 
-async function loadVehicleSelector() {
+// Cache management
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+function getCachedData(key) {
     try {
-        const vehicles = await fetchAPI('/api/vehicles');
+        const cached = localStorage.getItem(`cache_${key}`);
+        if (!cached) return null;
+
+        const { data, timestamp } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+
+        if (age > CACHE_DURATION) {
+            localStorage.removeItem(`cache_${key}`);
+            return null;
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Error reading cache:', error);
+        return null;
+    }
+}
+
+function setCachedData(key, data) {
+    try {
+        const cacheEntry = {
+            data: data,
+            timestamp: Date.now()
+        };
+        localStorage.setItem(`cache_${key}`, JSON.stringify(cacheEntry));
+    } catch (error) {
+        console.error('Error writing cache:', error);
+    }
+}
+
+function clearCache(key) {
+    if (key) {
+        localStorage.removeItem(`cache_${key}`);
+    } else {
+        // Clear all cache entries
+        Object.keys(localStorage).forEach(k => {
+            if (k.startsWith('cache_')) {
+                localStorage.removeItem(k);
+            }
+        });
+    }
+}
+
+async function loadVehicleSelector(forceRefresh = false) {
+    try {
+        let vehicles;
+
+        // Try to get from cache first
+        if (!forceRefresh) {
+            vehicles = getCachedData('vehicles');
+        }
+
+        // Fetch from API if not cached or force refresh
+        if (!vehicles) {
+            vehicles = await fetchAPI('/api/vehicles');
+            setCachedData('vehicles', vehicles);
+        }
+
         const selector = document.getElementById('vehicleSelector');
 
         if (!selector) return;
@@ -384,4 +444,84 @@ async function putFormData(url, formData) {
         showAlert('An error occurred. Please try again.', 'danger');
         throw error;
     }
+}
+
+// Pagination utilities
+function createPagination(totalItems, currentPage, itemsPerPage, onPageChange) {
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+    if (totalPages <= 1) return '';
+
+    let html = '<div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 0.5rem; margin-top: 1rem;">';
+
+    // Previous button
+    if (currentPage > 1) {
+        html += `<button class="btn btn-small btn-secondary" onclick="${onPageChange}(${currentPage - 1})">Previous</button>`;
+    }
+
+    // Page numbers
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    if (startPage > 1) {
+        html += `<button class="btn btn-small btn-secondary" onclick="${onPageChange}(1)">1</button>`;
+        if (startPage > 2) {
+            html += '<span style="padding: 0 0.5rem;">...</span>';
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        if (i === currentPage) {
+            html += `<button class="btn btn-small btn-primary" disabled>${i}</button>`;
+        } else {
+            html += `<button class="btn btn-small btn-secondary" onclick="${onPageChange}(${i})">${i}</button>`;
+        }
+    }
+
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            html += '<span style="padding: 0 0.5rem;">...</span>';
+        }
+        html += `<button class="btn btn-small btn-secondary" onclick="${onPageChange}(${totalPages})">${totalPages}</button>`;
+    }
+
+    // Next button
+    if (currentPage < totalPages) {
+        html += `<button class="btn btn-small btn-secondary" onclick="${onPageChange}(${currentPage + 1})">Next</button>`;
+    }
+
+    html += '</div>';
+
+    // Add page info
+    const startItem = (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+    html += `<div style="text-align: center; margin-top: 0.5rem; color: var(--light-text); font-size: 0.9rem;">
+        Showing ${startItem}-${endItem} of ${totalItems}
+    </div>`;
+
+    return html;
+}
+
+function paginateArray(array, page, itemsPerPage) {
+    const startIndex = (page - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return array.slice(startIndex, endIndex);
+}
+
+// Debounce utility for search/filter inputs
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
 }

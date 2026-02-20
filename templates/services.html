@@ -101,7 +101,7 @@
     </div>
 
     <div class="search-container">
-        <input type="text" id="searchInput" class="search-input" placeholder="Search services by provider, comments, or repairs..." onkeyup="searchServices()">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search services by provider, comments, or repairs..." onkeyup="searchServicesDebounced()">
     </div>
 
     <div class="table-container">
@@ -126,6 +126,9 @@
             </tbody>
         </table>
     </div>
+
+    <!-- Pagination Controls -->
+    <div id="paginationControls"></div>
 </div>
 
 <!-- Add Service Modal -->
@@ -265,25 +268,32 @@
 {% block scripts %}
 <script>
 let allServices = [];
+let filteredServices = [];
 let availableSupplies = [];
 let currentEditServiceId = null;
 let selectedSupplies = []; // Track supplies to be used in this service
+let currentPage = 1;
+const itemsPerPage = 15;
 
 async function loadServices() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
         document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('paginationControls').innerHTML = '';
         return;
     }
 
     try {
         const services = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
         allServices = services;
-        displayServices(services);
+        filteredServices = services;
+        currentPage = 1;
+        displayServices();
         makeSortable(document.getElementById('servicesTable'));
     } catch (error) {
         console.error('Error loading services:', error);
         document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Error loading services</td></tr>';
+        document.getElementById('paginationControls').innerHTML = '';
     }
 }
 
@@ -417,16 +427,21 @@ function updateSuppliesList() {
     totalCostSpan.textContent = formatCurrency(totalCost);
 }
 
-function displayServices(services) {
+function displayServices() {
     const tbody = document.getElementById('servicesTableBody');
+    const paginationDiv = document.getElementById('paginationControls');
 
-    if (services.length === 0) {
+    if (filteredServices.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
+        paginationDiv.innerHTML = '';
         return;
     }
 
+    // Get paginated data
+    const paginatedServices = paginateArray(filteredServices, currentPage, itemsPerPage);
+
     let html = '';
-    services.forEach(service => {
+    paginatedServices.forEach(service => {
         const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
         html += `
             <tr>
@@ -455,23 +470,38 @@ function displayServices(services) {
     });
 
     tbody.innerHTML = html;
+
+    // Display pagination controls
+    paginationDiv.innerHTML = createPagination(filteredServices.length, currentPage, itemsPerPage, 'goToPage');
 }
+
+function goToPage(page) {
+    currentPage = page;
+    displayServices();
+    // Scroll to top of table
+    document.getElementById('servicesTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+const searchServicesDebounced = debounce(searchServices, 300);
 
 function searchServices() {
     const query = document.getElementById('searchInput').value.toLowerCase();
 
     if (!query) {
-        displayServices(allServices);
+        filteredServices = allServices;
+        currentPage = 1;
+        displayServices();
         return;
     }
 
-    const filtered = allServices.filter(service => {
+    filteredServices = allServices.filter(service => {
         return (service.service_provider && service.service_provider.toLowerCase().includes(query)) ||
                (service.comments && service.comments.toLowerCase().includes(query)) ||
                (service.repairs_completed && service.repairs_completed.toLowerCase().includes(query));
     });
 
-    displayServices(filtered);
+    currentPage = 1;
+    displayServices();
 }
 
 async function editService(serviceId) {

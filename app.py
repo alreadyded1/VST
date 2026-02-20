@@ -274,6 +274,28 @@ def init_db():
                       ('admin', admin_password_hash, 1))
             db.commit()
 
+        # Create indexes for performance optimization
+        indexes = [
+            'CREATE INDEX IF NOT EXISTS idx_service_records_vehicle_id ON service_records(vehicle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_service_records_date ON service_records(date DESC)',
+            'CREATE INDEX IF NOT EXISTS idx_supplies_vehicle_id ON supplies(vehicle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_fuel_records_vehicle_id ON fuel_records(vehicle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_fuel_records_date ON fuel_records(date DESC)',
+            'CREATE INDEX IF NOT EXISTS idx_fuel_records_odometer ON fuel_records(odometer DESC)',
+            'CREATE INDEX IF NOT EXISTS idx_service_reminders_vehicle_id ON service_reminders(vehicle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_service_reminders_completed ON service_reminders(completed)',
+            'CREATE INDEX IF NOT EXISTS idx_service_reminders_due_date ON service_reminders(due_date)',
+            'CREATE INDEX IF NOT EXISTS idx_service_supplies_service_id ON service_supplies(service_id)',
+            'CREATE INDEX IF NOT EXISTS idx_service_supplies_supply_id ON service_supplies(supply_id)'
+        ]
+
+        for index_sql in indexes:
+            try:
+                db.execute(index_sql)
+            except sqlite3.OperationalError:
+                # Index already exists
+                pass
+
         db.commit()
         db.close()
 
@@ -802,34 +824,61 @@ def create_recall_reminders():
 @app.route('/api/services', methods=['GET'])
 @login_required
 def get_services():
-    """Get all service records for a vehicle"""
+    """Get all service records for a vehicle with optional pagination"""
     vehicle_id = request.args.get('vehicle_id')
+    page = request.args.get('page', type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
     db = get_db()
 
-    if vehicle_id:
-        services = db.execute('''
-            SELECT s.*,
-                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
-            FROM service_records s
-            LEFT JOIN service_supplies ss ON s.id = ss.service_id
-            LEFT JOIN supplies sup ON ss.supply_id = sup.id
-            WHERE s.vehicle_id = ?
-            GROUP BY s.id
-            ORDER BY s.date DESC
-        ''', (vehicle_id,)).fetchall()
-    else:
-        services = db.execute('''
-            SELECT s.*,
-                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
-            FROM service_records s
-            LEFT JOIN service_supplies ss ON s.id = ss.service_id
-            LEFT JOIN supplies sup ON ss.supply_id = sup.id
-            GROUP BY s.id
-            ORDER BY s.date DESC
-        ''').fetchall()
+    # Base query
+    base_query = '''
+        SELECT s.*,
+               COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+        FROM service_records s
+        LEFT JOIN service_supplies ss ON s.id = ss.service_id
+        LEFT JOIN supplies sup ON ss.supply_id = sup.id
+        {where_clause}
+        GROUP BY s.id
+        ORDER BY s.date DESC
+    '''
 
-    db.close()
-    return jsonify([dict(row) for row in services])
+    # Count query for total
+    count_query = '''
+        SELECT COUNT(DISTINCT s.id) as total
+        FROM service_records s
+        {where_clause}
+    '''
+
+    if vehicle_id:
+        where_clause = 'WHERE s.vehicle_id = ?'
+        params = (vehicle_id,)
+    else:
+        where_clause = ''
+        params = ()
+
+    # Get total count
+    total_count = db.execute(count_query.format(where_clause=where_clause), params).fetchone()['total']
+
+    # If pagination requested, add LIMIT and OFFSET
+    if page is not None:
+        offset = (page - 1) * per_page
+        query = base_query.format(where_clause=where_clause) + ' LIMIT ? OFFSET ?'
+        services = db.execute(query, params + (per_page, offset)).fetchall()
+
+        db.close()
+        return jsonify({
+            'data': [dict(row) for row in services],
+            'total': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total_count + per_page - 1) // per_page
+        })
+    else:
+        # Return all results (backwards compatibility)
+        services = db.execute(base_query.format(where_clause=where_clause), params).fetchall()
+        db.close()
+        return jsonify([dict(row) for row in services])
 
 @app.route('/api/services/<int:service_id>', methods=['GET'])
 @login_required
@@ -1337,17 +1386,45 @@ def delete_supply(supply_id):
 @app.route('/api/fuel', methods=['GET'])
 @login_required
 def get_fuel_records():
-    """Get all fuel records for a vehicle"""
+    """Get all fuel records for a vehicle with optional pagination"""
     vehicle_id = request.args.get('vehicle_id')
+    page = request.args.get('page', type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
     db = get_db()
 
+    # Base query and count query
     if vehicle_id:
-        records = db.execute('SELECT * FROM fuel_records WHERE vehicle_id = ? ORDER BY date DESC, odometer DESC', (vehicle_id,)).fetchall()
+        base_query = 'SELECT * FROM fuel_records WHERE vehicle_id = ? ORDER BY date DESC, odometer DESC'
+        count_query = 'SELECT COUNT(*) as total FROM fuel_records WHERE vehicle_id = ?'
+        params = (vehicle_id,)
     else:
-        records = db.execute('SELECT * FROM fuel_records ORDER BY date DESC, odometer DESC').fetchall()
+        base_query = 'SELECT * FROM fuel_records ORDER BY date DESC, odometer DESC'
+        count_query = 'SELECT COUNT(*) as total FROM fuel_records'
+        params = ()
 
-    db.close()
-    return jsonify([dict(row) for row in records])
+    # Get total count
+    total_count = db.execute(count_query, params).fetchone()['total']
+
+    # If pagination requested, add LIMIT and OFFSET
+    if page is not None:
+        offset = (page - 1) * per_page
+        query = base_query + ' LIMIT ? OFFSET ?'
+        records = db.execute(query, params + (per_page, offset)).fetchall()
+
+        db.close()
+        return jsonify({
+            'data': [dict(row) for row in records],
+            'total': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total_count + per_page - 1) // per_page
+        })
+    else:
+        # Return all results (backwards compatibility)
+        records = db.execute(base_query, params).fetchall()
+        db.close()
+        return jsonify([dict(row) for row in records])
 
 @app.route('/api/fuel', methods=['POST'])
 @login_required
