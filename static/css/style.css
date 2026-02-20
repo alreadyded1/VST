@@ -647,6 +647,27 @@ body.desktop-view .mobile-cards {
     display: none !important;
 }
 
+/* Show/hide mobile elements based on view mode */
+.show-mobile {
+    display: none !important;
+}
+
+body.mobile-view .show-mobile {
+    display: flex !important;
+}
+
+body.desktop-view .show-mobile {
+    display: none !important;
+}
+
+.hide-mobile {
+    display: block;
+}
+
+body.mobile-view .hide-mobile {
+    display: none !important;
+}
+
 /* Mobile Responsive Styles */
 @media (max-width: 768px) {
     body.mobile-view {
@@ -952,18 +973,6 @@ body.desktop-view .mobile-cards {
         gap: 0.75rem;
     }
 
-    /* Hide/show elements */
-    body.mobile-view .hide-mobile {
-        display: none !important;
-    }
-
-    .show-mobile {
-        display: none !important;
-    }
-
-    body.mobile-view .show-mobile {
-        display: block !important;
-    }
 
     /* Improved mobile menu */
     body.mobile-view .mobile-nav {
