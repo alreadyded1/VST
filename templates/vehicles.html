@@ -15,7 +15,12 @@
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Vehicle List</h2>
-        <button class="btn btn-primary" onclick="openModal('addVehicleModal')">Add Vehicle</button>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <button class="btn btn-secondary" onclick="toggleViewMode()" id="viewModeBtn">
+                <span id="viewModeIcon">📋</span> Compact View
+            </button>
+            <button class="btn btn-primary" onclick="openModal('addVehicleModal')">Add Vehicle</button>
+        </div>
     </div>
 
     <div id="vehiclesList">
@@ -170,15 +175,123 @@
 {% block scripts %}
 <script>
 let allVehicles = [];
+let vehicleStats = {};
+let viewMode = localStorage.getItem('vehiclesViewMode') || 'expanded'; // 'compact' or 'expanded'
 
 async function loadVehicles() {
     try {
         const vehicles = await fetchAPI('/api/vehicles');
         allVehicles = vehicles;
+
+        // Load stats for all vehicles
+        await loadAllVehicleStats();
+
         displayVehicles(vehicles);
+        updateViewModeButton();
     } catch (error) {
         console.error('Error loading vehicles:', error);
         document.getElementById('vehiclesList').innerHTML = '<p>Error loading vehicles</p>';
+    }
+}
+
+async function loadAllVehicleStats() {
+    // Load stats for each vehicle
+    const statsPromises = allVehicles.map(vehicle => loadVehicleStats(vehicle.id));
+    const stats = await Promise.all(statsPromises);
+
+    // Store stats by vehicle ID
+    allVehicles.forEach((vehicle, index) => {
+        vehicleStats[vehicle.id] = stats[index];
+    });
+}
+
+async function loadVehicleStats(vehicleId) {
+    try {
+        // Fetch services and fuel records in parallel
+        const [services, fuelRecords] = await Promise.all([
+            fetchAPI(`/api/services?vehicle_id=${vehicleId}`),
+            fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`)
+        ]);
+
+        // Calculate year-to-date costs
+        const currentYear = new Date().getFullYear();
+        const ytdServices = services.filter(s => new Date(s.date).getFullYear() === currentYear);
+        const ytdFuel = fuelRecords.filter(f => new Date(f.date).getFullYear() === currentYear);
+
+        const ytdServiceCost = ytdServices.reduce((sum, s) => sum + (s.cost || 0) + (s.supplies_cost || 0), 0);
+        const ytdFuelCost = ytdFuel.reduce((sum, f) => sum + (f.cost || 0), 0);
+
+        // Calculate all-time costs
+        const totalServiceCost = services.reduce((sum, s) => sum + (s.cost || 0) + (s.supplies_cost || 0), 0);
+        const totalFuelCost = fuelRecords.reduce((sum, f) => sum + (f.cost || 0), 0);
+
+        // Get last service and fuel dates
+        const lastService = services.length > 0 ? services[0].date : null;
+        const lastFuel = fuelRecords.length > 0 ? fuelRecords[0].date : null;
+
+        // Get current odometer (latest from fuel or service)
+        let currentOdometer = null;
+        const fuelOdometers = fuelRecords.map(f => f.odometer).filter(o => o);
+        const serviceOdometers = services.map(s => s.odometer).filter(o => o);
+        const allOdometers = [...fuelOdometers, ...serviceOdometers];
+        if (allOdometers.length > 0) {
+            currentOdometer = Math.max(...allOdometers);
+        }
+
+        // Calculate average MPG
+        const recordsWithMpg = fuelRecords.filter(f => f.mpg && f.mpg > 0);
+        const avgMpg = recordsWithMpg.length > 0
+            ? recordsWithMpg.reduce((sum, f) => sum + f.mpg, 0) / recordsWithMpg.length
+            : null;
+
+        return {
+            ytdServiceCost,
+            ytdFuelCost,
+            ytdTotalCost: ytdServiceCost + ytdFuelCost,
+            totalServiceCost,
+            totalFuelCost,
+            totalAllTimeCost: totalServiceCost + totalFuelCost,
+            lastService,
+            lastFuel,
+            currentOdometer,
+            avgMpg,
+            serviceCount: services.length,
+            fuelRecordCount: fuelRecords.length
+        };
+    } catch (error) {
+        console.error(`Error loading stats for vehicle ${vehicleId}:`, error);
+        return {
+            ytdServiceCost: 0,
+            ytdFuelCost: 0,
+            ytdTotalCost: 0,
+            totalServiceCost: 0,
+            totalFuelCost: 0,
+            totalAllTimeCost: 0,
+            lastService: null,
+            lastFuel: null,
+            currentOdometer: null,
+            avgMpg: null,
+            serviceCount: 0,
+            fuelRecordCount: 0
+        };
+    }
+}
+
+function toggleViewMode() {
+    viewMode = viewMode === 'expanded' ? 'compact' : 'expanded';
+    localStorage.setItem('vehiclesViewMode', viewMode);
+    displayVehicles(allVehicles);
+    updateViewModeButton();
+}
+
+function updateViewModeButton() {
+    const btn = document.getElementById('viewModeBtn');
+    const icon = document.getElementById('viewModeIcon');
+
+    if (viewMode === 'compact') {
+        btn.innerHTML = '<span id="viewModeIcon">📊</span> Expanded View';
+    } else {
+        btn.innerHTML = '<span id="viewModeIcon">📋</span> Compact View';
     }
 }
 
@@ -190,21 +303,127 @@ function displayVehicles(vehicles) {
         return;
     }
 
-    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem;">';
+    if (viewMode === 'compact') {
+        displayVehiclesCompact(vehicles, container);
+    } else {
+        displayVehiclesExpanded(vehicles, container);
+    }
+}
+
+function displayVehiclesCompact(vehicles, container) {
+    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">';
 
     vehicles.forEach(vehicle => {
         const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
         const imageSrc = vehicle.picture ? `/static/${vehicle.picture}` : '';
+        const stats = vehicleStats[vehicle.id] || {};
+
+        html += `
+            <div class="card" style="margin: 0; padding: 0.75rem;">
+                <div style="display: flex; gap: 0.75rem; align-items: center;">
+                    ${imageSrc ?
+                        `<img src="${imageSrc}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0;">` :
+                        `<div style="width: 60px; height: 60px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px; flex-shrink: 0; font-size: 1.5rem;">🚗</div>`
+                    }
+                    <div style="flex: 1; min-width: 0;">
+                        <h4 style="margin: 0 0 0.25rem 0; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${nickname}</h4>
+                        <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">${vehicle.year} ${vehicle.manufacturer}</p>
+                        ${stats.currentOdometer ? `<p style="margin: 0.25rem 0 0 0; font-size: 0.8rem; color: var(--light-text);">${stats.currentOdometer.toLocaleString()} mi</p>` : ''}
+                    </div>
+                </div>
+                <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; justify-content: space-between;">
+                    <button class="btn btn-small btn-primary" onclick="selectVehicle(${vehicle.id})" style="flex: 1;">Select</button>
+                    <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View</button>
+                    <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function displayVehiclesExpanded(vehicles, container) {
+    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem;">';
+
+    vehicles.forEach(vehicle => {
+        const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
+        const imageSrc = vehicle.picture ? `/static/${vehicle.picture}` : '';
+        const stats = vehicleStats[vehicle.id] || {};
 
         html += `
             <div class="card" style="margin: 0;">
                 ${imageSrc ? `<img src="${imageSrc}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px 8px 0 0;">` :
-                            `<div style="width: 100%; height: 200px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px 8px 0 0;">No Image</div>`}
+                            `<div style="width: 100%; height: 200px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px 8px 0 0; font-size: 3rem;">🚗</div>`}
                 <div style="padding: 1rem;">
                     <h3 style="margin-bottom: 0.5rem;">${nickname}</h3>
-                    <p><strong>${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}</strong></p>
-                    ${vehicle.engine ? `<p>Engine: ${vehicle.engine}</p>` : ''}
-                    ${vehicle.vin ? `<p><small>VIN: ${vehicle.vin}</small></p>` : ''}
+                    <p style="margin-bottom: 0.5rem;"><strong>${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}</strong></p>
+                    ${vehicle.engine ? `<p style="margin-bottom: 0.5rem; font-size: 0.9rem;">Engine: ${vehicle.engine}</p>` : ''}
+                    ${stats.currentOdometer ? `<p style="margin-bottom: 0.5rem; font-size: 0.9rem;">Odometer: ${stats.currentOdometer.toLocaleString()} miles</p>` : ''}
+                    ${stats.avgMpg ? `<p style="margin-bottom: 0.5rem; font-size: 0.9rem;">Avg MPG: ${stats.avgMpg.toFixed(1)}</p>` : ''}
+
+                    <!-- Cost Summary Section -->
+                    <div style="margin-top: 1rem; padding: 1rem; background: var(--light-bg); border-radius: 8px;">
+                        <h4 style="margin: 0 0 0.75rem 0; font-size: 0.95rem; color: var(--secondary-color);">Cost Summary</h4>
+
+                        <!-- YTD Costs -->
+                        <div style="margin-bottom: 0.75rem;">
+                            <p style="margin: 0 0 0.25rem 0; font-size: 0.85rem; font-weight: bold;">Year-to-Date ${new Date().getFullYear()}</p>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.85rem;">
+                                <div>
+                                    <span style="color: var(--light-text);">Maintenance:</span>
+                                    <strong>${formatCurrency(stats.ytdServiceCost || 0)}</strong>
+                                </div>
+                                <div>
+                                    <span style="color: var(--light-text);">Fuel:</span>
+                                    <strong>${formatCurrency(stats.ytdFuelCost || 0)}</strong>
+                                </div>
+                            </div>
+                            <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
+                                <span style="color: var(--light-text); font-size: 0.85rem;">YTD Total:</span>
+                                <strong style="font-size: 1.1rem; color: var(--secondary-color);">${formatCurrency(stats.ytdTotalCost || 0)}</strong>
+                            </div>
+                        </div>
+
+                        <!-- All-Time Costs -->
+                        <div style="padding-top: 0.75rem; border-top: 1px solid var(--border-color);">
+                            <p style="margin: 0 0 0.25rem 0; font-size: 0.85rem; font-weight: bold;">All-Time Total</p>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.85rem;">
+                                <div>
+                                    <span style="color: var(--light-text);">Maintenance:</span>
+                                    <strong>${formatCurrency(stats.totalServiceCost || 0)}</strong>
+                                </div>
+                                <div>
+                                    <span style="color: var(--light-text);">Fuel:</span>
+                                    <strong>${formatCurrency(stats.totalFuelCost || 0)}</strong>
+                                </div>
+                            </div>
+                            <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
+                                <span style="color: var(--light-text); font-size: 0.85rem;">Grand Total:</span>
+                                <strong style="font-size: 1.1rem; color: var(--primary-color);">${formatCurrency(stats.totalAllTimeCost || 0)}</strong>
+                            </div>
+                        </div>
+
+                        <!-- Activity Stats -->
+                        <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); font-size: 0.85rem;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                                <div>
+                                    <span style="color: var(--light-text);">Services:</span>
+                                    <strong>${stats.serviceCount || 0}</strong>
+                                </div>
+                                <div>
+                                    <span style="color: var(--light-text);">Fuel Records:</span>
+                                    <strong>${stats.fuelRecordCount || 0}</strong>
+                                </div>
+                            </div>
+                            ${stats.lastService ? `<p style="margin: 0.5rem 0 0 0; color: var(--light-text);">Last Service: ${formatDate(stats.lastService)}</p>` : ''}
+                            ${stats.lastFuel ? `<p style="margin: 0.25rem 0 0 0; color: var(--light-text);">Last Fuel: ${formatDate(stats.lastFuel)}</p>` : ''}
+                        </div>
+                    </div>
+
+                    ${vehicle.vin ? `<p style="margin-top: 0.75rem;"><small style="color: var(--light-text);">VIN: ${vehicle.vin}</small></p>` : ''}
+
                     <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View</button>
                         <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
