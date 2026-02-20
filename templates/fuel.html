@@ -146,7 +146,6 @@
                     <th class="sortable">Gallons</th>
                     <th class="sortable">Cost</th>
                     <th class="sortable hide-mobile">Price/Gal</th>
-                    <th class="hide-mobile">Location</th>
                     <th class="hide-mobile">Station</th>
                     <th class="sortable">MPG</th>
                     <th></th>
@@ -154,7 +153,7 @@
             </thead>
             <tbody id="fuelTableBody">
                 <tr>
-                    <td colspan="9" class="text-center">Loading...</td>
+                    <td colspan="8" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
@@ -191,16 +190,10 @@
                 </div>
             </div>
 
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="location">Location *</label>
-                    <input type="text" id="location" name="location" placeholder="e.g., 123 Main St" required>
-                </div>
-                <div class="form-group">
-                    <label for="station">Station Name</label>
-                    <input type="text" id="station" name="station" placeholder="e.g., Shell, BP, Exxon" list="stationList">
-                    <datalist id="stationList"></datalist>
-                </div>
+            <div class="form-group">
+                <label for="station">Station *</label>
+                <input type="text" id="station" name="station" placeholder="e.g., Shell, BP Main St, Exxon Downtown" list="stationList" required>
+                <datalist id="stationList"></datalist>
             </div>
 
             <div class="alert alert-info">
@@ -267,7 +260,7 @@ let costChart = null;
 async function loadFuelRecords() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -282,7 +275,7 @@ async function loadFuelRecords() {
         makeSortable(document.getElementById('fuelTable'));
     } catch (error) {
         console.error('Error loading fuel records:', error);
-        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Error loading fuel records</td></tr>';
+        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading fuel records</td></tr>';
     }
 }
 
@@ -290,7 +283,7 @@ function displayFuelRecords(records) {
     const tbody = document.getElementById('fuelTableBody');
 
     if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
         return;
     }
 
@@ -304,7 +297,6 @@ function displayFuelRecords(records) {
                 <td>${record.gallons.toFixed(3)}</td>
                 <td>${formatCurrency(record.cost)}</td>
                 <td class="hide-mobile">${formatCurrency(pricePerGal)}</td>
-                <td class="hide-mobile">${record.location}</td>
                 <td class="hide-mobile">${record.station || 'N/A'}</td>
                 <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
                 <td>
@@ -398,7 +390,6 @@ async function editFuelRecord(fuelId) {
         document.getElementById('odometer').value = record.odometer;
         document.getElementById('gallons').value = record.gallons;
         document.getElementById('fuelCost').value = record.cost;
-        document.getElementById('location').value = record.location;
         document.getElementById('station').value = record.station || '';
 
         // Update modal title
@@ -436,7 +427,6 @@ async function addFuelRecord(event) {
         gallons: parseFloat(formData.get('gallons')),
         cost: parseFloat(formData.get('cost')),
         odometer: parseInt(formData.get('odometer')),
-        location: formData.get('location'),
         station: formData.get('station') || ''
     };
 
