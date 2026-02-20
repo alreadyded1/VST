@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Parts & Supplies - Vehicle Maintenance Tracker{% endblock %}
+{% block title %}Parts Tracker - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
 <style>
@@ -77,12 +77,12 @@
 }
 </style>
 
-<h1>Parts & Supplies</h1>
+<h1>Parts Tracker</h1>
 
 <div class="card">
     <div class="flex-between mb-2">
-        <h2>Inventory</h2>
-        <button class="btn btn-primary" onclick="openModal('addSupplyModal')">Add Part/Supply</button>
+        <h2>Parts Inventory</h2>
+        <button class="btn btn-primary" onclick="openModal('addSupplyModal')">Add Part</button>
     </div>
 
     <div class="table-container">
@@ -112,7 +112,7 @@
 <div id="addSupplyModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Add Part/Supply</h3>
+            <h3>Add Part</h3>
             <button class="close" onclick="closeModal('addSupplyModal')">&times;</button>
         </div>
         <form id="supplyForm" onsubmit="addSupply(event)">
@@ -166,6 +166,65 @@
                 </div>
             </div>
 
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="supplyCategory">Category</label>
+                    <select id="supplyCategory" name="category">
+                        <option value="">Select category...</option>
+                        <option value="Engine">Engine</option>
+                        <option value="Brakes">Brakes</option>
+                        <option value="Suspension">Suspension</option>
+                        <option value="Electrical">Electrical</option>
+                        <option value="Transmission">Transmission</option>
+                        <option value="Cooling System">Cooling System</option>
+                        <option value="Exhaust">Exhaust</option>
+                        <option value="Fuel System">Fuel System</option>
+                        <option value="Interior">Interior</option>
+                        <option value="Exterior">Exterior</option>
+                        <option value="Wheels/Tires">Wheels/Tires</option>
+                        <option value="Fluids">Fluids</option>
+                        <option value="Filters">Filters</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="supplyCondition">Condition</label>
+                    <select id="supplyCondition" name="condition">
+                        <option value="New">New</option>
+                        <option value="Used">Used</option>
+                        <option value="Refurbished">Refurbished</option>
+                        <option value="Remanufactured">Remanufactured</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="supplyLocation">Storage Location</label>
+                    <input type="text" id="supplyLocation" name="location" placeholder="e.g., Garage shelf A, Toolbox">
+                </div>
+                <div class="form-group">
+                    <label for="supplySupplier">Supplier/Vendor</label>
+                    <input type="text" id="supplySupplier" name="supplier" placeholder="e.g., AutoZone, O'Reilly">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="supplyPurchaseDate">Purchase Date</label>
+                    <input type="date" id="supplyPurchaseDate" name="purchase_date">
+                </div>
+                <div class="form-group">
+                    <label for="supplyInstallationDate">Installation Date</label>
+                    <input type="date" id="supplyInstallationDate" name="installation_date">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="supplyNotes">Notes</label>
+                <textarea id="supplyNotes" name="notes" rows="3" placeholder="Additional notes about this part..."></textarea>
+            </div>
+
             <div class="form-group">
                 <label for="supplyReceipt">Receipt</label>
                 <input type="file" id="supplyReceipt" name="receipt" accept="image/*,.pdf" onchange="handleFilePreview(this, 'receiptPreview')">
@@ -179,7 +238,7 @@
                 </label>
             </div>
 
-            <button type="submit" class="btn btn-success">Save Part/Supply</button>
+            <button type="submit" class="btn btn-success">Save Part</button>
         </form>
     </div>
 </div>
@@ -188,7 +247,7 @@
 <div id="viewSupplyModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>View Part/Supply</h3>
+            <h3>View Part Details</h3>
             <button class="close" onclick="closeModal('viewSupplyModal')">&times;</button>
         </div>
         <div id="viewSupplyContent">
@@ -534,6 +593,13 @@ function editSupply(supplyId) {
     document.getElementById('warrantyStartMileage').value = supply.warranty_start_mileage || '';
     document.getElementById('warrantyMileageLimit').value = supply.warranty_mileage_limit || '';
     document.getElementById('remindToReorder').checked = supply.remind_to_reorder ? true : false;
+    document.getElementById('supplyCategory').value = supply.category || '';
+    document.getElementById('supplyLocation').value = supply.location || '';
+    document.getElementById('supplyCondition').value = supply.condition || 'New';
+    document.getElementById('supplySupplier').value = supply.supplier || '';
+    document.getElementById('supplyPurchaseDate').value = supply.purchase_date || '';
+    document.getElementById('supplyInstallationDate').value = supply.installation_date || '';
+    document.getElementById('supplyNotes').value = supply.notes || '';
 
     // Show existing receipt if any
     const receiptPreview = document.getElementById('receiptPreview');
@@ -544,7 +610,7 @@ function editSupply(supplyId) {
     }
 
     // Update modal title
-    document.querySelector('#addSupplyModal h3').textContent = 'Edit Part/Supply';
+    document.querySelector('#addSupplyModal h3').textContent = 'Edit Part';
 
     openModal('addSupplyModal');
 }

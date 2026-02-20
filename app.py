@@ -202,6 +202,25 @@ def init_db():
                 # Column already exists
                 pass
 
+        # Migration: Add parts tracking columns to supplies table
+        parts_tracking_migrations = [
+            'ALTER TABLE supplies ADD COLUMN category TEXT',
+            'ALTER TABLE supplies ADD COLUMN location TEXT',
+            'ALTER TABLE supplies ADD COLUMN condition TEXT DEFAULT "New"',
+            'ALTER TABLE supplies ADD COLUMN supplier TEXT',
+            'ALTER TABLE supplies ADD COLUMN purchase_date DATE',
+            'ALTER TABLE supplies ADD COLUMN installation_date DATE',
+            'ALTER TABLE supplies ADD COLUMN notes TEXT'
+        ]
+
+        for migration in parts_tracking_migrations:
+            try:
+                db.execute(migration)
+                db.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
         if admin_exists['count'] == 0:
@@ -1146,15 +1165,21 @@ def add_supply():
     cursor = db.execute('''INSERT INTO supplies
                           (vehicle_id, name, part_number, brand, cost, quantity,
                            warranty_start_date, warranty_months, warranty_start_mileage,
-                           warranty_mileage_limit, receipt_path, remind_to_reorder)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                           warranty_mileage_limit, receipt_path, remind_to_reorder,
+                           category, location, condition, supplier, purchase_date,
+                           installation_date, notes)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['name'], data.get('part_number', ''),
                         data.get('brand', ''), data['cost'], data['quantity'],
                         data.get('warranty_start_date', None),
                         int(data['warranty_months']) if data.get('warranty_months') else None,
                         int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                         int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                        receipt_path, remind_to_reorder))
+                        receipt_path, remind_to_reorder,
+                        data.get('category', ''), data.get('location', ''),
+                        data.get('condition', 'New'), data.get('supplier', ''),
+                        data.get('purchase_date', None), data.get('installation_date', None),
+                        data.get('notes', '')))
 
     # Create reminder if quantity is 1 AND remind_to_reorder is checked
     supply_id = cursor.lastrowid
@@ -1204,7 +1229,9 @@ def update_supply(supply_id):
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
                          warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                         warranty_mileage_limit=?, receipt_path=?, remind_to_reorder=?
+                         warranty_mileage_limit=?, receipt_path=?, remind_to_reorder=?,
+                         category=?, location=?, condition=?, supplier=?, purchase_date=?,
+                         installation_date=?, notes=?
                      WHERE id=?''',
                   (data['name'], data.get('part_number', ''),
                    data.get('brand', ''), data['cost'], data['quantity'],
@@ -1212,12 +1239,18 @@ def update_supply(supply_id):
                    int(data['warranty_months']) if data.get('warranty_months') else None,
                    int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                    int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   receipt_path, remind_to_reorder, supply_id))
+                   receipt_path, remind_to_reorder,
+                   data.get('category', ''), data.get('location', ''),
+                   data.get('condition', 'New'), data.get('supplier', ''),
+                   data.get('purchase_date', None), data.get('installation_date', None),
+                   data.get('notes', ''), supply_id))
     else:
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
                          warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                         warranty_mileage_limit=?, remind_to_reorder=?
+                         warranty_mileage_limit=?, remind_to_reorder=?,
+                         category=?, location=?, condition=?, supplier=?, purchase_date=?,
+                         installation_date=?, notes=?
                      WHERE id=?''',
                   (data['name'], data.get('part_number', ''),
                    data.get('brand', ''), data['cost'], data['quantity'],
@@ -1225,7 +1258,11 @@ def update_supply(supply_id):
                    int(data['warranty_months']) if data.get('warranty_months') else None,
                    int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                    int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   remind_to_reorder, supply_id))
+                   remind_to_reorder,
+                   data.get('category', ''), data.get('location', ''),
+                   data.get('condition', 'New'), data.get('supplier', ''),
+                   data.get('purchase_date', None), data.get('installation_date', None),
+                   data.get('notes', ''), supply_id))
 
     # Create reminder if quantity is 1 AND remind_to_reorder is checked
     if int(data['quantity']) == 1 and remind_to_reorder:
