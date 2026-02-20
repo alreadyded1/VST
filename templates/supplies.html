@@ -106,6 +106,9 @@
             </tbody>
         </table>
     </div>
+
+    <!-- Pagination Controls -->
+    <div id="suppliesPaginationControls"></div>
 </div>
 
 <!-- Add/Edit Supply Modal -->
@@ -322,7 +325,10 @@
 {% block scripts %}
 <script>
 let allSupplies = [];
+let filteredSupplies = [];
 let currentOdometer = null;
+let currentSuppliesPage = 1;
+const suppliesItemsPerPage = 15;
 
 // Calculate warranty status
 function getWarrantyStatus(supply) {
@@ -423,6 +429,7 @@ async function loadSupplies() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
         document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('suppliesPaginationControls').innerHTML = '';
         return;
     }
 
@@ -432,24 +439,32 @@ async function loadSupplies() {
 
         const supplies = await fetchAPI(`/api/supplies?vehicle_id=${vehicleId}`);
         allSupplies = supplies;
-        displaySupplies(supplies);
+        filteredSupplies = supplies;
+        currentSuppliesPage = 1;
+        displaySupplies();
         makeSortable(document.getElementById('suppliesTable'));
     } catch (error) {
         console.error('Error loading supplies:', error);
         document.getElementById('suppliesTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading supplies</td></tr>';
+        document.getElementById('suppliesPaginationControls').innerHTML = '';
     }
 }
 
-function displaySupplies(supplies) {
+function displaySupplies() {
     const tbody = document.getElementById('suppliesTableBody');
+    const paginationDiv = document.getElementById('suppliesPaginationControls');
 
-    if (supplies.length === 0) {
+    if (filteredSupplies.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No parts or supplies in inventory. Click "Add Part/Supply" to get started.</td></tr>';
+        paginationDiv.innerHTML = '';
         return;
     }
 
+    // Get paginated data
+    const paginatedSupplies = paginateArray(filteredSupplies, currentSuppliesPage, suppliesItemsPerPage);
+
     let html = '';
-    supplies.forEach(supply => {
+    paginatedSupplies.forEach(supply => {
         const totalValue = supply.cost * supply.quantity;
         const quantityClass = supply.quantity === 0 ? 'style="color: red; font-weight: bold;"' : '';
         const warrantyStatus = getWarrantyStatus(supply);
@@ -478,6 +493,16 @@ function displaySupplies(supplies) {
     });
 
     tbody.innerHTML = html;
+
+    // Display pagination controls
+    paginationDiv.innerHTML = createPagination(filteredSupplies.length, currentSuppliesPage, suppliesItemsPerPage, 'goToSuppliesPage');
+}
+
+function goToSuppliesPage(page) {
+    currentSuppliesPage = page;
+    displaySupplies();
+    // Scroll to top of table
+    document.getElementById('suppliesTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function viewSupply(supplyId) {

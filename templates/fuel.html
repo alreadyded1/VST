@@ -158,6 +158,9 @@
             </tbody>
         </table>
     </div>
+
+    <!-- Pagination Controls -->
+    <div id="fuelPaginationControls"></div>
 </div>
 
 <!-- Add Fuel Modal -->
@@ -254,20 +257,26 @@ function createFuelGauge(containerId, value, label, bestMpg = null) {
 }
 
 let allFuelRecords = [];
+let filteredFuelRecords = [];
 let mpgChart = null;
 let costChart = null;
+let currentFuelPage = 1;
+const fuelItemsPerPage = 15;
 
 async function loadFuelRecords() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
         document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('fuelPaginationControls').innerHTML = '';
         return;
     }
 
     try {
         const records = await fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`);
         allFuelRecords = records;
-        displayFuelRecords(records);
+        filteredFuelRecords = records;
+        currentFuelPage = 1;
+        displayFuelRecords();
         calculateStats(records);
         updateCharts(records);
         updateStationComparison(records);
@@ -276,19 +285,25 @@ async function loadFuelRecords() {
     } catch (error) {
         console.error('Error loading fuel records:', error);
         document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading fuel records</td></tr>';
+        document.getElementById('fuelPaginationControls').innerHTML = '';
     }
 }
 
-function displayFuelRecords(records) {
+function displayFuelRecords() {
     const tbody = document.getElementById('fuelTableBody');
+    const paginationDiv = document.getElementById('fuelPaginationControls');
 
-    if (records.length === 0) {
+    if (filteredFuelRecords.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
+        paginationDiv.innerHTML = '';
         return;
     }
 
+    // Get paginated data
+    const paginatedRecords = paginateArray(filteredFuelRecords, currentFuelPage, fuelItemsPerPage);
+
     let html = '';
-    records.forEach(record => {
+    paginatedRecords.forEach(record => {
         const pricePerGal = record.cost / record.gallons;
         html += `
             <tr>
@@ -313,6 +328,16 @@ function displayFuelRecords(records) {
     });
 
     tbody.innerHTML = html;
+
+    // Display pagination controls
+    paginationDiv.innerHTML = createPagination(filteredFuelRecords.length, currentFuelPage, fuelItemsPerPage, 'goToFuelPage');
+}
+
+function goToFuelPage(page) {
+    currentFuelPage = page;
+    displayFuelRecords();
+    // Scroll to top of table
+    document.getElementById('fuelTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function calculateStats(records) {
