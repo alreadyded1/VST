@@ -630,6 +630,23 @@ table tr:hover {
     100% { transform: rotate(360deg); }
 }
 
+/* Mobile Cards - Default hidden, shown in mobile view */
+.mobile-cards {
+    display: none;
+}
+
+body.mobile-view .mobile-cards {
+    display: block !important;
+}
+
+body.mobile-view .table-container table {
+    display: none !important;
+}
+
+body.desktop-view .mobile-cards {
+    display: none !important;
+}
+
 /* Mobile Responsive Styles */
 @media (max-width: 768px) {
     body.mobile-view {
@@ -686,19 +703,6 @@ table tr:hover {
 
     .vehicle-profile {
         grid-template-columns: 1fr;
-    }
-
-    /* Card-based table layout for mobile */
-    body.mobile-view .table-container table {
-        display: none;
-    }
-
-    body.mobile-view .mobile-cards {
-        display: block !important;
-    }
-
-    .mobile-cards {
-        display: none;
     }
 
     .mobile-card {
