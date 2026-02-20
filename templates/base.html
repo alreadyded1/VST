@@ -69,6 +69,30 @@
         {% block content %}{% endblock %}
     </div>
 
+    <!-- Bottom Navigation (Mobile Only) -->
+    <nav class="bottom-nav show-mobile">
+        <a href="/" class="bottom-nav-item" id="nav-dashboard">
+            <div class="bottom-nav-icon">📊</div>
+            <div class="bottom-nav-label">Dashboard</div>
+        </a>
+        <a href="/vehicles" class="bottom-nav-item" id="nav-vehicles">
+            <div class="bottom-nav-icon">🚗</div>
+            <div class="bottom-nav-label">Vehicles</div>
+        </a>
+        <a href="/services" class="bottom-nav-item" id="nav-services">
+            <div class="bottom-nav-icon">🔧</div>
+            <div class="bottom-nav-label">Services</div>
+        </a>
+        <a href="/fuel" class="bottom-nav-item" id="nav-fuel">
+            <div class="bottom-nav-icon">⛽</div>
+            <div class="bottom-nav-label">Fuel</div>
+        </a>
+        <a href="/reminders" class="bottom-nav-item" id="nav-reminders">
+            <div class="bottom-nav-icon">🔔</div>
+            <div class="bottom-nav-label">Reminders</div>
+        </a>
+    </nav>
+
     <script src="{{ url_for('static', filename='js/main.js') }}?v={{ range(1, 1000000) | random }}"></script>
     {% block scripts %}{% endblock %}
 </body>

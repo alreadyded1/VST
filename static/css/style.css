@@ -633,7 +633,8 @@ table tr:hover {
 /* Mobile Responsive Styles */
 @media (max-width: 768px) {
     body.mobile-view {
-        font-size: 14px;
+        font-size: 16px; /* Increased for better readability */
+        padding-bottom: 80px; /* Space for bottom nav */
     }
 
     body.mobile-view .hide-mobile {
@@ -641,21 +642,23 @@ table tr:hover {
     }
 
     body.mobile-view input[type="date"] {
-        max-width: 150px;
+        max-width: 100%;
     }
 
     body.mobile-view .container {
-        padding: 0 0.5rem 1rem;
+        padding: 0 1rem 1rem; /* Increased padding */
     }
 
     .header-content {
         flex-direction: column;
-        gap: 0.5rem;
+        gap: 0.75rem;
         text-align: center;
+        padding: 0.5rem 0;
     }
 
     .header-content h1 {
-        font-size: 1.25rem;
+        font-size: 1.5rem;
+        font-weight: 700;
     }
 
     .nav-menu {
@@ -664,62 +667,314 @@ table tr:hover {
     }
 
     .nav-menu li a {
-        padding: 0.75rem 1rem;
+        padding: 1rem;
         border-radius: 0;
+        min-height: 48px; /* Touch target */
+        display: flex;
+        align-items: center;
     }
 
     .stats-grid {
         grid-template-columns: 1fr;
+        gap: 1rem;
     }
 
     .form-row {
         grid-template-columns: 1fr;
+        gap: 1rem;
     }
 
     .vehicle-profile {
         grid-template-columns: 1fr;
     }
 
-    .table-container {
-        font-size: 0.85rem;
-        width: 99%;
-        margin: 0 auto;
-        overflow-x: auto;
+    /* Card-based table layout for mobile */
+    body.mobile-view .table-container table {
+        display: none;
     }
 
-    table {
+    body.mobile-view .mobile-cards {
+        display: block !important;
+    }
+
+    .mobile-cards {
+        display: none;
+    }
+
+    .mobile-card {
+        background: var(--white);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-left: 4px solid var(--primary-color);
+    }
+
+    .mobile-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--light-bg);
+    }
+
+    .mobile-card-header h4 {
+        font-size: 1.1rem;
+        color: var(--dark-text);
+        margin: 0;
+    }
+
+    .mobile-card-body {
+        display: grid;
+        gap: 0.75rem;
+    }
+
+    .mobile-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0;
+    }
+
+    .mobile-card-label {
+        font-weight: 600;
+        color: var(--light-text);
+        font-size: 0.9rem;
+    }
+
+    .mobile-card-value {
+        color: var(--dark-text);
+        font-weight: 500;
+        text-align: right;
+    }
+
+    .mobile-card-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--light-bg);
+    }
+
+    .mobile-card-actions .btn {
+        flex: 1;
+        margin: 0;
+    }
+
+    /* Larger touch targets */
+    body.mobile-view .btn {
+        min-height: 48px;
+        font-size: 1rem;
+        padding: 0.75rem 1.5rem;
         width: 100%;
+        margin-bottom: 0.75rem;
+        border-radius: 12px;
+        font-weight: 600;
     }
 
-    table th,
-    table td {
-        padding: 0.5rem;
-        font-size: 0.85rem;
+    body.mobile-view .btn-small {
+        min-height: 44px;
+        padding: 0.625rem 1.25rem;
+        font-size: 0.95rem;
     }
 
-    .modal-content {
-        margin: 10% 1rem;
-        padding: 1rem;
+    /* Form improvements */
+    body.mobile-view input,
+    body.mobile-view select,
+    body.mobile-view textarea {
+        min-height: 48px;
+        font-size: 16px; /* Prevents iOS zoom */
+        padding: 0.875rem;
+        border-radius: 10px;
+        border: 2px solid var(--border-color);
     }
 
-    .btn {
-        width: 100%;
+    body.mobile-view .form-group {
+        margin-bottom: 1.25rem;
+    }
+
+    body.mobile-view label {
+        font-size: 1rem;
+        font-weight: 600;
         margin-bottom: 0.5rem;
+        display: block;
+    }
+
+    /* Full-screen modals on mobile */
+    body.mobile-view .modal {
+        padding: 0;
+    }
+
+    body.mobile-view .modal-content {
+        margin: 0;
+        width: 100%;
+        height: 100vh;
+        max-width: 100%;
+        border-radius: 0;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    body.mobile-view .modal-header {
+        position: sticky;
+        top: 0;
+        background: var(--white);
+        z-index: 10;
+        padding: 1.25rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    body.mobile-view .modal-header h3 {
+        font-size: 1.25rem;
+    }
+
+    body.mobile-view .modal-content form {
+        flex: 1;
+        padding: 1.25rem;
+    }
+
+    /* Bottom navigation bar */
+    body.mobile-view .bottom-nav {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--white);
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+        padding: 0.5rem 0;
+        z-index: 999;
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+    }
+
+    .bottom-nav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-decoration: none;
+        color: var(--light-text);
+        padding: 0.5rem;
+        min-width: 60px;
+        transition: all 0.2s;
+    }
+
+    .bottom-nav-item.active {
+        color: var(--primary-color);
+    }
+
+    .bottom-nav-icon {
+        font-size: 1.5rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .bottom-nav-label {
+        font-size: 0.75rem;
+        font-weight: 500;
     }
 
     .card {
-        padding: 1rem;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
+        border-radius: 12px;
+    }
+
+    /* Improved cards layout */
+    body.mobile-view .stats-grid .stat-card {
+        padding: 1.5rem;
+        border-radius: 12px;
+    }
+
+    body.mobile-view .stat-card h3 {
+        font-size: 1rem;
+    }
+
+    body.mobile-view .stat-value {
+        font-size: 2rem;
+    }
+
+    /* Action menu improvements */
+    body.mobile-view .menu-button {
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    body.mobile-view .menu-dropdown button {
+        min-height: 48px;
+        font-size: 1rem;
+    }
+
+    /* Pagination improvements */
+    body.mobile-view .pagination button {
+        min-height: 44px;
+        min-width: 44px;
+        font-size: 1rem;
+    }
+
+    /* Search input */
+    body.mobile-view .search-input {
+        min-height: 48px;
+        font-size: 16px;
+        border-radius: 24px;
+        padding: 0.75rem 1.25rem;
+    }
+
+    /* Vehicle selector improvements */
+    body.mobile-view .vehicle-selector {
+        min-height: 44px;
+        width: 100%;
+        max-width: 100%;
+        font-size: 1rem;
+    }
+
+    /* Flex-between improvements */
+    body.mobile-view .flex-between {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+
+    body.mobile-view .flex-between > div {
+        width: 100%;
+    }
+
+    body.mobile-view .flex-between > div[style*="flex"] {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    /* Hide/show elements */
+    body.mobile-view .hide-mobile {
+        display: none !important;
+    }
+
+    .show-mobile {
+        display: none !important;
+    }
+
+    body.mobile-view .show-mobile {
+        display: block !important;
+    }
+
+    /* Improved mobile menu */
+    body.mobile-view .mobile-nav {
         margin-bottom: 1rem;
     }
 
-    /* Mobile menu optimizations */
-    body.mobile-view .mobile-nav {
-        margin-bottom: 0.5rem;
+    body.mobile-view .hamburger-btn {
+        min-height: 48px;
+        padding: 0.75rem 1.25rem;
+        font-size: 1rem;
     }
 
-    /* VIN decode button mobile optimization */
-    body.mobile-view #vin {
-        margin-bottom: 0.5rem;
+    body.mobile-view .mobile-menu li a {
+        min-height: 52px;
+        font-size: 1.05rem;
     }
 
     @media (max-width: 480px) {
@@ -729,6 +984,22 @@ table tr:hover {
 
         .form-group > div[style*="flex"] button {
             width: 100% !important;
+        }
+
+        body.mobile-view .modal-content {
+            padding: 0;
+        }
+
+        body.mobile-view h1 {
+            font-size: 1.75rem;
+        }
+
+        body.mobile-view h2 {
+            font-size: 1.4rem;
+        }
+
+        body.mobile-view h3 {
+            font-size: 1.2rem;
         }
     }
 }

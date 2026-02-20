@@ -104,6 +104,12 @@
         <input type="text" id="searchInput" class="search-input" placeholder="Search services by provider, comments, or repairs..." onkeyup="searchServicesDebounced()">
     </div>
 
+    <!-- Mobile Cards View -->
+    <div class="mobile-cards" id="servicesMobileCards">
+        <p class="text-center">Loading...</p>
+    </div>
+
+    <!-- Desktop Table View -->
     <div class="table-container">
         <table id="servicesTable">
             <thead>
@@ -429,10 +435,12 @@ function updateSuppliesList() {
 
 function displayServices() {
     const tbody = document.getElementById('servicesTableBody');
+    const mobileCards = document.getElementById('servicesMobileCards');
     const paginationDiv = document.getElementById('paginationControls');
 
     if (filteredServices.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
+        mobileCards.innerHTML = '<p class="text-center">No service records found. Click "Add Service Record" to get started.</p>';
         paginationDiv.innerHTML = '';
         return;
     }
@@ -440,10 +448,11 @@ function displayServices() {
     // Get paginated data
     const paginatedServices = paginateArray(filteredServices, currentPage, itemsPerPage);
 
-    let html = '';
+    // Desktop table view
+    let tableHtml = '';
     paginatedServices.forEach(service => {
         const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
-        html += `
+        tableHtml += `
             <tr>
                 <td>${formatDate(service.date)}</td>
                 <td>${service.service_provider}</td>
@@ -468,8 +477,34 @@ function displayServices() {
             </tr>
         `;
     });
+    tbody.innerHTML = tableHtml;
 
-    tbody.innerHTML = html;
+    // Mobile cards view
+    let cardsHtml = '';
+    paginatedServices.forEach(service => {
+        const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
+        const fields = [
+            { label: 'Date', value: formatDate(service.date) },
+            { label: 'Provider', value: service.service_provider },
+            { label: 'Odometer', value: service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A' },
+            { label: 'Service Cost', value: formatCurrency(service.cost) },
+            { label: 'Supplies', value: formatCurrency(service.supplies_cost || 0) },
+            { label: 'Total', value: formatCurrency(totalCost) }
+        ];
+
+        if (service.repairs_completed) {
+            fields.push({ label: 'Repairs', value: service.repairs_completed });
+        }
+
+        const actions = [
+            { label: 'View', class: 'btn-secondary', onclick: `viewService(${service.id})` },
+            { label: 'Edit', class: 'btn-secondary', onclick: `editService(${service.id})` },
+            { label: 'Delete', class: 'btn-danger', onclick: `deleteService(${service.id})` }
+        ];
+
+        cardsHtml += createMobileCard(service.service_provider, fields, actions);
+    });
+    mobileCards.innerHTML = cardsHtml;
 
     // Display pagination controls
     paginationDiv.innerHTML = createPagination(filteredServices.length, currentPage, itemsPerPage, 'goToPage');

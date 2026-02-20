@@ -46,6 +46,15 @@ function setActiveNav() {
             link.classList.add('active');
         }
     });
+
+    // Also set active bottom nav item
+    const bottomNavItems = document.querySelectorAll('.bottom-nav-item');
+    bottomNavItems.forEach(item => {
+        item.classList.remove('active');
+        if (item.getAttribute('href') === currentPath) {
+            item.classList.add('active');
+        }
+    });
 }
 
 // Mobile menu toggle
@@ -524,4 +533,36 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
+}
+
+// Create mobile card layout from data
+function createMobileCard(title, fields, actions) {
+    let html = '<div class="mobile-card">';
+
+    // Header
+    html += '<div class="mobile-card-header">';
+    html += `<h4>${title}</h4>`;
+    html += '</div>';
+
+    // Body
+    html += '<div class="mobile-card-body">';
+    fields.forEach(field => {
+        html += '<div class="mobile-card-row">';
+        html += `<span class="mobile-card-label">${field.label}</span>`;
+        html += `<span class="mobile-card-value">${field.value}</span>`;
+        html += '</div>';
+    });
+    html += '</div>';
+
+    // Actions
+    if (actions && actions.length > 0) {
+        html += '<div class="mobile-card-actions">';
+        actions.forEach(action => {
+            html += `<button class="btn ${action.class || 'btn-secondary'}" onclick="${action.onclick}">${action.label}</button>`;
+        });
+        html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
 }
