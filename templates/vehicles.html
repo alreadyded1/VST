@@ -8,6 +8,61 @@
 #viewVehicleModal .form-group label {
     font-weight: bold;
 }
+
+/* Horizontal vehicle cards */
+.vehicle-horizontal-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.vehicle-horizontal-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Mobile responsiveness for horizontal cards */
+@media (max-width: 900px) {
+    .vehicle-horizontal-card > div {
+        grid-template-columns: 150px 1fr !important;
+    }
+
+    .vehicle-horizontal-card > div > div:last-child {
+        grid-column: 1 / -1 !important;
+        border-left: none !important;
+        border-top: 3px solid var(--primary-color) !important;
+        min-width: 100% !important;
+    }
+}
+
+@media (max-width: 600px) {
+    .vehicle-horizontal-card > div {
+        grid-template-columns: 1fr !important;
+        min-height: auto !important;
+    }
+
+    .vehicle-horizontal-card > div > div:first-child {
+        height: 150px !important;
+    }
+
+    .vehicle-horizontal-card > div > div:last-child {
+        min-width: 100% !important;
+    }
+}
+
+body.mobile-view .vehicle-horizontal-card > div {
+    grid-template-columns: 1fr !important;
+    min-height: auto !important;
+}
+
+body.mobile-view .vehicle-horizontal-card > div > div:first-child {
+    height: 150px !important;
+}
+
+body.mobile-view .vehicle-horizontal-card > div > div:last-child {
+    grid-column: 1 !important;
+    border-left: none !important;
+    border-top: 3px solid var(--primary-color) !important;
+    min-width: 100% !important;
+}
 </style>
 
 <h1>My Vehicles</h1>
@@ -15,12 +70,7 @@
 <div class="card">
     <div class="flex-between mb-2">
         <h2>Vehicle List</h2>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <button class="btn btn-secondary" onclick="toggleViewMode()" id="viewModeBtn">
-                <span id="viewModeIcon">📋</span> Compact View
-            </button>
-            <button class="btn btn-primary" onclick="openModal('addVehicleModal')">Add Vehicle</button>
-        </div>
+        <button class="btn btn-primary" onclick="openModal('addVehicleModal')">Add Vehicle</button>
     </div>
 
     <div id="vehiclesList">
@@ -176,7 +226,6 @@
 <script>
 let allVehicles = [];
 let vehicleStats = {};
-let viewMode = localStorage.getItem('vehiclesViewMode') || 'expanded'; // 'compact' or 'expanded'
 
 async function loadVehicles() {
     try {
@@ -187,7 +236,6 @@ async function loadVehicles() {
         await loadAllVehicleStats();
 
         displayVehicles(vehicles);
-        updateViewModeButton();
     } catch (error) {
         console.error('Error loading vehicles:', error);
         document.getElementById('vehiclesList').innerHTML = '<p>Error loading vehicles</p>';
@@ -277,24 +325,6 @@ async function loadVehicleStats(vehicleId) {
     }
 }
 
-function toggleViewMode() {
-    viewMode = viewMode === 'expanded' ? 'compact' : 'expanded';
-    localStorage.setItem('vehiclesViewMode', viewMode);
-    displayVehicles(allVehicles);
-    updateViewModeButton();
-}
-
-function updateViewModeButton() {
-    const btn = document.getElementById('viewModeBtn');
-    const icon = document.getElementById('viewModeIcon');
-
-    if (viewMode === 'compact') {
-        btn.innerHTML = '<span id="viewModeIcon">📊</span> Expanded View';
-    } else {
-        btn.innerHTML = '<span id="viewModeIcon">📋</span> Compact View';
-    }
-}
-
 function displayVehicles(vehicles) {
     const container = document.getElementById('vehiclesList');
 
@@ -303,15 +333,7 @@ function displayVehicles(vehicles) {
         return;
     }
 
-    if (viewMode === 'compact') {
-        displayVehiclesCompact(vehicles, container);
-    } else {
-        displayVehiclesExpanded(vehicles, container);
-    }
-}
-
-function displayVehiclesCompact(vehicles, container) {
-    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">';
+    let html = '<div style="display: flex; flex-direction: column; gap: 1.5rem;">';
 
     vehicles.forEach(vehicle => {
         const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
@@ -319,116 +341,104 @@ function displayVehiclesCompact(vehicles, container) {
         const stats = vehicleStats[vehicle.id] || {};
 
         html += `
-            <div class="card" style="margin: 0; padding: 0.75rem;">
-                <div style="display: flex; gap: 0.75rem; align-items: center;">
-                    ${imageSrc ?
-                        `<img src="${imageSrc}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0;">` :
-                        `<div style="width: 60px; height: 60px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px; flex-shrink: 0; font-size: 1.5rem;">🚗</div>`
-                    }
-                    <div style="flex: 1; min-width: 0;">
-                        <h4 style="margin: 0 0 0.25rem 0; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${nickname}</h4>
-                        <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">${vehicle.year} ${vehicle.manufacturer}</p>
-                        ${stats.currentOdometer ? `<p style="margin: 0.25rem 0 0 0; font-size: 0.8rem; color: var(--light-text);">${stats.currentOdometer.toLocaleString()} mi</p>` : ''}
+            <div class="card vehicle-horizontal-card" style="margin: 0; padding: 0; overflow: hidden;">
+                <div style="display: grid; grid-template-columns: 200px 1fr auto; gap: 0; min-height: 200px;">
+                    <!-- Vehicle Image -->
+                    <div style="position: relative; overflow: hidden;">
+                        ${imageSrc ?
+                            `<img src="${imageSrc}" style="width: 100%; height: 100%; object-fit: cover;">` :
+                            `<div style="width: 100%; height: 100%; background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 4rem;">🚗</div>`
+                        }
                     </div>
-                </div>
-                <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; justify-content: space-between;">
-                    <button class="btn btn-small btn-primary" onclick="selectVehicle(${vehicle.id})" style="flex: 1;">Select</button>
-                    <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View</button>
-                    <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
-                </div>
-            </div>
-        `;
-    });
 
-    html += '</div>';
-    container.innerHTML = html;
-}
+                    <!-- Vehicle Info & Stats -->
+                    <div style="padding: 1.5rem; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div>
+                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem; color: var(--primary-color);">${nickname}</h3>
+                            <p style="margin: 0 0 0.75rem 0; font-size: 1.1rem;"><strong>${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}</strong></p>
 
-function displayVehiclesExpanded(vehicles, container) {
-    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem;">';
-
-    vehicles.forEach(vehicle => {
-        const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
-        const imageSrc = vehicle.picture ? `/static/${vehicle.picture}` : '';
-        const stats = vehicleStats[vehicle.id] || {};
-
-        html += `
-            <div class="card" style="margin: 0;">
-                ${imageSrc ? `<img src="${imageSrc}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px 8px 0 0;">` :
-                            `<div style="width: 100%; height: 200px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px 8px 0 0; font-size: 3rem;">🚗</div>`}
-                <div style="padding: 1rem;">
-                    <h3 style="margin-bottom: 0.5rem;">${nickname}</h3>
-                    <p style="margin-bottom: 0.5rem;"><strong>${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}</strong></p>
-                    ${vehicle.engine ? `<p style="margin-bottom: 0.5rem; font-size: 0.9rem;">Engine: ${vehicle.engine}</p>` : ''}
-                    ${stats.currentOdometer ? `<p style="margin-bottom: 0.5rem; font-size: 0.9rem;">Odometer: ${stats.currentOdometer.toLocaleString()} miles</p>` : ''}
-                    ${stats.avgMpg ? `<p style="margin-bottom: 0.5rem; font-size: 0.9rem;">Avg MPG: ${stats.avgMpg.toFixed(1)}</p>` : ''}
-
-                    <!-- Cost Summary Section -->
-                    <div style="margin-top: 1rem; padding: 1rem; background: var(--light-bg); border-radius: 8px;">
-                        <h4 style="margin: 0 0 0.75rem 0; font-size: 0.95rem; color: var(--secondary-color);">Cost Summary</h4>
-
-                        <!-- YTD Costs -->
-                        <div style="margin-bottom: 0.75rem;">
-                            <p style="margin: 0 0 0.25rem 0; font-size: 0.85rem; font-weight: bold;">Year-to-Date ${new Date().getFullYear()}</p>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.85rem;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
+                                ${vehicle.engine ? `
                                 <div>
-                                    <span style="color: var(--light-text);">Maintenance:</span>
-                                    <strong>${formatCurrency(stats.ytdServiceCost || 0)}</strong>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Engine</p>
+                                    <p style="margin: 0; font-weight: 600;">${vehicle.engine}</p>
+                                </div>` : ''}
+                                ${stats.currentOdometer ? `
+                                <div>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Odometer</p>
+                                    <p style="margin: 0; font-weight: 600;">${stats.currentOdometer.toLocaleString()} mi</p>
+                                </div>` : ''}
+                                ${stats.avgMpg ? `
+                                <div>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Avg MPG</p>
+                                    <p style="margin: 0; font-weight: 600;">${stats.avgMpg.toFixed(1)}</p>
+                                </div>` : ''}
+                                <div>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Services</p>
+                                    <p style="margin: 0; font-weight: 600;">${stats.serviceCount || 0}</p>
                                 </div>
                                 <div>
-                                    <span style="color: var(--light-text);">Fuel:</span>
-                                    <strong>${formatCurrency(stats.ytdFuelCost || 0)}</strong>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Fuel Records</p>
+                                    <p style="margin: 0; font-weight: 600;">${stats.fuelRecordCount || 0}</p>
                                 </div>
                             </div>
-                            <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
-                                <span style="color: var(--light-text); font-size: 0.85rem;">YTD Total:</span>
-                                <strong style="font-size: 1.1rem; color: var(--secondary-color);">${formatCurrency(stats.ytdTotalCost || 0)}</strong>
+
+                            ${vehicle.vin ? `<p style="margin: 0.5rem 0 0 0;"><small style="color: var(--light-text);">VIN: ${vehicle.vin}</small></p>` : ''}
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem;">
+                            <button class="btn btn-small btn-primary" onclick="selectVehicle(${vehicle.id})">Select Vehicle</button>
+                            <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View Details</button>
+                            <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
+                            <button class="btn btn-small btn-danger" onclick="deleteVehicle(${vehicle.id})">Delete</button>
+                        </div>
+                    </div>
+
+                    <!-- Cost Summary Panel -->
+                    <div style="background: linear-gradient(to bottom, var(--light-bg) 0%, #f5f7f8 100%); padding: 1.5rem; min-width: 280px; border-left: 3px solid var(--primary-color);">
+                        <h4 style="margin: 0 0 1rem 0; font-size: 1rem; color: var(--secondary-color); text-align: center;">💰 Cost Summary</h4>
+
+                        <!-- YTD Costs -->
+                        <div style="background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; font-weight: bold; color: var(--secondary-color); text-align: center; text-transform: uppercase; letter-spacing: 0.5px;">Year-to-Date ${new Date().getFullYear()}</p>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                <span style="color: var(--light-text); font-size: 0.9rem;">Maintenance:</span>
+                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.ytdServiceCost || 0)}</strong>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.75rem;">
+                                <span style="color: var(--light-text); font-size: 0.9rem;">Fuel:</span>
+                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.ytdFuelCost || 0)}</strong>
+                            </div>
+                            <div style="padding-top: 0.75rem; border-top: 2px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight: 600; font-size: 0.9rem;">YTD Total:</span>
+                                <strong style="font-size: 1.25rem; color: var(--secondary-color);">${formatCurrency(stats.ytdTotalCost || 0)}</strong>
                             </div>
                         </div>
 
                         <!-- All-Time Costs -->
-                        <div style="padding-top: 0.75rem; border-top: 1px solid var(--border-color);">
-                            <p style="margin: 0 0 0.25rem 0; font-size: 0.85rem; font-weight: bold;">All-Time Total</p>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.85rem;">
-                                <div>
-                                    <span style="color: var(--light-text);">Maintenance:</span>
-                                    <strong>${formatCurrency(stats.totalServiceCost || 0)}</strong>
-                                </div>
-                                <div>
-                                    <span style="color: var(--light-text);">Fuel:</span>
-                                    <strong>${formatCurrency(stats.totalFuelCost || 0)}</strong>
-                                </div>
+                        <div style="background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; font-weight: bold; color: var(--primary-color); text-align: center; text-transform: uppercase; letter-spacing: 0.5px;">All-Time Total</p>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                <span style="color: var(--light-text); font-size: 0.9rem;">Maintenance:</span>
+                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.totalServiceCost || 0)}</strong>
                             </div>
-                            <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
-                                <span style="color: var(--light-text); font-size: 0.85rem;">Grand Total:</span>
-                                <strong style="font-size: 1.1rem; color: var(--primary-color);">${formatCurrency(stats.totalAllTimeCost || 0)}</strong>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.75rem;">
+                                <span style="color: var(--light-text); font-size: 0.9rem;">Fuel:</span>
+                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.totalFuelCost || 0)}</strong>
+                            </div>
+                            <div style="padding-top: 0.75rem; border-top: 2px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight: 600; font-size: 0.9rem;">Grand Total:</span>
+                                <strong style="font-size: 1.25rem; color: var(--primary-color);">${formatCurrency(stats.totalAllTimeCost || 0)}</strong>
                             </div>
                         </div>
 
-                        <!-- Activity Stats -->
-                        <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); font-size: 0.85rem;">
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-                                <div>
-                                    <span style="color: var(--light-text);">Services:</span>
-                                    <strong>${stats.serviceCount || 0}</strong>
-                                </div>
-                                <div>
-                                    <span style="color: var(--light-text);">Fuel Records:</span>
-                                    <strong>${stats.fuelRecordCount || 0}</strong>
-                                </div>
-                            </div>
-                            ${stats.lastService ? `<p style="margin: 0.5rem 0 0 0; color: var(--light-text);">Last Service: ${formatDate(stats.lastService)}</p>` : ''}
-                            ${stats.lastFuel ? `<p style="margin: 0.25rem 0 0 0; color: var(--light-text);">Last Fuel: ${formatDate(stats.lastFuel)}</p>` : ''}
-                        </div>
-                    </div>
-
-                    ${vehicle.vin ? `<p style="margin-top: 0.75rem;"><small style="color: var(--light-text);">VIN: ${vehicle.vin}</small></p>` : ''}
-
-                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View</button>
-                        <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
-                        <button class="btn btn-small btn-primary" onclick="selectVehicle(${vehicle.id})">Select</button>
-                        <button class="btn btn-small btn-danger" onclick="deleteVehicle(${vehicle.id})">Delete</button>
+                        <!-- Last Activity -->
+                        ${stats.lastService || stats.lastFuel ? `
+                        <div style="margin-top: 1rem; padding: 0.75rem; background: white; border-radius: 8px; font-size: 0.85rem;">
+                            ${stats.lastService ? `<p style="margin: 0 0 0.25rem 0; color: var(--light-text);">🔧 Last Service: <strong>${formatDate(stats.lastService)}</strong></p>` : ''}
+                            ${stats.lastFuel ? `<p style="margin: 0; color: var(--light-text);">⛽ Last Fuel: <strong>${formatDate(stats.lastFuel)}</strong></p>` : ''}
+                        </div>` : ''}
                     </div>
                 </div>
             </div>
