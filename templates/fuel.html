@@ -3,6 +3,7 @@
 {% block title %}Fuel Tracker - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <h1>Fuel Tracker</h1>
 
 <style>
@@ -102,6 +103,27 @@
 </div>
 
 <div class="card">
+    <h2>Fuel Trends</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 2rem;">
+        <div>
+            <h3 style="text-align: center; margin-bottom: 1rem;">MPG Over Time</h3>
+            <canvas id="mpgChart"></canvas>
+        </div>
+        <div>
+            <h3 style="text-align: center; margin-bottom: 1rem;">Cost per Gallon Trend</h3>
+            <canvas id="costChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Station Comparison</h2>
+    <div id="stationComparison" class="table-container">
+        <p class="text-center" style="padding: 2rem;">No station data available</p>
+    </div>
+</div>
+
+<div class="card">
     <div class="flex-between mb-2">
         <h2>Fuel Records</h2>
         <div style="display: flex; gap: 0.5rem; align-items: center;">
@@ -125,13 +147,14 @@
                     <th class="sortable">Cost</th>
                     <th class="sortable hide-mobile">Price/Gal</th>
                     <th class="hide-mobile">Location</th>
+                    <th class="hide-mobile">Station</th>
                     <th class="sortable">MPG</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody id="fuelTableBody">
                 <tr>
-                    <td colspan="8" class="text-center">Loading...</td>
+                    <td colspan="9" class="text-center">Loading...</td>
                 </tr>
             </tbody>
         </table>
@@ -168,9 +191,16 @@
                 </div>
             </div>
 
-            <div class="form-group">
-                <label for="location">Location *</label>
-                <input type="text" id="location" name="location" placeholder="e.g., Shell Station, Main St" required>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="location">Location *</label>
+                    <input type="text" id="location" name="location" placeholder="e.g., 123 Main St" required>
+                </div>
+                <div class="form-group">
+                    <label for="station">Station Name</label>
+                    <input type="text" id="station" name="station" placeholder="e.g., Shell, BP, Exxon" list="stationList">
+                    <datalist id="stationList"></datalist>
+                </div>
             </div>
 
             <div class="alert alert-info">
@@ -231,11 +261,13 @@ function createFuelGauge(containerId, value, label, bestMpg = null) {
 }
 
 let allFuelRecords = [];
+let mpgChart = null;
+let costChart = null;
 
 async function loadFuelRecords() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Please select a vehicle first</td></tr>';
         return;
     }
 
@@ -244,10 +276,13 @@ async function loadFuelRecords() {
         allFuelRecords = records;
         displayFuelRecords(records);
         calculateStats(records);
+        updateCharts(records);
+        updateStationComparison(records);
+        updateStationDatalist(records);
         makeSortable(document.getElementById('fuelTable'));
     } catch (error) {
         console.error('Error loading fuel records:', error);
-        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading fuel records</td></tr>';
+        document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="9" class="text-center">Error loading fuel records</td></tr>';
     }
 }
 
@@ -255,7 +290,7 @@ function displayFuelRecords(records) {
     const tbody = document.getElementById('fuelTableBody');
 
     if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
         return;
     }
 
@@ -270,6 +305,7 @@ function displayFuelRecords(records) {
                 <td>${formatCurrency(record.cost)}</td>
                 <td class="hide-mobile">${formatCurrency(pricePerGal)}</td>
                 <td class="hide-mobile">${record.location}</td>
+                <td class="hide-mobile">${record.station || 'N/A'}</td>
                 <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
                 <td>
                     <div class="action-menu">
@@ -363,6 +399,7 @@ async function editFuelRecord(fuelId) {
         document.getElementById('gallons').value = record.gallons;
         document.getElementById('fuelCost').value = record.cost;
         document.getElementById('location').value = record.location;
+        document.getElementById('station').value = record.station || '';
 
         // Update modal title
         document.querySelector('#addFuelModal h3').textContent = 'Edit Fuel Record';
@@ -399,7 +436,8 @@ async function addFuelRecord(event) {
         gallons: parseFloat(formData.get('gallons')),
         cost: parseFloat(formData.get('cost')),
         odometer: parseInt(formData.get('odometer')),
-        location: formData.get('location')
+        location: formData.get('location'),
+        station: formData.get('station') || ''
     };
 
     try {
@@ -532,6 +570,227 @@ async function importCSV(event) {
 
     // Reset file input
     event.target.value = '';
+}
+
+function updateCharts(records) {
+    // Filter records with MPG data and sort by date
+    const recordsWithMpg = records.filter(r => r.mpg !== null && r.mpg > 0)
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (recordsWithMpg.length === 0) {
+        // Destroy existing charts if no data
+        if (mpgChart) {
+            mpgChart.destroy();
+            mpgChart = null;
+        }
+        if (costChart) {
+            costChart.destroy();
+            costChart = null;
+        }
+        return;
+    }
+
+    // Prepare data for MPG chart
+    const mpgLabels = recordsWithMpg.map(r => formatDate(r.date));
+    const mpgData = recordsWithMpg.map(r => r.mpg);
+
+    // Prepare data for cost chart
+    const costLabels = records.map(r => formatDate(r.date)).reverse();
+    const costData = records.map(r => (r.cost / r.gallons).toFixed(2)).reverse();
+
+    // Create or update MPG chart
+    const mpgCtx = document.getElementById('mpgChart').getContext('2d');
+    if (mpgChart) {
+        mpgChart.destroy();
+    }
+    mpgChart = new Chart(mpgCtx, {
+        type: 'line',
+        data: {
+            labels: mpgLabels,
+            datasets: [{
+                label: 'MPG',
+                data: mpgData,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    title: {
+                        display: true,
+                        text: 'Miles per Gallon'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Date'
+                    }
+                }
+            }
+        }
+    });
+
+    // Create or update cost chart
+    const costCtx = document.getElementById('costChart').getContext('2d');
+    if (costChart) {
+        costChart.destroy();
+    }
+    costChart = new Chart(costCtx, {
+        type: 'line',
+        data: {
+            labels: costLabels,
+            datasets: [{
+                label: 'Price per Gallon',
+                data: costData,
+                borderColor: 'rgb(255, 99, 132)',
+                backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    title: {
+                        display: true,
+                        text: 'Price ($)'
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Date'
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateStationComparison(records) {
+    const container = document.getElementById('stationComparison');
+
+    // Group records by station
+    const stationData = {};
+    records.forEach(record => {
+        const station = record.station || 'Unknown';
+        if (!stationData[station]) {
+            stationData[station] = {
+                name: station,
+                totalCost: 0,
+                totalGallons: 0,
+                visits: 0,
+                mpgValues: []
+            };
+        }
+
+        stationData[station].totalCost += record.cost;
+        stationData[station].totalGallons += record.gallons;
+        stationData[station].visits += 1;
+
+        if (record.mpg && record.mpg > 0) {
+            stationData[station].mpgValues.push(record.mpg);
+        }
+    });
+
+    // Convert to array and calculate averages
+    const stations = Object.values(stationData).map(station => {
+        const avgPricePerGal = station.totalGallons > 0 ? station.totalCost / station.totalGallons : 0;
+        const avgMpg = station.mpgValues.length > 0
+            ? station.mpgValues.reduce((a, b) => a + b, 0) / station.mpgValues.length
+            : 0;
+
+        return {
+            name: station.name,
+            avgPricePerGal: avgPricePerGal,
+            avgMpg: avgMpg,
+            totalGallons: station.totalGallons,
+            visits: station.visits
+        };
+    });
+
+    // Sort by visits (most used stations first)
+    stations.sort((a, b) => b.visits - a.visits);
+
+    if (stations.length === 0) {
+        container.innerHTML = '<p class="text-center" style="padding: 2rem;">No station data available</p>';
+        return;
+    }
+
+    // Create table
+    let html = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Station</th>
+                    <th>Visits</th>
+                    <th>Total Gallons</th>
+                    <th>Avg Price/Gal</th>
+                    <th>Avg MPG</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    stations.forEach(station => {
+        html += `
+            <tr>
+                <td><strong>${station.name}</strong></td>
+                <td>${station.visits}</td>
+                <td>${station.totalGallons.toFixed(1)} gal</td>
+                <td>${formatCurrency(station.avgPricePerGal)}</td>
+                <td>${station.avgMpg > 0 ? station.avgMpg.toFixed(2) : 'N/A'}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    `;
+
+    container.innerHTML = html;
+}
+
+function updateStationDatalist(records) {
+    const datalist = document.getElementById('stationList');
+    const stations = new Set();
+
+    records.forEach(record => {
+        if (record.station && record.station.trim() !== '') {
+            stations.add(record.station);
+        }
+    });
+
+    datalist.innerHTML = Array.from(stations)
+        .sort()
+        .map(station => `<option value="${station}">`)
+        .join('');
 }
 </script>
 {% endblock %}

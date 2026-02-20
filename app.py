@@ -221,6 +221,14 @@ def init_db():
                 # Column already exists
                 pass
 
+        # Migration: Add station column to fuel_records table
+        try:
+            db.execute('ALTER TABLE fuel_records ADD COLUMN station TEXT')
+            db.commit()
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
         if admin_exists['count'] == 0:
@@ -1330,10 +1338,10 @@ def add_fuel_record():
             mpg = round(miles_driven / data['gallons'], 2)
 
     cursor = db.execute('''INSERT INTO fuel_records
-                          (vehicle_id, date, gallons, cost, odometer, location, mpg)
-                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (vehicle_id, date, gallons, cost, odometer, location, mpg, station)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['date'], data['gallons'], data['cost'],
-                        data['odometer'], data['location'], mpg))
+                        data['odometer'], data['location'], mpg, data.get('station', '')))
 
     db.commit()
     record_id = cursor.lastrowid
@@ -1362,10 +1370,10 @@ def update_fuel_record(fuel_id):
 
     # Update the fuel record
     db.execute('''UPDATE fuel_records
-                 SET date=?, gallons=?, cost=?, odometer=?, location=?
+                 SET date=?, gallons=?, cost=?, odometer=?, location=?, station=?
                  WHERE id=?''',
               (data['date'], data['gallons'], data['cost'],
-               data['odometer'], data['location'], fuel_id))
+               data['odometer'], data['location'], data.get('station', ''), fuel_id))
 
     # Recalculate MPG for this record
     record = db.execute('SELECT * FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
@@ -1410,14 +1418,14 @@ def export_fuel_csv():
         db = get_db()
         if vehicle_id:
             fuel_records = db.execute('''
-                SELECT date, odometer, gallons, cost, location, mpg
+                SELECT date, odometer, gallons, cost, location, station, mpg
                 FROM fuel_records
                 WHERE vehicle_id = ?
                 ORDER BY date DESC, odometer DESC
             ''', (vehicle_id,)).fetchall()
         else:
             fuel_records = db.execute('''
-                SELECT date, odometer, gallons, cost, location, mpg
+                SELECT date, odometer, gallons, cost, location, station, mpg
                 FROM fuel_records
                 ORDER BY date DESC, odometer DESC
             ''').fetchall()
@@ -1431,7 +1439,7 @@ def export_fuel_csv():
         writer = csv.writer(output)
 
         # Write header
-        writer.writerow(['date', 'odometer', 'gallons', 'cost', 'location', 'mpg'])
+        writer.writerow(['date', 'odometer', 'gallons', 'cost', 'location', 'station', 'mpg'])
 
         # Write data
         for record in records_list:
@@ -1441,6 +1449,7 @@ def export_fuel_csv():
                 record.get('gallons', ''),
                 record.get('cost', ''),
                 record.get('location', ''),
+                record.get('station', ''),
                 record.get('mpg', '') or ''
             ])
 
@@ -1465,11 +1474,11 @@ def download_fuel_template():
     writer = csv.writer(output)
 
     # Write header
-    writer.writerow(['date', 'odometer', 'gallons', 'cost', 'location'])
+    writer.writerow(['date', 'odometer', 'gallons', 'cost', 'location', 'station'])
 
     # Write example rows
-    writer.writerow(['2024-01-15', '50000', '12.5', '45.00', 'Shell Station'])
-    writer.writerow(['2024-01-22', '50350', '11.8', '42.50', 'BP Gas Station'])
+    writer.writerow(['2024-01-15', '50000', '12.5', '45.00', '123 Main St', 'Shell'])
+    writer.writerow(['2024-01-22', '50350', '11.8', '42.50', '456 Oak Ave', 'BP'])
 
     output.seek(0)
     response = make_response(output.getvalue())
@@ -1539,8 +1548,8 @@ def import_fuel_csv():
                 # Insert fuel record
                 db.execute('''
                     INSERT INTO fuel_records
-                    (vehicle_id, date, odometer, gallons, cost, location, mpg)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (vehicle_id, date, odometer, gallons, cost, location, station, mpg)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     vehicle_id,
                     row['date'],
@@ -1548,6 +1557,7 @@ def import_fuel_csv():
                     gallons,
                     cost,
                     row['location'],
+                    row.get('station', ''),
                     mpg
                 ))
                 imported_count += 1
