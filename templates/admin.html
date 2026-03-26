@@ -3,205 +3,18 @@
 {% block title %}Admin Panel - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
-<style>
-    .admin-container {
-        max-width: 1200px;
-        margin: 40px auto;
-    }
-    .admin-header {
-        background: white;
-        padding: 30px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-    }
-    .admin-header h2 {
-        margin: 0 0 10px 0;
-        color: #333;
-    }
-    .admin-section {
-        background: white;
-        padding: 30px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-    }
-    .admin-section h3 {
-        margin: 0 0 20px 0;
-        color: #333;
-    }
-    .btn-primary {
-        padding: 10px 20px;
-        background: #667eea;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        font-size: 14px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: background 0.3s;
-    }
-    .btn-primary:hover {
-        background: #5568d3;
-    }
-    .btn-danger {
-        padding: 8px 15px;
-        background: #dc3545;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        font-size: 12px;
-        cursor: pointer;
-        transition: background 0.3s;
-    }
-    .btn-danger:hover {
-        background: #c82333;
-    }
-    .btn-warning {
-        padding: 8px 15px;
-        background: #ffc107;
-        color: #333;
-        border: none;
-        border-radius: 5px;
-        font-size: 12px;
-        cursor: pointer;
-        transition: background 0.3s;
-    }
-    .btn-warning:hover {
-        background: #e0a800;
-    }
-    .users-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 20px;
-    }
-    .users-table th,
-    .users-table td {
-        padding: 12px;
-        text-align: left;
-        border-bottom: 1px solid #ddd;
-    }
-    .users-table th {
-        background: #f8f9fa;
-        font-weight: 600;
-        color: #333;
-    }
-    .users-table tr:hover {
-        background: #f8f9fa;
-    }
-    .badge {
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 3px;
-        font-size: 12px;
-        font-weight: 500;
-    }
-    .badge-admin {
-        background: #667eea;
-        color: white;
-    }
-    .badge-user {
-        background: #6c757d;
-        color: white;
-    }
-    .alert {
-        padding: 12px;
-        margin-bottom: 20px;
-        border-radius: 5px;
-    }
-    .alert-success {
-        background: #d4edda;
-        color: #155724;
-        border: 1px solid #c3e6cb;
-    }
-    .alert-error {
-        background: #f8d7da;
-        color: #721c24;
-        border: 1px solid #f5c6cb;
-    }
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0,0,0,0.5);
-    }
-    .modal-content {
-        background: white;
-        margin: 10% auto;
-        padding: 30px;
-        border-radius: 8px;
-        width: 90%;
-        max-width: 500px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .modal-header {
-        margin-bottom: 20px;
-    }
-    .modal-header h3 {
-        margin: 0;
-        color: #333;
-    }
-    .modal-close {
-        float: right;
-        font-size: 28px;
-        font-weight: bold;
-        color: #aaa;
-        cursor: pointer;
-    }
-    .modal-close:hover {
-        color: #333;
-    }
-    .form-group {
-        margin-bottom: 20px;
-    }
-    .form-group label {
-        display: block;
-        margin-bottom: 5px;
-        color: #333;
-        font-weight: 500;
-    }
-    .form-group input,
-    .form-group select {
-        width: 100%;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        font-size: 14px;
-        box-sizing: border-box;
-    }
-    .form-group input:focus,
-    .form-group select:focus {
-        outline: none;
-        border-color: #667eea;
-    }
-    .checkbox-group {
-        display: flex;
-        align-items: center;
-    }
-    .checkbox-group input[type="checkbox"] {
-        width: auto;
-        margin-right: 8px;
-    }
-</style>
+<h1>Admin Panel</h1>
 
-<div class="admin-container">
-    <div class="admin-header">
-        <h2>Admin Panel</h2>
-        <p>Manage users and system settings</p>
+<!-- User Management -->
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>User Management</h2>
+        <button class="btn btn-primary" onclick="openModal('createUserModal')">Add User</button>
     </div>
 
-    <div class="admin-section">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3 style="margin: 0;">User Management</h3>
-            <button class="btn-primary" onclick="openCreateUserModal()">Add New User</button>
-        </div>
+    <div id="alertContainer"></div>
 
-        <div id="alertContainer"></div>
-
+    <div class="table-container">
         <table class="users-table">
             <thead>
                 <tr>
@@ -211,10 +24,24 @@
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody id="usersTableBody">
-                <!-- Users will be loaded here -->
-            </tbody>
+            <tbody id="usersTableBody"></tbody>
         </table>
+    </div>
+</div>
+
+<!-- System Settings -->
+<div class="card">
+    <h2>System Settings</h2>
+
+    <div class="setting-row">
+        <div class="setting-info">
+            <div class="setting-label">Show default credentials on login page</div>
+            <div class="setting-desc">Displays the default admin username and password hint on the login screen. Disable this once you have set a secure password.</div>
+        </div>
+        <label class="toggle-switch">
+            <input type="checkbox" id="showCredentialsToggle" onchange="saveSettings()">
+            <span class="toggle-slider"></span>
+        </label>
     </div>
 </div>
 
@@ -222,10 +49,10 @@
 <div id="createUserModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <span class="modal-close" onclick="closeCreateUserModal()">&times;</span>
             <h3>Create New User</h3>
+            <button class="close" onclick="closeModal('createUserModal')">&times;</button>
         </div>
-        <form id="createUserForm">
+        <form id="createUserForm" onsubmit="createUser(event)">
             <div class="form-group">
                 <label for="newUsername">Username</label>
                 <input type="text" id="newUsername" name="username" required>
@@ -234,11 +61,11 @@
                 <label for="newPassword">Password</label>
                 <input type="password" id="newPassword" name="password" required minlength="4">
             </div>
-            <div class="form-group checkbox-group">
-                <input type="checkbox" id="isAdmin" name="is_admin">
-                <label for="isAdmin" style="margin: 0;">Administrator</label>
+            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="isAdmin" name="is_admin" style="width: auto; margin: 0;">
+                <label for="isAdmin" style="margin: 0; font-weight: 500; font-size: 0.875rem;">Administrator</label>
             </div>
-            <button type="submit" class="btn-primary">Create User</button>
+            <button type="submit" class="btn btn-primary">Create User</button>
         </form>
     </div>
 </div>
@@ -247,174 +74,232 @@
 <div id="resetPasswordModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <span class="modal-close" onclick="closeResetPasswordModal()">&times;</span>
-            <h3>Reset User Password</h3>
+            <h3>Reset Password</h3>
+            <button class="close" onclick="closeModal('resetPasswordModal')">&times;</button>
         </div>
-        <form id="resetPasswordForm">
+        <form id="resetPasswordForm" onsubmit="resetPassword(event)">
             <input type="hidden" id="resetUserId">
             <div class="form-group">
                 <label for="resetPassword">New Password</label>
-                <input type="password" id="resetPassword" name="password" required minlength="4">
+                <input type="password" id="resetPasswordInput" name="password" required minlength="4">
             </div>
-            <button type="submit" class="btn-warning">Reset Password</button>
+            <button type="submit" class="btn btn-warning" style="background: var(--warning-color); color: #fff; border: none;">Reset Password</button>
         </form>
     </div>
 </div>
 
+<style>
+/* Badge */
+.badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.badge-admin { background: var(--accent-light, rgba(99,102,241,0.1)); color: var(--accent); }
+.badge-user  { background: var(--bg); color: var(--light-text); border: 1px solid var(--border-color); }
+
+/* Setting row */
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    padding: 0.75rem 0;
+}
+
+.setting-info { flex: 1; }
+
+.setting-label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--dark-text);
+    margin-bottom: 0.25rem;
+}
+
+.setting-desc {
+    font-size: 0.8rem;
+    color: var(--light-text);
+    line-height: 1.5;
+}
+
+/* Toggle switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border-color);
+    border-radius: 24px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    left: 3px;
+    top: 3px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+</style>
+
 <script>
 let currentUserId = {{ current_user.id }};
 
-// Load users on page load
-window.addEventListener('DOMContentLoaded', loadUsers);
+document.addEventListener('DOMContentLoaded', () => {
+    loadUsers();
+    loadSettings();
+});
 
 async function loadUsers() {
     try {
         const response = await fetch('/api/users');
         const users = await response.json();
-
         const tbody = document.getElementById('usersTableBody');
         tbody.innerHTML = '';
 
         users.forEach(user => {
-            const row = document.createElement('tr');
-            const createdDate = new Date(user.created_at).toLocaleDateString();
-            const isCurrentUser = user.id === currentUserId;
-
-            row.innerHTML = `
-                <td>${user.username}${isCurrentUser ? ' (You)' : ''}</td>
+            const isMe = user.id === currentUserId;
+            const date = new Date(user.created_at).toLocaleDateString();
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${user.username}${isMe ? ' <span style="color:var(--light-text);font-size:0.75rem;">(you)</span>' : ''}</td>
                 <td><span class="badge ${user.is_admin ? 'badge-admin' : 'badge-user'}">${user.is_admin ? 'Admin' : 'User'}</span></td>
-                <td>${createdDate}</td>
-                <td>
-                    <button class="btn-warning" onclick="openResetPasswordModal(${user.id}, '${user.username}')">Reset Password</button>
-                    ${!isCurrentUser ? `<button class="btn-danger" onclick="deleteUser(${user.id}, '${user.username}')">Delete</button>` : ''}
+                <td>${date}</td>
+                <td style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                    <button class="btn btn-small btn-secondary" onclick="openResetPasswordModal(${user.id})">Reset Password</button>
+                    ${!isMe ? `<button class="btn btn-small btn-danger" onclick="deleteUser(${user.id}, '${user.username}')">Delete</button>` : ''}
                 </td>
             `;
-            tbody.appendChild(row);
+            tbody.appendChild(tr);
         });
-    } catch (error) {
-        showAlert('Failed to load users', 'error');
+    } catch (err) {
+        showAdminAlert('Failed to load users.', 'danger');
     }
 }
 
-function openCreateUserModal() {
-    document.getElementById('createUserModal').style.display = 'block';
-}
-
-function closeCreateUserModal() {
-    document.getElementById('createUserModal').style.display = 'none';
-    document.getElementById('createUserForm').reset();
-}
-
-function openResetPasswordModal(userId, username) {
-    document.getElementById('resetUserId').value = userId;
-    document.getElementById('resetPasswordModal').style.display = 'block';
-}
-
-function closeResetPasswordModal() {
-    document.getElementById('resetPasswordModal').style.display = 'none';
-    document.getElementById('resetPasswordForm').reset();
-}
-
-document.getElementById('createUserForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-
+async function createUser(event) {
+    event.preventDefault();
     const username = document.getElementById('newUsername').value;
     const password = document.getElementById('newPassword').value;
     const isAdmin = document.getElementById('isAdmin').checked;
 
     try {
-        const response = await fetch('/api/users', {
+        const res = await fetch('/api/users', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                username: username,
-                password: password,
-                is_admin: isAdmin
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, is_admin: isAdmin })
         });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showAlert('User created successfully!', 'success');
-            closeCreateUserModal();
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showAdminAlert('User created successfully.', 'success');
+            closeModal('createUserModal');
+            document.getElementById('createUserForm').reset();
             loadUsers();
         } else {
-            showAlert(data.error || 'Failed to create user', 'error');
+            showAdminAlert(data.error || 'Failed to create user.', 'danger');
         }
-    } catch (error) {
-        showAlert('An error occurred. Please try again.', 'error');
+    } catch (err) {
+        showAdminAlert('An error occurred.', 'danger');
     }
-});
+}
 
-document.getElementById('resetPasswordForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
+function openResetPasswordModal(userId) {
+    document.getElementById('resetUserId').value = userId;
+    document.getElementById('resetPasswordInput').value = '';
+    openModal('resetPasswordModal');
+}
 
+async function resetPassword(event) {
+    event.preventDefault();
     const userId = document.getElementById('resetUserId').value;
-    const password = document.getElementById('resetPassword').value;
+    const password = document.getElementById('resetPasswordInput').value;
 
     try {
-        const response = await fetch(`/api/users/${userId}/reset-password`, {
+        const res = await fetch(`/api/users/${userId}/reset-password`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                password: password
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
         });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showAlert('Password reset successfully!', 'success');
-            closeResetPasswordModal();
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showAdminAlert('Password reset successfully.', 'success');
+            closeModal('resetPasswordModal');
         } else {
-            showAlert(data.error || 'Failed to reset password', 'error');
+            showAdminAlert(data.error || 'Failed to reset password.', 'danger');
         }
-    } catch (error) {
-        showAlert('An error occurred. Please try again.', 'error');
+    } catch (err) {
+        showAdminAlert('An error occurred.', 'danger');
     }
-});
+}
 
 async function deleteUser(userId, username) {
-    if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
-        return;
-    }
-
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
     try {
-        const response = await fetch(`/api/users/${userId}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showAlert('User deleted successfully!', 'success');
+        const res = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showAdminAlert('User deleted.', 'success');
             loadUsers();
         } else {
-            showAlert(data.error || 'Failed to delete user', 'error');
+            showAdminAlert(data.error || 'Failed to delete user.', 'danger');
         }
-    } catch (error) {
-        showAlert('An error occurred. Please try again.', 'error');
+    } catch (err) {
+        showAdminAlert('An error occurred.', 'danger');
     }
 }
 
-function showAlert(message, type) {
-    const alertContainer = document.getElementById('alertContainer');
-    alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
-    setTimeout(() => {
-        alertContainer.innerHTML = '';
-    }, 5000);
+async function loadSettings() {
+    try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        document.getElementById('showCredentialsToggle').checked = data.show_default_credentials;
+    } catch (err) {
+        console.error('Failed to load settings', err);
+    }
 }
 
-// Close modals when clicking outside
-window.onclick = function(event) {
-    if (event.target.className === 'modal') {
-        event.target.style.display = 'none';
+async function saveSettings() {
+    const showCreds = document.getElementById('showCredentialsToggle').checked;
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ show_default_credentials: showCreds })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showAdminAlert('Settings saved.', 'success');
+        }
+    } catch (err) {
+        showAdminAlert('Failed to save settings.', 'danger');
     }
+}
+
+function showAdminAlert(message, type) {
+    const el = document.getElementById('alertContainer');
+    el.innerHTML = `<div class="alert alert-${type}" style="margin-bottom:1rem;">${message}</div>`;
+    setTimeout(() => el.innerHTML = '', 4000);
 }
 </script>
 {% endblock %}

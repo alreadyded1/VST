@@ -320,8 +320,30 @@ def init_db():
                 # Index already exists
                 pass
 
+        # Settings table
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        ''')
         db.commit()
+
         db.close()
+
+def get_setting(key, default='1'):
+    """Get a setting value from the database"""
+    db = get_db()
+    row = db.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+    db.close()
+    return row['value'] if row else default
+
+def set_setting(key, value):
+    """Set a setting value in the database"""
+    db = get_db()
+    db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
+    db.commit()
+    db.close()
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
@@ -352,7 +374,8 @@ def login():
         else:
             flash('Invalid username or password', 'error')
 
-    return render_template('login.html')
+    show_creds = get_setting('show_default_credentials', '1') == '1'
+    return render_template('login.html', show_default_credentials=show_creds)
 
 @app.route('/logout')
 @login_required
@@ -1831,6 +1854,26 @@ def get_stats():
 
     db.close()
     return jsonify(stats)
+
+# Settings API
+@app.route('/api/settings', methods=['GET'])
+@login_required
+@admin_required
+def get_settings():
+    """Get all settings"""
+    return jsonify({
+        'show_default_credentials': get_setting('show_default_credentials', '1') == '1'
+    })
+
+@app.route('/api/settings', methods=['POST'])
+@login_required
+@admin_required
+def update_settings():
+    """Update settings"""
+    data = request.json
+    if 'show_default_credentials' in data:
+        set_setting('show_default_credentials', '1' if data['show_default_credentials'] else '0')
+    return jsonify({'success': True})
 
 # Documents API
 @app.route('/api/documents', methods=['GET'])

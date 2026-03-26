@@ -4,107 +4,269 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Vehicle Maintenance Tracker</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .login-container {
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --sidebar-bg: #0f172a;
+            --accent: #6366f1;
+            --accent-hover: #4f46e5;
+            --border: #e2e8f0;
+            --text: #0f172a;
+            --muted: #64748b;
+            --bg: #f1f5f9;
+            --font: 'Inter', system-ui, sans-serif;
+        }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            min-height: 100vh;
             display: flex;
+        }
+
+        /* Left panel */
+        .login-panel-left {
+            width: 420px;
+            flex-shrink: 0;
+            background: var(--sidebar-bg);
+            display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
-            min-height: 100vh;
-            background: #d6eaf8;
+            padding: 3rem 2.5rem;
+            text-align: center;
         }
-        .login-box {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+
+        .login-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .login-logo img {
+            width: 36px;
+            height: 36px;
+            filter: brightness(0) invert(1);
+            opacity: 0.9;
+        }
+
+        .login-logo-text {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #f8fafc;
+            letter-spacing: -0.01em;
+        }
+
+        .login-tagline {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #f8fafc;
+            line-height: 1.3;
+            letter-spacing: -0.02em;
+            margin-bottom: 1rem;
+        }
+
+        .login-sub {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            line-height: 1.6;
+        }
+
+        .login-features {
+            margin-top: 2.5rem;
+            list-style: none;
+            text-align: left;
+            width: 100%;
+        }
+
+        .login-features li {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-size: 0.825rem;
+            color: #94a3b8;
+            padding: 0.4rem 0;
+        }
+
+        .login-features li::before {
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #6366f1;
+            flex-shrink: 0;
+        }
+
+        /* Right panel */
+        .login-panel-right {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .login-card {
+            background: #fff;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+            padding: 2.5rem;
             width: 100%;
             max-width: 400px;
         }
-        .login-box h1 {
-            text-align: center;
-            margin-bottom: 10px;
-            color: #333;
+
+        .login-card h2 {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text);
+            letter-spacing: -0.02em;
+            margin-bottom: 0.4rem;
         }
-        .login-box p {
-            text-align: center;
-            color: #666;
-            margin-bottom: 30px;
+
+        .login-card .subtitle {
+            font-size: 0.875rem;
+            color: var(--muted);
+            margin-bottom: 2rem;
         }
+
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 1.1rem;
         }
+
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            color: #333;
+            font-size: 0.825rem;
             font-weight: 500;
+            color: var(--text);
+            margin-bottom: 0.4rem;
         }
+
         .form-group input {
             width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-size: 14px;
-            box-sizing: border-box;
+            padding: 0.6rem 0.85rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-family: var(--font);
+            color: var(--text);
+            background: #fff;
+            transition: border-color 0.15s, box-shadow 0.15s;
         }
+
         .form-group input:focus {
             outline: none;
-            border-color: #3498db;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
+
         .btn-login {
             width: 100%;
-            padding: 12px;
-            background: #3498db;
-            color: white;
+            padding: 0.65rem;
+            background: var(--accent);
+            color: #fff;
             border: none;
-            border-radius: 5px;
-            font-size: 16px;
-            font-weight: 500;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            font-family: var(--font);
             cursor: pointer;
-            transition: background 0.3s;
+            transition: background 0.15s;
+            margin-top: 0.5rem;
         }
-        .btn-login:hover {
-            background: #2980b9;
+
+        .btn-login:hover { background: var(--accent-hover); }
+
+        .alert-error {
+            padding: 0.7rem 1rem;
+            background: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            font-size: 0.855rem;
+            margin-bottom: 1.25rem;
         }
-        .alert {
-            padding: 12px;
-            margin-bottom: 20px;
-            border-radius: 5px;
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
+
         .default-credentials {
-            margin-top: 20px;
-            padding: 15px;
-            background: #ebf5fb;
-            border-left: 4px solid #3498db;
-            border-radius: 4px;
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 6px;
         }
+
         .default-credentials h3 {
-            margin: 0 0 10px 0;
-            font-size: 14px;
-            color: #2874a6;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #1e40af;
+            margin-bottom: 0.5rem;
         }
+
         .default-credentials p {
-            margin: 5px 0;
-            font-size: 13px;
-            text-align: left;
-            color: #333;
+            font-size: 0.825rem;
+            color: var(--text);
+            margin-bottom: 0.2rem;
+        }
+
+        .default-credentials .warning {
+            font-size: 0.75rem;
+            color: #dc2626;
+            margin-top: 0.5rem;
+        }
+
+        /* Responsive: stack on small screens */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+
+            .login-panel-left {
+                width: 100%;
+                padding: 2rem 1.5rem;
+            }
+
+            .login-features { display: none; }
+
+            .login-panel-right {
+                padding: 1.5rem 1rem;
+                align-items: flex-start;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="login-container">
-        <div class="login-box">
-            <h1>Vehicle Maintenance Tracker</h1>
-            <p>Please login to continue</p>
+    <div class="login-panel-left">
+        <div class="login-logo">
+            <img src="{{ url_for('static', filename='favicon.svg') }}" alt="">
+            <span class="login-logo-text">VehicleTracker</span>
+        </div>
+        <div class="login-tagline">Track every mile,<br>every service,<br>every fill-up.</div>
+        <p class="login-sub">Your complete vehicle maintenance hub — service history, fuel economy, parts, reminders, and more.</p>
+        <ul class="login-features">
+            <li>Service records with receipt storage</li>
+            <li>Fuel tracking &amp; MPG trends</li>
+            <li>Parts &amp; supplies inventory</li>
+            <li>Maintenance reminders</li>
+            <li>Multiple vehicle support</li>
+        </ul>
+    </div>
+
+    <div class="login-panel-right">
+        <div class="login-card">
+            <h2>Welcome back</h2>
+            <p class="subtitle">Sign in to your account to continue</p>
 
             {% with messages = get_flashed_messages() %}
                 {% if messages %}
                     {% for message in messages %}
-                        <div class="alert">{{ message }}</div>
+                        <div class="alert-error">{{ message }}</div>
                     {% endfor %}
                 {% endif %}
             {% endwith %}
@@ -112,21 +274,23 @@
             <form method="POST" action="{{ url_for('login') }}">
                 <div class="form-group">
                     <label for="username">Username</label>
-                    <input type="text" id="username" name="username" required autofocus>
+                    <input type="text" id="username" name="username" required autofocus autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="password">Password</label>
-                    <input type="password" id="password" name="password" required>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
                 </div>
-                <button type="submit" class="btn-login">Login</button>
+                <button type="submit" class="btn-login">Sign in</button>
             </form>
 
+            {% if show_default_credentials %}
             <div class="default-credentials">
                 <h3>Default Admin Credentials</h3>
                 <p><strong>Username:</strong> admin</p>
                 <p><strong>Password:</strong> admin</p>
-                <p style="color: #d32f2f; font-size: 12px; margin-top: 10px;">Please change the default password after first login!</p>
+                <p class="warning">Change the default password after first login.</p>
             </div>
+            {% endif %}
         </div>
     </div>
 </body>
