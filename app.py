@@ -265,6 +265,14 @@ def init_db():
             # Table already migrated or error
             pass
 
+        # Migration: Add missed_fillup column to fuel_records
+        try:
+            db.execute('ALTER TABLE fuel_records ADD COLUMN missed_fillup INTEGER DEFAULT 0')
+            db.commit()
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
         if admin_exists['count'] == 0:
@@ -1444,17 +1452,19 @@ def add_fuel_record():
                                ORDER BY odometer DESC LIMIT 1''',
                             (vehicle_id,)).fetchone()
 
+    missed_fillup = 1 if data.get('missed_fillup') else 0
+
     mpg = None
-    if prev_record:
+    if prev_record and not missed_fillup:
         miles_driven = data['odometer'] - prev_record['odometer']
         if miles_driven > 0 and data['gallons'] > 0:
             mpg = round(miles_driven / data['gallons'], 2)
 
     cursor = db.execute('''INSERT INTO fuel_records
-                          (vehicle_id, date, gallons, cost, odometer, mpg, station)
-                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (vehicle_id, date, gallons, cost, odometer, mpg, station, missed_fillup)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['date'], data['gallons'], data['cost'],
-                        data['odometer'], mpg, data.get('station', '')))
+                        data['odometer'], mpg, data.get('station', ''), missed_fillup))
 
     db.commit()
     record_id = cursor.lastrowid
@@ -1481,28 +1491,31 @@ def update_fuel_record(fuel_id):
 
     db = get_db()
 
+    missed_fillup = 1 if data.get('missed_fillup') else 0
+
     # Update the fuel record
     db.execute('''UPDATE fuel_records
-                 SET date=?, gallons=?, cost=?, odometer=?, station=?
+                 SET date=?, gallons=?, cost=?, odometer=?, station=?, missed_fillup=?
                  WHERE id=?''',
               (data['date'], data['gallons'], data['cost'],
-               data['odometer'], data.get('station', ''), fuel_id))
+               data['odometer'], data.get('station', ''), missed_fillup, fuel_id))
 
     # Recalculate MPG for this record
     record = db.execute('SELECT * FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
     vehicle_id = record['vehicle_id']
 
-    # Get previous fuel record to recalculate MPG
-    prev_record = db.execute('''SELECT * FROM fuel_records
-                               WHERE vehicle_id = ? AND odometer < ?
-                               ORDER BY odometer DESC LIMIT 1''',
-                            (vehicle_id, data['odometer'])).fetchone()
-
     mpg = None
-    if prev_record:
-        miles_driven = data['odometer'] - prev_record['odometer']
-        if miles_driven > 0 and data['gallons'] > 0:
-            mpg = round(miles_driven / data['gallons'], 2)
+    if not missed_fillup:
+        # Get previous fuel record to recalculate MPG
+        prev_record = db.execute('''SELECT * FROM fuel_records
+                                   WHERE vehicle_id = ? AND odometer < ?
+                                   ORDER BY odometer DESC LIMIT 1''',
+                                (vehicle_id, data['odometer'])).fetchone()
+
+        if prev_record:
+            miles_driven = data['odometer'] - prev_record['odometer']
+            if miles_driven > 0 and data['gallons'] > 0:
+                mpg = round(miles_driven / data['gallons'], 2)
 
     db.execute('UPDATE fuel_records SET mpg=? WHERE id=?', (mpg, fuel_id))
 

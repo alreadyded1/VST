@@ -205,6 +205,16 @@
                 <datalist id="stationList"></datalist>
             </div>
 
+            <div class="form-group" style="margin-top: 0.5rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: normal;">
+                    <input type="checkbox" id="missedFillup" name="missed_fillup" style="width: auto; margin: 0;">
+                    Missed a fill-up before this one
+                </label>
+                <small class="text-muted" id="missedFillupHint" style="display: none; color: var(--warning-color);">
+                    MPG will not be calculated since an intermediate fill-up was missed.
+                </small>
+            </div>
+
             <div class="alert alert-info">
                 <strong>Note:</strong> MPG will be automatically calculated based on the previous fill-up record.
             </div>
@@ -314,9 +324,10 @@ function displayFuelRecords() {
     let tableHtml = '';
     paginatedRecords.forEach(record => {
         const pricePerGal = record.cost / record.gallons;
+        const missedBadge = record.missed_fillup ? ' <span title="Missed fill-up before this one" style="font-size: 0.7rem; background: var(--warning-color); color: #fff; border-radius: 3px; padding: 1px 4px;">missed</span>' : '';
         tableHtml += `
             <tr>
-                <td>${formatDate(record.date)}</td>
+                <td>${formatDate(record.date)}${missedBadge}</td>
                 <td>${record.odometer.toLocaleString()}</td>
                 <td>${record.gallons.toFixed(3)}</td>
                 <td>${formatCurrency(record.cost)}</td>
@@ -341,7 +352,7 @@ function displayFuelRecords() {
     let cardsHtml = '';
     paginatedRecords.forEach(record => {
         const pricePerGal = record.cost / record.gallons;
-        const title = record.station || 'Fuel Fill-up';
+        const title = (record.station || 'Fuel Fill-up') + (record.missed_fillup ? ' <span style="font-size: 0.7rem; background: var(--warning-color); color: #fff; border-radius: 3px; padding: 1px 4px;">missed</span>' : '');
 
         const fields = [
             { label: 'Date', value: formatDate(record.date) },
@@ -455,6 +466,9 @@ async function editFuelRecord(fuelId) {
         document.getElementById('gallons').value = record.gallons;
         document.getElementById('fuelCost').value = record.cost;
         document.getElementById('station').value = record.station || '';
+        const missedCb = document.getElementById('missedFillup');
+        missedCb.checked = !!record.missed_fillup;
+        document.getElementById('missedFillupHint').style.display = missedCb.checked ? 'block' : 'none';
 
         // Update modal title
         document.querySelector('#addFuelModal h3').textContent = 'Edit Fuel Record';
@@ -470,8 +484,13 @@ function openAddFuelModal() {
     document.getElementById('fuelForm').reset();
     document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
     document.getElementById('fuelDate').valueAsDate = new Date();
+    document.getElementById('missedFillupHint').style.display = 'none';
     openModal('addFuelModal');
 }
+
+document.getElementById('missedFillup').addEventListener('change', function() {
+    document.getElementById('missedFillupHint').style.display = this.checked ? 'block' : 'none';
+});
 
 async function addFuelRecord(event) {
     event.preventDefault();
@@ -491,7 +510,8 @@ async function addFuelRecord(event) {
         gallons: parseFloat(formData.get('gallons')),
         cost: parseFloat(formData.get('cost')),
         odometer: parseInt(formData.get('odometer')),
-        station: formData.get('station') || ''
+        station: formData.get('station') || '',
+        missed_fillup: document.getElementById('missedFillup').checked
     };
 
     try {
