@@ -206,8 +206,8 @@
                     <th class="sortable">Odometer</th>
                     <th class="sortable">Gallons</th>
                     <th class="sortable">Cost</th>
-                    <th class="sortable hide-mobile">Price/Gal</th>
-                    <th class="hide-mobile">Station</th>
+                    <th class="sortable">Price/Gal</th>
+                    <th class="sortable">Station</th>
                     <th class="sortable">MPG</th>
                     <th></th>
                 </tr>
@@ -386,8 +386,8 @@ function displayFuelRecords() {
                 <td>${record.odometer.toLocaleString()}</td>
                 <td>${record.gallons.toFixed(3)}</td>
                 <td>${formatCurrency(record.cost)}</td>
-                <td class="hide-mobile">${formatCurrency(pricePerGal)}</td>
-                <td class="hide-mobile">${record.station || 'N/A'}</td>
+                <td>${formatCurrency(pricePerGal)}</td>
+                <td>${record.station || 'N/A'}</td>
                 <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
                 <td>
                     <div class="action-menu">
