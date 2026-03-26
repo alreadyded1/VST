@@ -446,6 +446,12 @@ def documents_page():
     """Documents and notes page"""
     return render_template('documents.html')
 
+@app.route('/report')
+@login_required
+def report_page():
+    """Printable vehicle report page"""
+    return render_template('report.html')
+
 # API Endpoints
 
 # User Management APIs
@@ -1434,6 +1440,53 @@ def delete_supply(supply_id):
     db.commit()
     db.close()
     return jsonify({'success': True})
+
+@app.route('/api/supplies/export-csv', methods=['GET'])
+@login_required
+def export_supplies_csv():
+    """Export supplies to CSV"""
+    vehicle_id = request.args.get('vehicle_id')
+    db = get_db()
+    try:
+        if vehicle_id:
+            supplies = db.execute(
+                'SELECT * FROM supplies WHERE vehicle_id = ? ORDER BY name', (vehicle_id,)
+            ).fetchall()
+        else:
+            supplies = db.execute('SELECT * FROM supplies ORDER BY name').fetchall()
+
+        supplies_list = [dict(row) for row in supplies]
+        db.close()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['name', 'part_number', 'brand', 'category', 'cost', 'quantity',
+                         'supplier', 'purchase_date', 'installation_date', 'location',
+                         'condition', 'notes'])
+        for s in supplies_list:
+            writer.writerow([
+                s.get('name', ''),
+                s.get('part_number', '') or '',
+                s.get('brand', '') or '',
+                s.get('category', '') or '',
+                s.get('cost', ''),
+                s.get('quantity', ''),
+                s.get('supplier', '') or '',
+                s.get('purchase_date', '') or '',
+                s.get('installation_date', '') or '',
+                s.get('location', '') or '',
+                s.get('condition', '') or '',
+                s.get('notes', '') or ''
+            ])
+
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+        response.headers['Content-Disposition'] = 'attachment; filename=supplies.csv'
+        return response
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # Fuel endpoints
 @app.route('/api/fuel', methods=['GET'])
