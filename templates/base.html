@@ -5,93 +5,171 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Vehicle Maintenance Tracker{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ range(1, 1000000) | random }}">
 </head>
 <body class="desktop-view">
-    <header>
-        <div class="header-content">
-            <h1>Vehicle Maintenance Tracker</h1>
-            <div class="header-controls">
-                <select id="vehicleSelector" class="vehicle-selector" onchange="handleVehicleChange()" style="display: none;">
-                    <option value="">Select a vehicle...</option>
-                </select>
-                <button class="view-toggle" onclick="toggleView()">Switch to Mobile</button>
-            </div>
-        </div>
-    </header>
 
-    <!-- Desktop Navigation -->
-    <nav class="desktop-nav">
-        <div class="nav-container">
+    <!-- Mobile sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileMenu()"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <a href="/" class="sidebar-logo">
+            <img src="{{ url_for('static', filename='favicon.svg') }}" alt="" class="sidebar-logo-icon">
+            <span class="sidebar-logo-text">VehicleTracker</span>
+        </a>
+
+        <div class="sidebar-vehicle-section">
+            <span class="sidebar-vehicle-label">Active Vehicle</span>
+            <select id="vehicleSelector" class="vehicle-selector" onchange="handleVehicleChange()" style="display: none;">
+                <option value="">Select a vehicle...</option>
+            </select>
+        </div>
+
+        <nav class="sidebar-nav">
             <ul class="nav-menu">
-                <li><a href="/">Dashboard</a></li>
-                <li><a href="/vehicles">Vehicles</a></li>
-                <li><a href="/services">Service Records</a></li>
-                <li><a href="/supplies">Parts Tracker</a></li>
-                <li><a href="/fuel">Fuel Tracker</a></li>
-                <li><a href="/reminders">Reminders</a></li>
-                <li><a href="/documents">Documents</a></li>
-                {% if current_user.is_authenticated %}
-                    {% if current_user.is_admin %}
-                        <li><a href="/admin">Admin Panel</a></li>
-                    {% endif %}
-                    <li><a href="/profile">Profile</a></li>
-                    <li><a href="/logout">Logout ({{ current_user.username }})</a></li>
+                <li>
+                    <a href="/" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        </span>
+                        Dashboard
+                    </a>
+                </li>
+                <li>
+                    <a href="/vehicles" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect x="9" y="11" width="14" height="10" rx="2"/><circle cx="12" cy="21" r="1"/><circle cx="20" cy="21" r="1"/></svg>
+                        </span>
+                        Vehicles
+                    </a>
+                </li>
+                <li>
+                    <a href="/services" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        Service Records
+                    </a>
+                </li>
+                <li>
+                    <a href="/supplies" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                        </span>
+                        Parts Tracker
+                    </a>
+                </li>
+                <li>
+                    <a href="/fuel" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22V9l7-7 7 7v13"/><path d="M9 22V12h4v10"/><path d="M17 22v-5"/><path d="M21 17h-4"/></svg>
+                        </span>
+                        Fuel Tracker
+                    </a>
+                </li>
+                <li>
+                    <a href="/reminders" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        </span>
+                        Reminders
+                    </a>
+                </li>
+                <li>
+                    <a href="/documents" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        </span>
+                        Documents
+                    </a>
+                </li>
+            </ul>
+        </nav>
+
+        {% if current_user.is_authenticated %}
+        <div class="sidebar-footer">
+            <ul class="nav-menu">
+                {% if current_user.is_admin %}
+                <li>
+                    <a href="/admin" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        </span>
+                        Admin
+                    </a>
+                </li>
                 {% endif %}
+                <li>
+                    <a href="/profile" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        </span>
+                        {{ current_user.username }}
+                    </a>
+                </li>
+                <li>
+                    <a href="/logout" class="nav-link-danger" onclick="closeMobileMenu()">
+                        <span class="nav-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        </span>
+                        Logout
+                    </a>
+                </li>
             </ul>
         </div>
-    </nav>
+        {% endif %}
+    </aside>
 
-    <!-- Mobile Navigation -->
-    <nav class="mobile-nav">
-        <div class="mobile-nav-header">
-            <button class="hamburger-btn" onclick="toggleMobileMenu()">
-                <span class="hamburger-icon">&#9776;</span>
-                <span class="menu-text">Menu</span>
+    <!-- Main content -->
+    <div class="main-wrapper">
+        <header class="topbar">
+            <button class="topbar-hamburger" onclick="toggleMobileMenu()" aria-label="Toggle menu">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
             </button>
-        </div>
-        <ul class="mobile-menu" id="mobileMenu">
-            <li><a href="/" onclick="closeMobileMenu()">Dashboard</a></li>
-            <li><a href="/vehicles" onclick="closeMobileMenu()">Vehicles</a></li>
-            <li><a href="/services" onclick="closeMobileMenu()">Service Records</a></li>
-            <li><a href="/supplies" onclick="closeMobileMenu()">Parts Tracker</a></li>
-            <li><a href="/fuel" onclick="closeMobileMenu()">Fuel Tracker</a></li>
-            <li><a href="/reminders" onclick="closeMobileMenu()">Reminders</a></li>
-            <li><a href="/documents" onclick="closeMobileMenu()">Documents</a></li>
-            {% if current_user.is_authenticated %}
-                {% if current_user.is_admin %}
-                    <li><a href="/admin" onclick="closeMobileMenu()">Admin Panel</a></li>
-                {% endif %}
-                <li><a href="/profile" onclick="closeMobileMenu()">Profile</a></li>
-                <li><a href="/logout" onclick="closeMobileMenu()">Logout ({{ current_user.username }})</a></li>
-            {% endif %}
-        </ul>
-    </nav>
+            <span class="topbar-brand">VehicleTracker</span>
+            <div class="topbar-spacer"></div>
+            <button class="view-toggle" onclick="toggleView()">Switch to Mobile</button>
+        </header>
 
-    <div class="container">
-        {% block content %}{% endblock %}
+        <main class="container">
+            {% block content %}{% endblock %}
+        </main>
     </div>
 
-    <!-- Bottom Navigation (Mobile Only) -->
+    <!-- Bottom nav (mobile only) -->
     <nav class="bottom-nav show-mobile">
-        <a href="/" class="bottom-nav-item" id="nav-dashboard">
-            <div class="bottom-nav-icon">📊</div>
+        <a href="/" class="bottom-nav-item">
+            <div class="bottom-nav-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            </div>
             <div class="bottom-nav-label">Dashboard</div>
         </a>
-        <a href="/vehicles" class="bottom-nav-item" id="nav-vehicles">
-            <div class="bottom-nav-icon">🚗</div>
+        <a href="/vehicles" class="bottom-nav-item">
+            <div class="bottom-nav-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect x="9" y="11" width="14" height="10" rx="2"/><circle cx="12" cy="21" r="1"/><circle cx="20" cy="21" r="1"/></svg>
+            </div>
             <div class="bottom-nav-label">Vehicles</div>
         </a>
-        <a href="/services" class="bottom-nav-item" id="nav-services">
-            <div class="bottom-nav-icon">🔧</div>
+        <a href="/services" class="bottom-nav-item">
+            <div class="bottom-nav-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            </div>
             <div class="bottom-nav-label">Services</div>
         </a>
-        <a href="/fuel" class="bottom-nav-item" id="nav-fuel">
-            <div class="bottom-nav-icon">⛽</div>
+        <a href="/fuel" class="bottom-nav-item">
+            <div class="bottom-nav-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22V9l7-7 7 7v13"/><path d="M9 22V12h4v10"/></svg>
+            </div>
             <div class="bottom-nav-label">Fuel</div>
         </a>
-        <a href="/reminders" class="bottom-nav-item" id="nav-reminders">
-            <div class="bottom-nav-icon">🔔</div>
+        <a href="/reminders" class="bottom-nav-item">
+            <div class="bottom-nav-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            </div>
             <div class="bottom-nav-label">Reminders</div>
         </a>
     </nav>

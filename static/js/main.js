@@ -10,11 +10,13 @@ function toggleView() {
         body.classList.add('desktop-view');
         button.textContent = 'Switch to Mobile';
         localStorage.setItem('viewMode', 'desktop');
+        closeMobileMenu();
     } else {
         body.classList.remove('desktop-view');
         body.classList.add('mobile-view');
         button.textContent = 'Switch to Desktop';
         localStorage.setItem('viewMode', 'mobile');
+        closeMobileMenu();
     }
 }
 
@@ -59,17 +61,19 @@ function setActiveNav() {
 
 // Mobile menu toggle
 function toggleMobileMenu() {
-    const mobileMenu = document.getElementById('mobileMenu');
-    if (mobileMenu) {
-        mobileMenu.classList.toggle('open');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) {
+        sidebar.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('open');
     }
 }
 
 function closeMobileMenu() {
-    const mobileMenu = document.getElementById('mobileMenu');
-    if (mobileMenu) {
-        mobileMenu.classList.remove('open');
-    }
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.remove('open');
+    if (overlay) overlay.classList.remove('open');
 }
 
 // Format currency
