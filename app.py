@@ -282,6 +282,21 @@ def init_db():
                       ('admin', admin_password_hash, 1))
             db.commit()
 
+        # Documents table
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL,
+                notes TEXT,
+                file_path TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
+            )
+        ''')
+        db.commit()
+
         # Create indexes for performance optimization
         indexes = [
             'CREATE INDEX IF NOT EXISTS idx_service_records_vehicle_id ON service_records(vehicle_id)',
@@ -294,7 +309,8 @@ def init_db():
             'CREATE INDEX IF NOT EXISTS idx_service_reminders_completed ON service_reminders(completed)',
             'CREATE INDEX IF NOT EXISTS idx_service_reminders_due_date ON service_reminders(due_date)',
             'CREATE INDEX IF NOT EXISTS idx_service_supplies_service_id ON service_supplies(service_id)',
-            'CREATE INDEX IF NOT EXISTS idx_service_supplies_supply_id ON service_supplies(supply_id)'
+            'CREATE INDEX IF NOT EXISTS idx_service_supplies_supply_id ON service_supplies(supply_id)',
+            'CREATE INDEX IF NOT EXISTS idx_documents_vehicle_id ON documents(vehicle_id)'
         ]
 
         for index_sql in indexes:
@@ -400,6 +416,12 @@ def fuel_page():
 def reminders_page():
     """Service reminders page"""
     return render_template('reminders.html')
+
+@app.route('/documents')
+@login_required
+def documents_page():
+    """Documents and notes page"""
+    return render_template('documents.html')
 
 # API Endpoints
 
@@ -1810,6 +1832,85 @@ def get_stats():
     db.close()
     return jsonify(stats)
 
+# Documents API
+@app.route('/api/documents', methods=['GET'])
+@login_required
+def get_documents():
+    """Get all documents for a vehicle"""
+    vehicle_id = request.args.get('vehicle_id')
+    if not vehicle_id:
+        return jsonify({'error': 'vehicle_id is required'}), 400
+    db = get_db()
+    docs = db.execute(
+        'SELECT * FROM documents WHERE vehicle_id = ? ORDER BY created_at DESC',
+        (vehicle_id,)
+    ).fetchall()
+    db.close()
+    return jsonify([dict(row) for row in docs])
+
+@app.route('/api/documents', methods=['POST'])
+@login_required
+def add_document():
+    """Add a new document"""
+    data = request.form
+    vehicle_id = data.get('vehicle_id')
+    title = data.get('title')
+    category = data.get('category')
+
+    if not vehicle_id or not title or not category:
+        return jsonify({'error': 'vehicle_id, title, and category are required'}), 400
+
+    file_path = None
+    if 'file' in request.files:
+        file = request.files['file']
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'documents', filename)
+            file.save(filepath)
+            file_path = f'uploads/documents/{filename}'
+
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO documents (vehicle_id, title, category, notes, file_path) VALUES (?, ?, ?, ?, ?)',
+        (vehicle_id, title, category, data.get('notes', ''), file_path)
+    )
+    doc_id = cursor.lastrowid
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'id': doc_id})
+
+@app.route('/api/documents/<int:doc_id>', methods=['PUT'])
+@login_required
+def update_document(doc_id):
+    """Update a document's title, category, and notes"""
+    data = request.json
+    db = get_db()
+    db.execute(
+        'UPDATE documents SET title=?, category=?, notes=? WHERE id=?',
+        (data['title'], data['category'], data.get('notes', ''), doc_id)
+    )
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
+@login_required
+def delete_document(doc_id):
+    """Delete a document and its file"""
+    db = get_db()
+    doc = db.execute('SELECT file_path FROM documents WHERE id = ?', (doc_id,)).fetchone()
+    if doc and doc['file_path']:
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], '..', 'static', doc['file_path'])
+        full_path = os.path.join('static', doc['file_path'])
+        if os.path.exists(full_path):
+            os.remove(full_path)
+    db.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
 if __name__ == '__main__':
     # Initialize database
     if not os.path.exists('instance'):
@@ -1819,5 +1920,6 @@ if __name__ == '__main__':
     # Ensure upload directories exist
     os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'receipts'), exist_ok=True)
     os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'vehicles'), exist_ok=True)
+    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'documents'), exist_ok=True)
 
     app.run(host='0.0.0.0', port=5000, debug=False)

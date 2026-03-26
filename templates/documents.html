@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+
+{% block title %}Documents - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Documents &amp; Notes</h1>
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Vehicle Documents</h2>
+        <button class="btn btn-primary" onclick="openModal('addDocumentModal')">Add Document</button>
+    </div>
+
+    <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group" style="margin-bottom: 0;">
+            <input type="text" id="searchInput" placeholder="Search documents..." oninput="filterDocuments()" style="width: 100%;">
+        </div>
+        <div class="form-group" style="margin-bottom: 0; max-width: 200px;">
+            <select id="categoryFilter" onchange="filterDocuments()">
+                <option value="">All Categories</option>
+                <option value="Manual">Manual</option>
+                <option value="Insurance">Insurance</option>
+                <option value="Registration">Registration</option>
+                <option value="Title">Title</option>
+                <option value="Warranty">Warranty</option>
+                <option value="Inspection">Inspection</option>
+                <option value="Other">Other</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="documentsContainer">
+        <p>Loading...</p>
+    </div>
+</div>
+
+<!-- Add Document Modal -->
+<div id="addDocumentModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Document</h3>
+            <button class="close" onclick="closeModal('addDocumentModal')">&times;</button>
+        </div>
+        <form id="addDocumentForm" onsubmit="addDocument(event)">
+            <div class="form-group">
+                <label for="docTitle">Title *</label>
+                <input type="text" id="docTitle" name="title" placeholder="e.g., 2024 Insurance Card" required>
+            </div>
+            <div class="form-group">
+                <label for="docCategory">Category *</label>
+                <select id="docCategory" name="category" required>
+                    <option value="">Select a category...</option>
+                    <option value="Manual">Manual</option>
+                    <option value="Insurance">Insurance</option>
+                    <option value="Registration">Registration</option>
+                    <option value="Title">Title</option>
+                    <option value="Warranty">Warranty</option>
+                    <option value="Inspection">Inspection</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="docNotes">Notes</label>
+                <textarea id="docNotes" name="notes" rows="3" placeholder="Any additional details..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="docFile">Attach File (PDF or image)</label>
+                <input type="file" id="docFile" name="file" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp">
+            </div>
+            <button type="submit" class="btn btn-success">Save Document</button>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Document Modal -->
+<div id="editDocumentModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Document</h3>
+            <button class="close" onclick="closeModal('editDocumentModal')">&times;</button>
+        </div>
+        <form id="editDocumentForm" onsubmit="saveEditDocument(event)">
+            <input type="hidden" id="editDocId">
+            <div class="form-group">
+                <label for="editDocTitle">Title *</label>
+                <input type="text" id="editDocTitle" name="title" required>
+            </div>
+            <div class="form-group">
+                <label for="editDocCategory">Category *</label>
+                <select id="editDocCategory" name="category" required>
+                    <option value="Manual">Manual</option>
+                    <option value="Insurance">Insurance</option>
+                    <option value="Registration">Registration</option>
+                    <option value="Title">Title</option>
+                    <option value="Warranty">Warranty</option>
+                    <option value="Inspection">Inspection</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="editDocNotes">Notes</label>
+                <textarea id="editDocNotes" name="notes" rows="3"></textarea>
+            </div>
+            <button type="submit" class="btn btn-success">Save Changes</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allDocuments = [];
+
+const CATEGORY_COLORS = {
+    'Manual':       '#8e44ad',
+    'Insurance':    '#2980b9',
+    'Registration': '#27ae60',
+    'Title':        '#d35400',
+    'Warranty':     '#c0392b',
+    'Inspection':   '#16a085',
+    'Other':        '#7f8c8d'
+};
+
+async function loadDocuments() {
+    const vehicleId = getCurrentVehicleId();
+    const container = document.getElementById('documentsContainer');
+
+    if (!vehicleId) {
+        container.innerHTML = '<p>Please select a vehicle first.</p>';
+        return;
+    }
+
+    try {
+        const docs = await fetchAPI(`/api/documents?vehicle_id=${vehicleId}`);
+        allDocuments = docs;
+        renderDocuments(docs);
+    } catch (error) {
+        console.error('Error loading documents:', error);
+        container.innerHTML = '<p>Error loading documents.</p>';
+    }
+}
+
+function renderDocuments(docs) {
+    const container = document.getElementById('documentsContainer');
+
+    if (docs.length === 0) {
+        container.innerHTML = '<p>No documents yet. Click "Add Document" to get started.</p>';
+        return;
+    }
+
+    // Group by category
+    const grouped = {};
+    docs.forEach(doc => {
+        if (!grouped[doc.category]) grouped[doc.category] = [];
+        grouped[doc.category].push(doc);
+    });
+
+    let html = '';
+    Object.keys(grouped).sort().forEach(category => {
+        const color = CATEGORY_COLORS[category] || '#7f8c8d';
+        html += `<h3 style="margin: 1.5rem 0 0.75rem; color: ${color}; border-bottom: 2px solid ${color}; padding-bottom: 0.25rem;">${category}</h3>`;
+        html += '<div class="documents-grid">';
+        grouped[category].forEach(doc => {
+            html += buildDocCard(doc, color);
+        });
+        html += '</div>';
+    });
+
+    container.innerHTML = html;
+}
+
+function buildDocCard(doc, color) {
+    const date = new Date(doc.created_at).toLocaleDateString();
+    const fileHtml = doc.file_path
+        ? `<a href="/static/${doc.file_path}" target="_blank" class="btn btn-small btn-secondary" style="margin-right: 0.5rem;">View File</a>`
+        : '';
+
+    const notesHtml = doc.notes
+        ? `<p style="color: var(--light-text); font-size: 0.9rem; margin-top: 0.25rem;">${escapeHtml(doc.notes)}</p>`
+        : '';
+
+    return `
+        <div class="doc-card" style="border-left: 4px solid ${color};">
+            <div class="flex-between" style="align-items: flex-start;">
+                <div>
+                    <strong style="font-size: 1rem;">${escapeHtml(doc.title)}</strong>
+                    ${notesHtml}
+                    <p style="color: var(--light-text); font-size: 0.8rem; margin-top: 0.5rem;">Added ${date}</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-shrink: 0; margin-left: 1rem;">
+                    ${fileHtml}
+                    <button class="btn btn-small btn-secondary" onclick="openEditModal(${doc.id})">Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteDocument(${doc.id})">Delete</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function filterDocuments() {
+    const search = document.getElementById('searchInput').value.toLowerCase();
+    const category = document.getElementById('categoryFilter').value;
+
+    const filtered = allDocuments.filter(doc => {
+        const matchesSearch = !search ||
+            doc.title.toLowerCase().includes(search) ||
+            (doc.notes && doc.notes.toLowerCase().includes(search));
+        const matchesCategory = !category || doc.category === category;
+        return matchesSearch && matchesCategory;
+    });
+
+    renderDocuments(filtered);
+}
+
+async function addDocument(event) {
+    event.preventDefault();
+
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first.', 'danger');
+        return;
+    }
+
+    const form = document.getElementById('addDocumentForm');
+    const formData = new FormData(form);
+    formData.append('vehicle_id', vehicleId);
+
+    try {
+        const response = await fetch('/api/documents', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        if (result.success) {
+            showAlert('Document saved!', 'success');
+            form.reset();
+            closeModal('addDocumentModal');
+            await loadDocuments();
+        } else {
+            showAlert(result.error || 'Error saving document.', 'danger');
+        }
+    } catch (error) {
+        console.error('Error saving document:', error);
+        showAlert('Error saving document.', 'danger');
+    }
+}
+
+function openEditModal(docId) {
+    const doc = allDocuments.find(d => d.id === docId);
+    if (!doc) return;
+
+    document.getElementById('editDocId').value = doc.id;
+    document.getElementById('editDocTitle').value = doc.title;
+    document.getElementById('editDocCategory').value = doc.category;
+    document.getElementById('editDocNotes').value = doc.notes || '';
+
+    openModal('editDocumentModal');
+}
+
+async function saveEditDocument(event) {
+    event.preventDefault();
+
+    const docId = document.getElementById('editDocId').value;
+    const data = {
+        title: document.getElementById('editDocTitle').value,
+        category: document.getElementById('editDocCategory').value,
+        notes: document.getElementById('editDocNotes').value
+    };
+
+    try {
+        const result = await putJSON(`/api/documents/${docId}`, data);
+        if (result.success) {
+            showAlert('Document updated!', 'success');
+            closeModal('editDocumentModal');
+            await loadDocuments();
+        }
+    } catch (error) {
+        console.error('Error updating document:', error);
+    }
+}
+
+async function deleteDocument(docId) {
+    if (!confirm('Delete this document? This cannot be undone.')) return;
+
+    try {
+        const result = await deleteAPI(`/api/documents/${docId}`);
+        if (result.success) {
+            showAlert('Document deleted.', 'success');
+            await loadDocuments();
+        }
+    } catch (error) {
+        console.error('Error deleting document:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadDocuments);
+</script>
+
+<style>
+.documents-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.doc-card {
+    background: var(--white);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    box-shadow: var(--shadow);
+}
+
+.desktop-view .documents-grid {
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+}
+
+.mobile-view .documents-grid {
+    grid-template-columns: 1fr;
+}
+</style>
+{% endblock %}

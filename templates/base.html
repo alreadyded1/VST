@@ -30,6 +30,7 @@
                 <li><a href="/supplies">Parts Tracker</a></li>
                 <li><a href="/fuel">Fuel Tracker</a></li>
                 <li><a href="/reminders">Reminders</a></li>
+                <li><a href="/documents">Documents</a></li>
                 {% if current_user.is_authenticated %}
                     {% if current_user.is_admin %}
                         <li><a href="/admin">Admin Panel</a></li>
@@ -56,6 +57,7 @@
             <li><a href="/supplies" onclick="closeMobileMenu()">Parts Tracker</a></li>
             <li><a href="/fuel" onclick="closeMobileMenu()">Fuel Tracker</a></li>
             <li><a href="/reminders" onclick="closeMobileMenu()">Reminders</a></li>
+            <li><a href="/documents" onclick="closeMobileMenu()">Documents</a></li>
             {% if current_user.is_authenticated %}
                 {% if current_user.is_admin %}
                     <li><a href="/admin" onclick="closeMobileMenu()">Admin Panel</a></li>
