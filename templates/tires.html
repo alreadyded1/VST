@@ -1,0 +1,737 @@
+{% extends "base.html" %}
+
+{% block title %}Tire Log - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<h1>Tire Log</h1>
+
+<div id="alertContainer"></div>
+
+<!-- Currently Installed -->
+<div class="card" id="installedCard">
+    <div class="flex-between mb-2">
+        <h2>Currently Installed</h2>
+        <button class="btn btn-primary btn-small" onclick="openModal('addTireModal')">Add Tire Set</button>
+    </div>
+    <div id="installedTires"><p style="color:var(--light-text);font-size:0.875rem;">No tires marked as installed.</p></div>
+</div>
+
+<!-- Tire Inventory -->
+<div class="card">
+    <h2 class="mb-2">Tire Inventory</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Brand / Model</th>
+                    <th>Size</th>
+                    <th>Season</th>
+                    <th>DOT</th>
+                    <th>Purchased</th>
+                    <th>Price</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="tireInventoryBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Rotation Log -->
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Rotation Log</h2>
+        <button class="btn btn-primary btn-small" onclick="openModal('addRotationModal')">Log Rotation</button>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Odometer</th>
+                    <th>Pattern</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="rotationBody"></tbody>
+        </table>
+    </div>
+    <p id="noRotations" style="display:none;color:var(--light-text);font-size:0.875rem;">No rotations logged yet.</p>
+</div>
+
+<!-- Tread Depth Log -->
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Tread Depth Log <span style="font-size:0.75rem;font-weight:400;color:var(--light-text);">(32nds of an inch)</span></h2>
+        <button class="btn btn-primary btn-small" onclick="openModal('addTreadModal')">Log Tread Depth</button>
+    </div>
+    <div id="treadReadingsList"></div>
+</div>
+
+<!-- ── Modals ── -->
+
+<!-- Add Tire Modal -->
+<div id="addTireModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="tireModalTitle">Add Tire Set</h3>
+            <button class="close" onclick="closeModal('addTireModal')">&times;</button>
+        </div>
+        <form id="tireForm" onsubmit="saveTire(event)">
+            <input type="hidden" id="tireId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div class="form-group">
+                    <label>Brand *</label>
+                    <input type="text" id="tireBrand" placeholder="e.g. Michelin" required>
+                </div>
+                <div class="form-group">
+                    <label>Model</label>
+                    <input type="text" id="tireModel" placeholder="e.g. Pilot Sport 4S">
+                </div>
+                <div class="form-group">
+                    <label>Size</label>
+                    <input type="text" id="tireSize" placeholder="e.g. 225/45R17">
+                </div>
+                <div class="form-group">
+                    <label>Season Type</label>
+                    <select id="tireSeason">
+                        <option value="All-Season">All-Season</option>
+                        <option value="Summer">Summer</option>
+                        <option value="Winter">Winter</option>
+                        <option value="All-Terrain">All-Terrain</option>
+                        <option value="Mud-Terrain">Mud-Terrain</option>
+                        <option value="Track">Track</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>DOT Code</label>
+                    <input type="text" id="tireDot" placeholder="e.g. DOT XXXX XXXX 2224">
+                </div>
+                <div class="form-group">
+                    <label>Purchase Date</label>
+                    <input type="date" id="tirePurchaseDate">
+                </div>
+                <div class="form-group">
+                    <label>Purchase Price ($)</label>
+                    <input type="number" id="tirePurchasePrice" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="form-group">
+                    <label>Installed Date</label>
+                    <input type="date" id="tireInstalledDate">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Notes</label>
+                <textarea id="tireNotes" rows="2" style="width:100%;padding:0.5rem;border:1px solid var(--border-color);border-radius:6px;font-family:inherit;font-size:0.875rem;resize:vertical;"></textarea>
+            </div>
+            <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+                <input type="checkbox" id="tireIsInstalled" style="width:auto;margin:0;">
+                <label for="tireIsInstalled" style="margin:0;font-weight:500;font-size:0.875rem;">Mark as currently installed</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Tire Set</button>
+        </form>
+    </div>
+</div>
+
+<!-- Add Rotation Modal -->
+<div id="addRotationModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Log Tire Rotation</h3>
+            <button class="close" onclick="closeModal('addRotationModal')">&times;</button>
+        </div>
+        <form id="rotationForm" onsubmit="saveRotation(event)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div class="form-group">
+                    <label>Date *</label>
+                    <input type="date" id="rotDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Odometer (mi)</label>
+                    <input type="number" id="rotOdometer" min="0" placeholder="50000">
+                </div>
+                <div class="form-group" style="grid-column:1/-1;">
+                    <label>Rotation Pattern</label>
+                    <select id="rotPattern">
+                        <option value="">— Select pattern —</option>
+                        <option value="Forward Cross">Forward Cross</option>
+                        <option value="Rearward Cross">Rearward Cross</option>
+                        <option value="X-Pattern">X-Pattern</option>
+                        <option value="Side-to-Side">Side-to-Side (same axle)</option>
+                        <option value="Front-to-Back">Front-to-Back (straight)</option>
+                        <option value="5-Tire">5-Tire (includes spare)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Notes</label>
+                <textarea id="rotNotes" rows="2" style="width:100%;padding:0.5rem;border:1px solid var(--border-color);border-radius:6px;font-family:inherit;font-size:0.875rem;resize:vertical;"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Rotation</button>
+        </form>
+    </div>
+</div>
+
+<!-- Add Tread Depth Modal -->
+<div id="addTreadModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Log Tread Depth</h3>
+            <button class="close" onclick="closeModal('addTreadModal')">&times;</button>
+        </div>
+        <form id="treadForm" onsubmit="saveTreadReading(event)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div class="form-group">
+                    <label>Date *</label>
+                    <input type="date" id="treadDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Odometer (mi)</label>
+                    <input type="number" id="treadOdometer" min="0" placeholder="50000">
+                </div>
+                <div class="form-group" style="grid-column:1/-1;">
+                    <label>Tire Set</label>
+                    <select id="treadTireId">
+                        <option value="">— None / All tires —</option>
+                    </select>
+                </div>
+            </div>
+            <p style="font-size:0.8rem;color:var(--light-text);margin-bottom:0.75rem;">Enter depth in <strong>32nds of an inch</strong>. New tires ≈ 10/32". Replace at 2/32".</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div class="form-group">
+                    <label>Front Left (FL)</label>
+                    <input type="number" id="treadFL" step="0.5" min="0" max="20" placeholder="e.g. 8">
+                </div>
+                <div class="form-group">
+                    <label>Front Right (FR)</label>
+                    <input type="number" id="treadFR" step="0.5" min="0" max="20" placeholder="e.g. 8">
+                </div>
+                <div class="form-group">
+                    <label>Rear Left (RL)</label>
+                    <input type="number" id="treadRL" step="0.5" min="0" max="20" placeholder="e.g. 7">
+                </div>
+                <div class="form-group">
+                    <label>Rear Right (RR)</label>
+                    <input type="number" id="treadRR" step="0.5" min="0" max="20" placeholder="e.g. 7">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Notes</label>
+                <textarea id="treadNotes" rows="2" style="width:100%;padding:0.5rem;border:1px solid var(--border-color);border-radius:6px;font-family:inherit;font-size:0.875rem;resize:vertical;"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Reading</button>
+        </form>
+    </div>
+</div>
+
+<style>
+/* Tread depth gauge */
+.tread-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+}
+.tread-bar {
+    width: 60px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border-color);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+.tread-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+.tread-good    { background: #22c55e; }
+.tread-ok      { background: #f59e0b; }
+.tread-warn    { background: #ef4444; }
+
+/* Installed card */
+.installed-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+.installed-tile {
+    background: var(--bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+}
+.installed-tile .tire-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.2rem;
+}
+.installed-tile .tire-meta {
+    font-size: 0.78rem;
+    color: var(--light-text);
+    margin-bottom: 0.75rem;
+}
+.tread-positions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+.tread-pos-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--light-text);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.15rem;
+}
+.season-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.15rem 0.45rem;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: rgba(99,102,241,0.1);
+    color: var(--accent);
+}
+.status-installed {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #16a34a;
+    background: #dcfce7;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+}
+.status-stored {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--light-text);
+    background: var(--bg);
+    border: 1px solid var(--border-color);
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+}
+</style>
+
+<script>
+let vehicleId = null;
+let tiresData = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem('selectedVehicleId');
+    if (saved) {
+        vehicleId = saved;
+        loadAll();
+    }
+    document.addEventListener('vehicleChanged', e => {
+        vehicleId = e.detail;
+        loadAll();
+    });
+    // Set today as default date in modals
+    const today = new Date().toISOString().split('T')[0];
+    ['rotDate', 'treadDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = today;
+    });
+});
+
+function loadAll() {
+    loadTires();
+    loadRotations();
+    loadTreadReadings();
+}
+
+// ── Tires ──
+
+async function loadTires() {
+    if (!vehicleId) return;
+    const res = await fetch(`/api/tires?vehicle_id=${vehicleId}`);
+    tiresData = await res.json();
+
+    renderInventory();
+    renderInstalled();
+    populateTireSelect();
+}
+
+function renderInstalled() {
+    const installed = tiresData.filter(t => t.is_installed);
+    const container = document.getElementById('installedTires');
+    if (!installed.length) {
+        container.innerHTML = '<p style="color:var(--light-text);font-size:0.875rem;">No tires marked as installed. Select a tire set from inventory and click Install.</p>';
+        return;
+    }
+    // Get latest tread reading for each installed tire
+    container.innerHTML = `<div class="installed-grid">${installed.map(t => installedTile(t)).join('')}</div>`;
+}
+
+function installedTile(tire) {
+    const name = esc(tire.brand) + (tire.model ? ' ' + esc(tire.model) : '');
+    const meta = [tire.size, tire.installed_date ? 'Installed ' + tire.installed_date : ''].filter(Boolean).join(' · ');
+    return `
+        <div class="installed-tile">
+            <div class="tire-name">${name}</div>
+            <div class="tire-meta">${meta || '—'}</div>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+                <span class="season-badge">${esc(tire.season || 'All-Season')}</span>
+                <span class="status-installed">
+                    <svg width="10" height="10" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+                    Installed
+                </span>
+            </div>
+            <div id="latestTread-${tire.id}" style="font-size:0.78rem;color:var(--light-text);">Loading tread...</div>
+        </div>
+    `;
+}
+
+function renderInventory() {
+    const tbody = document.getElementById('tireInventoryBody');
+    if (!tiresData.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--light-text);padding:1.5rem;">No tires added yet.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = tiresData.map(t => {
+        const name = esc(t.brand) + (t.model ? ' ' + esc(t.model) : '');
+        const status = t.is_installed
+            ? '<span class="status-installed">Installed</span>'
+            : '<span class="status-stored">Stored</span>';
+        const installBtn = t.is_installed
+            ? `<button class="btn btn-small btn-secondary" onclick="uninstallTire(${t.id})">Uninstall</button>`
+            : `<button class="btn btn-small btn-primary" onclick="installTire(${t.id})">Install</button>`;
+        return `
+            <tr>
+                <td>${name}</td>
+                <td>${esc(t.size || '—')}</td>
+                <td>${esc(t.season || '—')}</td>
+                <td style="font-family:monospace;font-size:0.78rem;">${esc(t.dot_code || '—')}</td>
+                <td>${t.purchase_date || '—'}</td>
+                <td>${t.purchase_price != null ? '$' + Number(t.purchase_price).toFixed(2) : '—'}</td>
+                <td>${status}</td>
+                <td style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                    ${installBtn}
+                    <button class="btn btn-small btn-secondary" onclick="openEditTire(${t.id})">Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteTire(${t.id})">Delete</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function populateTireSelect() {
+    const sel = document.getElementById('treadTireId');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— None / All tires —</option>';
+    tiresData.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.brand + (t.model ? ' ' + t.model : '') + (t.is_installed ? ' (installed)' : '');
+        sel.appendChild(opt);
+    });
+    if (prev) sel.value = prev;
+}
+
+async function saveTire(event) {
+    event.preventDefault();
+    const id = document.getElementById('tireId').value;
+    const body = {
+        vehicle_id: vehicleId,
+        brand: document.getElementById('tireBrand').value,
+        model: document.getElementById('tireModel').value,
+        size: document.getElementById('tireSize').value,
+        season: document.getElementById('tireSeason').value,
+        dot_code: document.getElementById('tireDot').value,
+        purchase_date: document.getElementById('tirePurchaseDate').value || null,
+        purchase_price: document.getElementById('tirePurchasePrice').value || null,
+        installed_date: document.getElementById('tireInstalledDate').value || null,
+        is_installed: document.getElementById('tireIsInstalled').checked,
+        notes: document.getElementById('tireNotes').value
+    };
+
+    let res;
+    if (id) {
+        res = await fetch(`/api/tires/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    } else {
+        res = await fetch('/api/tires', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    }
+    const data = await res.json();
+    if (data.success) {
+        showAlert(id ? 'Tire set updated.' : 'Tire set added.', 'success');
+        closeModal('addTireModal');
+        document.getElementById('tireForm').reset();
+        document.getElementById('tireId').value = '';
+        document.getElementById('tireModalTitle').textContent = 'Add Tire Set';
+        loadTires();
+    } else {
+        showAlert(data.error || 'Failed to save tire.', 'danger');
+    }
+}
+
+function openEditTire(id) {
+    const t = tiresData.find(x => x.id === id);
+    if (!t) return;
+    document.getElementById('tireModalTitle').textContent = 'Edit Tire Set';
+    document.getElementById('tireId').value = t.id;
+    document.getElementById('tireBrand').value = t.brand || '';
+    document.getElementById('tireModel').value = t.model || '';
+    document.getElementById('tireSize').value = t.size || '';
+    document.getElementById('tireSeason').value = t.season || 'All-Season';
+    document.getElementById('tireDot').value = t.dot_code || '';
+    document.getElementById('tirePurchaseDate').value = t.purchase_date || '';
+    document.getElementById('tirePurchasePrice').value = t.purchase_price != null ? t.purchase_price : '';
+    document.getElementById('tireInstalledDate').value = t.installed_date || '';
+    document.getElementById('tireIsInstalled').checked = !!t.is_installed;
+    document.getElementById('tireNotes').value = t.notes || '';
+    openModal('addTireModal');
+}
+
+async function installTire(id) {
+    const res = await fetch(`/api/tires/${id}/install`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) { showAlert('Tire set marked as installed.', 'success'); loadTires(); }
+    else showAlert(data.error || 'Failed.', 'danger');
+}
+
+async function uninstallTire(id) {
+    const res = await fetch(`/api/tires/${id}/uninstall`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) { showAlert('Tire set uninstalled.', 'success'); loadTires(); }
+    else showAlert(data.error || 'Failed.', 'danger');
+}
+
+async function deleteTire(id) {
+    if (!confirm('Delete this tire set? All associated tread readings will also be removed.')) return;
+    const res = await fetch(`/api/tires/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) { showAlert('Tire set deleted.', 'success'); loadTires(); loadTreadReadings(); }
+    else showAlert(data.error || 'Failed.', 'danger');
+}
+
+// ── Rotations ──
+
+async function loadRotations() {
+    if (!vehicleId) return;
+    const res = await fetch(`/api/tire-rotations?vehicle_id=${vehicleId}`);
+    const rotations = await res.json();
+    const tbody = document.getElementById('rotationBody');
+    const noMsg = document.getElementById('noRotations');
+
+    if (!rotations.length) {
+        tbody.innerHTML = '';
+        noMsg.style.display = 'block';
+        return;
+    }
+    noMsg.style.display = 'none';
+    tbody.innerHTML = rotations.map(r => `
+        <tr>
+            <td>${r.date}</td>
+            <td>${r.odometer ? Number(r.odometer).toLocaleString() + ' mi' : '—'}</td>
+            <td>${esc(r.pattern || '—')}</td>
+            <td>${esc(r.notes || '')}</td>
+            <td>
+                <button class="btn btn-small btn-danger" onclick="deleteRotation(${r.id})">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function saveRotation(event) {
+    event.preventDefault();
+    const body = {
+        vehicle_id: vehicleId,
+        date: document.getElementById('rotDate').value,
+        odometer: document.getElementById('rotOdometer').value || null,
+        pattern: document.getElementById('rotPattern').value,
+        notes: document.getElementById('rotNotes').value
+    };
+    const res = await fetch('/api/tire-rotations', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.success) {
+        showAlert('Rotation logged.', 'success');
+        closeModal('addRotationModal');
+        document.getElementById('rotationForm').reset();
+        document.getElementById('rotDate').value = new Date().toISOString().split('T')[0];
+        loadRotations();
+    } else {
+        showAlert(data.error || 'Failed.', 'danger');
+    }
+}
+
+async function deleteRotation(id) {
+    if (!confirm('Delete this rotation record?')) return;
+    const res = await fetch(`/api/tire-rotations/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) { showAlert('Rotation deleted.', 'success'); loadRotations(); }
+    else showAlert(data.error || 'Failed.', 'danger');
+}
+
+// ── Tread Readings ──
+
+async function loadTreadReadings() {
+    if (!vehicleId) return;
+    const res = await fetch(`/api/tread-readings?vehicle_id=${vehicleId}`);
+    const readings = await res.json();
+    const container = document.getElementById('treadReadingsList');
+
+    if (!readings.length) {
+        container.innerHTML = '<p style="color:var(--light-text);font-size:0.875rem;">No tread depth readings logged yet.</p>';
+        return;
+    }
+
+    // Inject latest tread into installed tiles
+    updateInstalledTread(readings);
+
+    const rows = readings.map(r => {
+        const depths = [r.fl_depth, r.fr_depth, r.rl_depth, r.rr_depth].filter(d => d != null);
+        const minDepth = depths.length ? Math.min(...depths) : null;
+        const positions = [
+            { label: 'FL', val: r.fl_depth },
+            { label: 'FR', val: r.fr_depth },
+            { label: 'RL', val: r.rl_depth },
+            { label: 'RR', val: r.rr_depth }
+        ];
+        return `
+            <tr>
+                <td>${r.date}</td>
+                <td>${r.odometer ? Number(r.odometer).toLocaleString() + ' mi' : '—'}</td>
+                <td style="font-size:0.8rem;">${esc(r.tire_name || '—')}</td>
+                <td>
+                    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+                        ${positions.map(p => p.val != null ? `
+                            <div>
+                                <div class="tread-pos-label">${p.label}</div>
+                                <div class="tread-bar-wrap">
+                                    <div class="tread-bar"><div class="tread-bar-fill ${treadClass(p.val)}" style="width:${Math.min(p.val/12*100,100)}%"></div></div>
+                                    <span style="color:${treadColor(p.val)};font-weight:600;">${p.val}/32"</span>
+                                </div>
+                            </div>
+                        ` : '').join('')}
+                    </div>
+                </td>
+                <td>${minDepth != null ? treadLabel(minDepth) : ''}</td>
+                <td>${esc(r.notes || '')}</td>
+                <td><button class="btn btn-small btn-danger" onclick="deleteTreadReading(${r.id})">Delete</button></td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Odometer</th>
+                        <th>Tire Set</th>
+                        <th>Depths</th>
+                        <th>Status</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function updateInstalledTread(readings) {
+    tiresData.filter(t => t.is_installed).forEach(tire => {
+        const el = document.getElementById(`latestTread-${tire.id}`);
+        if (!el) return;
+        // Find latest reading for this tire (or any reading if tire_id not set)
+        const latest = readings.find(r => r.tire_id === tire.id) || readings[0];
+        if (!latest) {
+            el.textContent = 'No tread readings logged.';
+            return;
+        }
+        const positions = [
+            { label: 'FL', val: latest.fl_depth },
+            { label: 'FR', val: latest.fr_depth },
+            { label: 'RL', val: latest.rl_depth },
+            { label: 'RR', val: latest.rr_depth }
+        ].filter(p => p.val != null);
+
+        el.innerHTML = positions.length ? `
+            <div style="font-size:0.72rem;color:var(--light-text);margin-bottom:0.4rem;">Last reading: ${latest.date}</div>
+            <div class="tread-positions">
+                ${positions.map(p => `
+                    <div>
+                        <div class="tread-pos-label">${p.label}</div>
+                        <div class="tread-bar-wrap">
+                            <div class="tread-bar"><div class="tread-bar-fill ${treadClass(p.val)}" style="width:${Math.min(p.val/12*100,100)}%"></div></div>
+                            <span style="color:${treadColor(p.val)};font-weight:600;font-size:0.8rem;">${p.val}/32"</span>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        ` : '<span>No depth data.</span>';
+    });
+}
+
+function treadClass(d) {
+    if (d <= 2) return 'tread-warn';
+    if (d <= 4) return 'tread-ok';
+    return 'tread-good';
+}
+function treadColor(d) {
+    if (d <= 2) return '#ef4444';
+    if (d <= 4) return '#f59e0b';
+    return '#16a34a';
+}
+function treadLabel(d) {
+    if (d <= 2) return '<span style="font-size:0.72rem;font-weight:600;color:#ef4444;background:#fef2f2;padding:0.15rem 0.45rem;border-radius:3px;">Replace Now</span>';
+    if (d <= 4) return '<span style="font-size:0.72rem;font-weight:600;color:#b45309;background:#fef9c3;padding:0.15rem 0.45rem;border-radius:3px;">Marginal</span>';
+    return '<span style="font-size:0.72rem;font-weight:600;color:#16a34a;background:#dcfce7;padding:0.15rem 0.45rem;border-radius:3px;">Good</span>';
+}
+
+async function saveTreadReading(event) {
+    event.preventDefault();
+    const body = {
+        vehicle_id: vehicleId,
+        tire_id: document.getElementById('treadTireId').value || null,
+        date: document.getElementById('treadDate').value,
+        odometer: document.getElementById('treadOdometer').value || null,
+        fl_depth: document.getElementById('treadFL').value || null,
+        fr_depth: document.getElementById('treadFR').value || null,
+        rl_depth: document.getElementById('treadRL').value || null,
+        rr_depth: document.getElementById('treadRR').value || null,
+        notes: document.getElementById('treadNotes').value
+    };
+    const res = await fetch('/api/tread-readings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.success) {
+        showAlert('Tread reading saved.', 'success');
+        closeModal('addTreadModal');
+        document.getElementById('treadForm').reset();
+        document.getElementById('treadDate').value = new Date().toISOString().split('T')[0];
+        loadAll();
+    } else {
+        showAlert(data.error || 'Failed.', 'danger');
+    }
+}
+
+async function deleteTreadReading(id) {
+    if (!confirm('Delete this tread reading?')) return;
+    const res = await fetch(`/api/tread-readings/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) { showAlert('Reading deleted.', 'success'); loadAll(); }
+    else showAlert(data.error || 'Failed.', 'danger');
+}
+
+function showAlert(msg, type) {
+    const el = document.getElementById('alertContainer');
+    el.innerHTML = `<div class="alert alert-${type}" style="margin-bottom:1rem;">${msg}</div>`;
+    setTimeout(() => el.innerHTML = '', 4000);
+}
+
+function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

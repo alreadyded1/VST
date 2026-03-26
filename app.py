@@ -329,6 +329,56 @@ def init_db():
         ''')
         db.commit()
 
+        # Tires table
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS tires (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL,
+                brand TEXT NOT NULL,
+                model TEXT,
+                size TEXT,
+                season TEXT DEFAULT 'All-Season',
+                dot_code TEXT,
+                purchase_date TEXT,
+                purchase_price REAL,
+                is_installed INTEGER DEFAULT 0,
+                installed_date TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id)
+            )
+        ''')
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS tire_rotations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                odometer INTEGER,
+                pattern TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id)
+            )
+        ''')
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS tread_readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL,
+                tire_id INTEGER,
+                date TEXT NOT NULL,
+                odometer INTEGER,
+                fl_depth REAL,
+                fr_depth REAL,
+                rl_depth REAL,
+                rr_depth REAL,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id),
+                FOREIGN KEY (tire_id) REFERENCES tires(id)
+            )
+        ''')
+        db.commit()
+
         db.close()
 
 def get_setting(key, default='1'):
@@ -451,6 +501,12 @@ def documents_page():
 def report_page():
     """Printable vehicle report page"""
     return render_template('report.html')
+
+@app.route('/tires')
+@login_required
+def tires_page():
+    """Tire log page"""
+    return render_template('tires.html')
 
 # API Endpoints
 
@@ -2003,6 +2059,175 @@ def delete_document(doc_id):
         if os.path.exists(full_path):
             os.remove(full_path)
     db.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+# Tire log endpoints
+@app.route('/api/tires', methods=['GET'])
+@login_required
+def get_tires():
+    vehicle_id = request.args.get('vehicle_id')
+    db = get_db()
+    if vehicle_id:
+        tires = db.execute('SELECT * FROM tires WHERE vehicle_id = ? ORDER BY is_installed DESC, created_at DESC', (vehicle_id,)).fetchall()
+    else:
+        tires = db.execute('SELECT * FROM tires ORDER BY is_installed DESC, created_at DESC').fetchall()
+    db.close()
+    return jsonify([dict(t) for t in tires])
+
+@app.route('/api/tires', methods=['POST'])
+@login_required
+def add_tire():
+    data = request.json
+    vehicle_id = data.get('vehicle_id')
+    if not vehicle_id or not data.get('brand'):
+        return jsonify({'error': 'vehicle_id and brand are required'}), 400
+    db = get_db()
+    cursor = db.execute(
+        '''INSERT INTO tires (vehicle_id, brand, model, size, season, dot_code,
+           purchase_date, purchase_price, is_installed, installed_date, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        (vehicle_id, data['brand'], data.get('model', ''), data.get('size', ''),
+         data.get('season', 'All-Season'), data.get('dot_code', ''),
+         data.get('purchase_date'), data.get('purchase_price'),
+         1 if data.get('is_installed') else 0,
+         data.get('installed_date'), data.get('notes', ''))
+    )
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'id': cursor.lastrowid})
+
+@app.route('/api/tires/<int:tire_id>', methods=['PUT'])
+@login_required
+def update_tire(tire_id):
+    data = request.json
+    db = get_db()
+    db.execute(
+        '''UPDATE tires SET brand=?, model=?, size=?, season=?, dot_code=?,
+           purchase_date=?, purchase_price=?, installed_date=?, notes=? WHERE id=?''',
+        (data['brand'], data.get('model', ''), data.get('size', ''),
+         data.get('season', 'All-Season'), data.get('dot_code', ''),
+         data.get('purchase_date'), data.get('purchase_price'),
+         data.get('installed_date'), data.get('notes', ''), tire_id)
+    )
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/tires/<int:tire_id>/install', methods=['POST'])
+@login_required
+def install_tire(tire_id):
+    """Mark a tire set as currently installed (uninstalls others for the same vehicle)"""
+    db = get_db()
+    tire = db.execute('SELECT vehicle_id FROM tires WHERE id = ?', (tire_id,)).fetchone()
+    if not tire:
+        db.close()
+        return jsonify({'error': 'Tire not found'}), 404
+    db.execute('UPDATE tires SET is_installed = 0 WHERE vehicle_id = ?', (tire['vehicle_id'],))
+    db.execute('UPDATE tires SET is_installed = 1 WHERE id = ?', (tire_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/tires/<int:tire_id>/uninstall', methods=['POST'])
+@login_required
+def uninstall_tire(tire_id):
+    db = get_db()
+    db.execute('UPDATE tires SET is_installed = 0 WHERE id = ?', (tire_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/tires/<int:tire_id>', methods=['DELETE'])
+@login_required
+def delete_tire(tire_id):
+    db = get_db()
+    db.execute('DELETE FROM tread_readings WHERE tire_id = ?', (tire_id,))
+    db.execute('DELETE FROM tires WHERE id = ?', (tire_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/tire-rotations', methods=['GET'])
+@login_required
+def get_tire_rotations():
+    vehicle_id = request.args.get('vehicle_id')
+    db = get_db()
+    if vehicle_id:
+        rows = db.execute('SELECT * FROM tire_rotations WHERE vehicle_id = ? ORDER BY date DESC', (vehicle_id,)).fetchall()
+    else:
+        rows = db.execute('SELECT * FROM tire_rotations ORDER BY date DESC').fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/tire-rotations', methods=['POST'])
+@login_required
+def add_tire_rotation():
+    data = request.json
+    vehicle_id = data.get('vehicle_id')
+    if not vehicle_id or not data.get('date'):
+        return jsonify({'error': 'vehicle_id and date are required'}), 400
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO tire_rotations (vehicle_id, date, odometer, pattern, notes) VALUES (?, ?, ?, ?, ?)',
+        (vehicle_id, data['date'], data.get('odometer'), data.get('pattern', ''), data.get('notes', ''))
+    )
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'id': cursor.lastrowid})
+
+@app.route('/api/tire-rotations/<int:rotation_id>', methods=['DELETE'])
+@login_required
+def delete_tire_rotation(rotation_id):
+    db = get_db()
+    db.execute('DELETE FROM tire_rotations WHERE id = ?', (rotation_id,))
+    db.commit()
+    db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/tread-readings', methods=['GET'])
+@login_required
+def get_tread_readings():
+    vehicle_id = request.args.get('vehicle_id')
+    db = get_db()
+    if vehicle_id:
+        rows = db.execute(
+            '''SELECT tr.*, t.brand || CASE WHEN t.model != "" THEN " " || t.model ELSE "" END as tire_name
+               FROM tread_readings tr
+               LEFT JOIN tires t ON tr.tire_id = t.id
+               WHERE tr.vehicle_id = ? ORDER BY tr.date DESC''', (vehicle_id,)
+        ).fetchall()
+    else:
+        rows = db.execute('SELECT * FROM tread_readings ORDER BY date DESC').fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/tread-readings', methods=['POST'])
+@login_required
+def add_tread_reading():
+    data = request.json
+    vehicle_id = data.get('vehicle_id')
+    if not vehicle_id or not data.get('date'):
+        return jsonify({'error': 'vehicle_id and date are required'}), 400
+    db = get_db()
+    cursor = db.execute(
+        '''INSERT INTO tread_readings (vehicle_id, tire_id, date, odometer,
+           fl_depth, fr_depth, rl_depth, rr_depth, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        (vehicle_id, data.get('tire_id'), data['date'], data.get('odometer'),
+         data.get('fl_depth'), data.get('fr_depth'),
+         data.get('rl_depth'), data.get('rr_depth'), data.get('notes', ''))
+    )
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'id': cursor.lastrowid})
+
+@app.route('/api/tread-readings/<int:reading_id>', methods=['DELETE'])
+@login_required
+def delete_tread_reading(reading_id):
+    db = get_db()
+    db.execute('DELETE FROM tread_readings WHERE id = ?', (reading_id,))
     db.commit()
     db.close()
     return jsonify({'success': True})
