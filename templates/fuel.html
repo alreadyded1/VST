@@ -7,6 +7,46 @@
 <h1>Fuel Tracker</h1>
 
 <style>
+/* Collapsible sections */
+.collapsible-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: var(--font-family);
+    color: var(--dark-text);
+    text-align: left;
+    letter-spacing: -0.01em;
+}
+
+.collapsible-header:hover { color: var(--accent); }
+
+.chevron {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: var(--light-text);
+}
+
+.chevron.collapsed { transform: rotate(180deg); }
+
+.collapsible-body {
+    overflow: hidden;
+    transition: max-height 0.25s ease, opacity 0.2s ease;
+    max-height: 2000px;
+    opacity: 1;
+}
+
+.collapsible-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+}
+
 /* Ensure containers don't clip dropdown menus */
 .card {
     overflow: visible !important;
@@ -83,43 +123,58 @@
 </style>
 
 <div class="card">
-    <h2>Fuel Economy Statistics</h2>
-    <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
-        <div class="stat-card" style="padding: 3rem 0 1rem 0;">
-            <div id="avgMpgGauge"></div>
-        </div>
-        <div class="stat-card">
-            <h3>Total Fuel Purchased</h3>
-            <div class="stat-value" id="totalGallons">0 gal</div>
-        </div>
-        <div class="stat-card">
-            <h3>Total Spent</h3>
-            <div class="stat-value" id="totalSpent">$0.00</div>
-        </div>
-        <div class="stat-card" style="padding: 3rem 0 1rem 0;">
-            <div id="bestMpgGauge"></div>
-        </div>
-    </div>
-</div>
-
-<div class="card">
-    <h2>Fuel Trends</h2>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 2rem;">
-        <div>
-            <h3 style="text-align: center; margin-bottom: 1rem;">MPG Over Time</h3>
-            <canvas id="mpgChart"></canvas>
-        </div>
-        <div>
-            <h3 style="text-align: center; margin-bottom: 1rem;">Cost per Gallon Trend</h3>
-            <canvas id="costChart"></canvas>
+    <button class="collapsible-header" onclick="toggleSection('statistics')" aria-expanded="true">
+        <span>Fuel Economy Statistics</span>
+        <svg class="chevron" id="chevron-statistics" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+    </button>
+    <div class="collapsible-body" id="section-statistics">
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: 1rem;">
+            <div class="stat-card" style="padding: 3rem 0 1rem 0;">
+                <div id="avgMpgGauge"></div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Fuel Purchased</h3>
+                <div class="stat-value" id="totalGallons">0 gal</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Spent</h3>
+                <div class="stat-value" id="totalSpent">$0.00</div>
+            </div>
+            <div class="stat-card" style="padding: 3rem 0 1rem 0;">
+                <div id="bestMpgGauge"></div>
+            </div>
         </div>
     </div>
 </div>
 
 <div class="card">
-    <h2>Station Comparison</h2>
-    <div id="stationComparison" class="table-container">
-        <p class="text-center" style="padding: 2rem;">No station data available</p>
+    <button class="collapsible-header" onclick="toggleSection('trends')" aria-expanded="true">
+        <span>Fuel Trends</span>
+        <svg class="chevron" id="chevron-trends" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+    </button>
+    <div class="collapsible-body" id="section-trends">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 2rem; margin-top: 1rem;">
+            <div>
+                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">MPG Over Time</h3>
+                <canvas id="mpgChart"></canvas>
+            </div>
+            <div>
+                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">Cost per Gallon Trend</h3>
+                <canvas id="costChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <button class="collapsible-header" onclick="toggleSection('stations')" aria-expanded="true">
+        <span>Station Comparison</span>
+        <svg class="chevron" id="chevron-stations" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+    </button>
+    <div class="collapsible-body" id="section-stations">
+        <div id="stationComparison" class="table-container" style="margin-top: 1rem;">
+            <p class="text-center" style="padding: 2rem;">No station data available</p>
+        </div>
     </div>
 </div>
 
@@ -585,6 +640,7 @@ async function deleteFuelRecord(fuelId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    initSections();
     loadFuelRecords();
 
     // Set default date to today
@@ -849,6 +905,31 @@ function updateStationComparison(records) {
     `;
 
     container.innerHTML = html;
+}
+
+function toggleSection(name) {
+    const body = document.getElementById(`section-${name}`);
+    const chevron = document.getElementById(`chevron-${name}`);
+    const btn = chevron.closest('.collapsible-header');
+    const collapsed = body.classList.toggle('collapsed');
+    chevron.classList.toggle('collapsed', collapsed);
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    localStorage.setItem(`fuel-section-${name}`, collapsed ? '0' : '1');
+}
+
+function initSections() {
+    ['statistics', 'trends', 'stations'].forEach(name => {
+        const saved = localStorage.getItem(`fuel-section-${name}`);
+        // Default open (null = never set). Collapse only if explicitly saved as '0'.
+        if (saved === '0') {
+            const body = document.getElementById(`section-${name}`);
+            const chevron = document.getElementById(`chevron-${name}`);
+            const btn = chevron.closest('.collapsible-header');
+            body.classList.add('collapsed');
+            chevron.classList.add('collapsed');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
 }
 
 function updateStationDatalist(records) {
