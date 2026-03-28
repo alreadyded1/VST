@@ -50,6 +50,7 @@
                 <tr>
                     <th>Date</th>
                     <th>Odometer</th>
+                    <th>Tire Set</th>
                     <th>Pattern</th>
                     <th>Notes</th>
                     <th>Actions</th>
@@ -151,6 +152,12 @@
                 <div class="form-group">
                     <label>Odometer (mi)</label>
                     <input type="number" id="rotOdometer" min="0" placeholder="50000">
+                </div>
+                <div class="form-group" style="grid-column:1/-1;">
+                    <label>Tire Set</label>
+                    <select id="rotTireId">
+                        <option value="">— Select tire set —</option>
+                    </select>
                 </div>
                 <div class="form-group" style="grid-column:1/-1;">
                     <label>Rotation Pattern</label>
@@ -424,16 +431,26 @@ function renderInventory() {
 }
 
 function populateTireSelect() {
-    const sel = document.getElementById('treadTireId');
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">— None / All tires —</option>';
+    const treadSel = document.getElementById('treadTireId');
+    const rotSel = document.getElementById('rotTireId');
+    const prevTread = treadSel.value;
+    const prevRot = rotSel.value;
+
+    treadSel.innerHTML = '<option value="">— None / All tires —</option>';
+    rotSel.innerHTML = '<option value="">— Select tire set —</option>';
+
     tiresData.forEach(t => {
-        const opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = t.brand + (t.model ? ' ' + t.model : '') + (t.is_installed ? ' (installed)' : '');
-        sel.appendChild(opt);
+        const label = t.brand + (t.model ? ' ' + t.model : '') + (t.is_installed ? ' (installed)' : '');
+        [treadSel, rotSel].forEach(sel => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = label;
+            sel.appendChild(opt);
+        });
     });
-    if (prev) sel.value = prev;
+
+    if (prevTread) treadSel.value = prevTread;
+    if (prevRot) rotSel.value = prevRot;
 }
 
 async function saveTire(event) {
@@ -531,6 +548,7 @@ async function loadRotations() {
         <tr>
             <td>${r.date}</td>
             <td>${r.odometer ? Number(r.odometer).toLocaleString() + ' mi' : '—'}</td>
+            <td>${esc(r.tire_name || '—')}</td>
             <td>${esc(r.pattern || '—')}</td>
             <td>${esc(r.notes || '')}</td>
             <td>
@@ -546,6 +564,7 @@ async function saveRotation(event) {
         vehicle_id: vehicleId,
         date: document.getElementById('rotDate').value,
         odometer: document.getElementById('rotOdometer').value || null,
+        tire_id: document.getElementById('rotTireId').value || null,
         pattern: document.getElementById('rotPattern').value,
         notes: document.getElementById('rotNotes').value
     };

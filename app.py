@@ -273,6 +273,13 @@ def init_db():
             # Column already exists
             pass
 
+        # Migration: Add tire_id column to tire_rotations table
+        try:
+            db.execute('ALTER TABLE tire_rotations ADD COLUMN tire_id INTEGER REFERENCES tires(id)')
+            db.commit()
+        except sqlite3.OperationalError:
+            pass
+
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
         if admin_exists['count'] == 0:
@@ -2154,10 +2161,15 @@ def delete_tire(tire_id):
 def get_tire_rotations():
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
+    query = '''
+        SELECT tr.*, t.brand || COALESCE(' ' || t.model, '') AS tire_name
+        FROM tire_rotations tr
+        LEFT JOIN tires t ON t.id = tr.tire_id
+    '''
     if vehicle_id:
-        rows = db.execute('SELECT * FROM tire_rotations WHERE vehicle_id = ? ORDER BY date DESC', (vehicle_id,)).fetchall()
+        rows = db.execute(query + ' WHERE tr.vehicle_id = ? ORDER BY tr.date DESC', (vehicle_id,)).fetchall()
     else:
-        rows = db.execute('SELECT * FROM tire_rotations ORDER BY date DESC').fetchall()
+        rows = db.execute(query + ' ORDER BY tr.date DESC').fetchall()
     db.close()
     return jsonify([dict(r) for r in rows])
 
@@ -2170,8 +2182,8 @@ def add_tire_rotation():
         return jsonify({'error': 'vehicle_id and date are required'}), 400
     db = get_db()
     cursor = db.execute(
-        'INSERT INTO tire_rotations (vehicle_id, date, odometer, pattern, notes) VALUES (?, ?, ?, ?, ?)',
-        (vehicle_id, data['date'], data.get('odometer'), data.get('pattern', ''), data.get('notes', ''))
+        'INSERT INTO tire_rotations (vehicle_id, date, odometer, pattern, notes, tire_id) VALUES (?, ?, ?, ?, ?, ?)',
+        (vehicle_id, data['date'], data.get('odometer'), data.get('pattern', ''), data.get('notes', ''), data.get('tire_id'))
     )
     db.commit()
     db.close()
