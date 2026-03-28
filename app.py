@@ -280,6 +280,22 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # Create tire_install_log table if it doesn't exist
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS tire_install_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tire_id INTEGER NOT NULL,
+                vehicle_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                date TEXT NOT NULL,
+                odometer INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tire_id) REFERENCES tires(id),
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id)
+            )
+        ''')
+        db.commit()
+
         # Create default admin user if no users exist
         admin_exists = db.execute('SELECT COUNT(*) as count FROM users').fetchone()
         if admin_exists['count'] == 0:
@@ -2126,13 +2142,20 @@ def update_tire(tire_id):
 @login_required
 def install_tire(tire_id):
     """Mark a tire set as currently installed (uninstalls others for the same vehicle)"""
+    data = request.json or {}
+    date = data.get('date')
+    odometer = data.get('odometer')
+    if not date:
+        return jsonify({'error': 'date is required'}), 400
     db = get_db()
     tire = db.execute('SELECT vehicle_id FROM tires WHERE id = ?', (tire_id,)).fetchone()
     if not tire:
         db.close()
         return jsonify({'error': 'Tire not found'}), 404
     db.execute('UPDATE tires SET is_installed = 0 WHERE vehicle_id = ?', (tire['vehicle_id'],))
-    db.execute('UPDATE tires SET is_installed = 1 WHERE id = ?', (tire_id,))
+    db.execute('UPDATE tires SET is_installed = 1, installed_date = ? WHERE id = ?', (date, tire_id))
+    db.execute('INSERT INTO tire_install_log (tire_id, vehicle_id, event_type, date, odometer) VALUES (?, ?, ?, ?, ?)',
+               (tire_id, tire['vehicle_id'], 'install', date, odometer))
     db.commit()
     db.close()
     return jsonify({'success': True})
@@ -2140,11 +2163,39 @@ def install_tire(tire_id):
 @app.route('/api/tires/<int:tire_id>/uninstall', methods=['POST'])
 @login_required
 def uninstall_tire(tire_id):
+    data = request.json or {}
+    date = data.get('date')
+    odometer = data.get('odometer')
+    if not date:
+        return jsonify({'error': 'date is required'}), 400
     db = get_db()
+    tire = db.execute('SELECT vehicle_id FROM tires WHERE id = ?', (tire_id,)).fetchone()
+    if not tire:
+        db.close()
+        return jsonify({'error': 'Tire not found'}), 404
     db.execute('UPDATE tires SET is_installed = 0 WHERE id = ?', (tire_id,))
+    db.execute('INSERT INTO tire_install_log (tire_id, vehicle_id, event_type, date, odometer) VALUES (?, ?, ?, ?, ?)',
+               (tire_id, tire['vehicle_id'], 'uninstall', date, odometer))
     db.commit()
     db.close()
     return jsonify({'success': True})
+
+@app.route('/api/tire-install-log', methods=['GET'])
+@login_required
+def get_tire_install_log():
+    vehicle_id = request.args.get('vehicle_id')
+    db = get_db()
+    query = '''
+        SELECT l.*, t.brand || COALESCE(' ' || NULLIF(t.model, ''), '') AS tire_name
+        FROM tire_install_log l
+        JOIN tires t ON t.id = l.tire_id
+    '''
+    if vehicle_id:
+        rows = db.execute(query + ' WHERE l.vehicle_id = ? ORDER BY l.date DESC, l.created_at DESC', (vehicle_id,)).fetchall()
+    else:
+        rows = db.execute(query + ' ORDER BY l.date DESC, l.created_at DESC').fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
 
 @app.route('/api/tires/<int:tire_id>', methods=['DELETE'])
 @login_required

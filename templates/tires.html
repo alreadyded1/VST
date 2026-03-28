@@ -71,7 +71,74 @@
     <div id="treadReadingsList"></div>
 </div>
 
+<!-- Install / Uninstall Log -->
+<div class="card">
+    <h2 class="mb-2">Install / Uninstall Log</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Event</th>
+                    <th>Tire Set</th>
+                    <th>Odometer</th>
+                </tr>
+            </thead>
+            <tbody id="installLogBody"></tbody>
+        </table>
+    </div>
+    <p id="noInstallLog" style="display:none;color:var(--light-text);font-size:0.875rem;">No install/uninstall events logged yet.</p>
+</div>
+
 <!-- ── Modals ── -->
+
+<!-- Install Tire Modal -->
+<div id="installTireModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Install Tire Set</h3>
+            <button class="close" onclick="closeModal('installTireModal')">&times;</button>
+        </div>
+        <form id="installTireForm" onsubmit="confirmInstallTire(event)">
+            <input type="hidden" id="installTireId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div class="form-group">
+                    <label>Installation Date *</label>
+                    <input type="date" id="installDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Odometer (mi) *</label>
+                    <input type="number" id="installOdometer" min="0" placeholder="50000" required>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Confirm Install</button>
+        </form>
+    </div>
+</div>
+
+<!-- Uninstall Tire Modal -->
+<div id="uninstallTireModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Uninstall Tire Set</h3>
+            <button class="close" onclick="closeModal('uninstallTireModal')">&times;</button>
+        </div>
+        <form id="uninstallTireForm" onsubmit="confirmUninstallTire(event)">
+            <input type="hidden" id="uninstallTireId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div class="form-group">
+                    <label>Removal Date *</label>
+                    <input type="date" id="uninstallDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Odometer (mi) *</label>
+                    <input type="number" id="uninstallOdometer" min="0" placeholder="50000" required>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Confirm Uninstall</button>
+        </form>
+    </div>
+</div>
 
 <!-- Add Tire Modal -->
 <div id="addTireModal" class="modal">
@@ -343,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Set today as default date in modals
     const today = new Date().toISOString().split('T')[0];
-    ['rotDate', 'treadDate'].forEach(id => {
+    ['rotDate', 'treadDate', 'installDate', 'uninstallDate'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = today;
     });
@@ -353,6 +420,7 @@ function loadAll() {
     loadTires();
     loadRotations();
     loadTreadReadings();
+    loadInstallLog();
 }
 
 // ── Tires ──
@@ -507,18 +575,81 @@ function openEditTire(id) {
     openModal('addTireModal');
 }
 
-async function installTire(id) {
-    const res = await fetch(`/api/tires/${id}/install`, { method: 'POST' });
-    const data = await res.json();
-    if (data.success) { showAlert('Tire set marked as installed.', 'success'); loadTires(); }
-    else showAlert(data.error || 'Failed.', 'danger');
+function installTire(id) {
+    document.getElementById('installTireId').value = id;
+    document.getElementById('installOdometer').value = '';
+    openModal('installTireModal');
 }
 
-async function uninstallTire(id) {
-    const res = await fetch(`/api/tires/${id}/uninstall`, { method: 'POST' });
+async function confirmInstallTire(event) {
+    event.preventDefault();
+    const id = document.getElementById('installTireId').value;
+    const body = {
+        date: document.getElementById('installDate').value,
+        odometer: document.getElementById('installOdometer').value || null
+    };
+    const res = await fetch(`/api/tires/${id}/install`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const data = await res.json();
-    if (data.success) { showAlert('Tire set uninstalled.', 'success'); loadTires(); }
-    else showAlert(data.error || 'Failed.', 'danger');
+    if (data.success) {
+        showAlert('Tire set marked as installed.', 'success');
+        closeModal('installTireModal');
+        loadAll();
+    } else {
+        showAlert(data.error || 'Failed.', 'danger');
+    }
+}
+
+function uninstallTire(id) {
+    document.getElementById('uninstallTireId').value = id;
+    document.getElementById('uninstallOdometer').value = '';
+    openModal('uninstallTireModal');
+}
+
+async function confirmUninstallTire(event) {
+    event.preventDefault();
+    const id = document.getElementById('uninstallTireId').value;
+    const body = {
+        date: document.getElementById('uninstallDate').value,
+        odometer: document.getElementById('uninstallOdometer').value || null
+    };
+    const res = await fetch(`/api/tires/${id}/uninstall`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.success) {
+        showAlert('Tire set uninstalled.', 'success');
+        closeModal('uninstallTireModal');
+        loadAll();
+    } else {
+        showAlert(data.error || 'Failed.', 'danger');
+    }
+}
+
+async function loadInstallLog() {
+    if (!vehicleId) return;
+    const res = await fetch(`/api/tire-install-log?vehicle_id=${vehicleId}`);
+    const log = await res.json();
+    const tbody = document.getElementById('installLogBody');
+    const noMsg = document.getElementById('noInstallLog');
+    if (!log.length) {
+        tbody.innerHTML = '';
+        noMsg.style.display = 'block';
+        return;
+    }
+    noMsg.style.display = 'none';
+    tbody.innerHTML = log.map(e => `
+        <tr>
+            <td>${e.date}</td>
+            <td>
+                <span style="font-size:0.75rem;font-weight:600;padding:0.15rem 0.5rem;border-radius:3px;
+                    ${e.event_type === 'install'
+                        ? 'background:#dcfce7;color:#16a34a;'
+                        : 'background:#f1f5f9;color:var(--light-text);'}">
+                    ${e.event_type === 'install' ? 'Installed' : 'Uninstalled'}
+                </span>
+            </td>
+            <td>${esc(e.tire_name || '—')}</td>
+            <td>${e.odometer ? Number(e.odometer).toLocaleString() + ' mi' : '—'}</td>
+        </tr>
+    `).join('');
 }
 
 async function deleteTire(id) {
