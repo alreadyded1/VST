@@ -2184,16 +2184,25 @@ def uninstall_tire(tire_id):
 @login_required
 def get_tire_install_log():
     vehicle_id = request.args.get('vehicle_id')
+    tire_id = request.args.get('tire_id')
     db = get_db()
     query = '''
         SELECT l.*, t.brand || COALESCE(' ' || NULLIF(t.model, ''), '') AS tire_name
         FROM tire_install_log l
         JOIN tires t ON t.id = l.tire_id
     '''
+    conditions = []
+    params = []
     if vehicle_id:
-        rows = db.execute(query + ' WHERE l.vehicle_id = ? ORDER BY l.date DESC, l.created_at DESC', (vehicle_id,)).fetchall()
-    else:
-        rows = db.execute(query + ' ORDER BY l.date DESC, l.created_at DESC').fetchall()
+        conditions.append('l.vehicle_id = ?')
+        params.append(vehicle_id)
+    if tire_id:
+        conditions.append('l.tire_id = ?')
+        params.append(tire_id)
+    if conditions:
+        query += ' WHERE ' + ' AND '.join(conditions)
+    query += ' ORDER BY l.date DESC, l.created_at DESC'
+    rows = db.execute(query, params).fetchall()
     db.close()
     return jsonify([dict(r) for r in rows])
 

@@ -73,21 +73,28 @@
 
 <!-- Install / Uninstall Log -->
 <div class="card">
-    <h2 class="mb-2">Install / Uninstall Log</h2>
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Event</th>
-                    <th>Tire Set</th>
-                    <th>Odometer</th>
-                </tr>
-            </thead>
-            <tbody id="installLogBody"></tbody>
-        </table>
+    <div class="flex-between mb-2">
+        <h2>Install / Uninstall Log</h2>
+        <select id="installLogTireFilter" onchange="loadInstallLog()" style="padding:0.35rem 0.6rem;border:1px solid var(--border-color);border-radius:6px;font-size:0.875rem;background:var(--card-bg);color:var(--dark-text);">
+            <option value="">— Select a tire set —</option>
+        </select>
     </div>
-    <p id="noInstallLog" style="display:none;color:var(--light-text);font-size:0.875rem;">No install/uninstall events logged yet.</p>
+    <div id="installLogTable" style="display:none;">
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Event</th>
+                        <th>Odometer</th>
+                    </tr>
+                </thead>
+                <tbody id="installLogBody"></tbody>
+            </table>
+        </div>
+        <p id="noInstallLog" style="display:none;color:var(--light-text);font-size:0.875rem;">No events logged for this tire set.</p>
+    </div>
+    <p id="installLogPrompt" style="color:var(--light-text);font-size:0.875rem;">Select a tire set above to view its install/uninstall history.</p>
 </div>
 
 <!-- ── Modals ── -->
@@ -501,15 +508,18 @@ function renderInventory() {
 function populateTireSelect() {
     const treadSel = document.getElementById('treadTireId');
     const rotSel = document.getElementById('rotTireId');
+    const logSel = document.getElementById('installLogTireFilter');
     const prevTread = treadSel.value;
     const prevRot = rotSel.value;
+    const prevLog = logSel.value;
 
     treadSel.innerHTML = '<option value="">— None / All tires —</option>';
     rotSel.innerHTML = '<option value="">— Select tire set —</option>';
+    logSel.innerHTML = '<option value="">— Select a tire set —</option>';
 
     tiresData.forEach(t => {
         const label = t.brand + (t.model ? ' ' + t.model : '') + (t.is_installed ? ' (installed)' : '');
-        [treadSel, rotSel].forEach(sel => {
+        [treadSel, rotSel, logSel].forEach(sel => {
             const opt = document.createElement('option');
             opt.value = t.id;
             opt.textContent = label;
@@ -519,6 +529,7 @@ function populateTireSelect() {
 
     if (prevTread) treadSel.value = prevTread;
     if (prevRot) rotSel.value = prevRot;
+    if (prevLog) logSel.value = prevLog;
 }
 
 async function saveTire(event) {
@@ -625,10 +636,24 @@ async function confirmUninstallTire(event) {
 
 async function loadInstallLog() {
     if (!vehicleId) return;
-    const res = await fetch(`/api/tire-install-log?vehicle_id=${vehicleId}`);
-    const log = await res.json();
+    const tireId = document.getElementById('installLogTireFilter').value;
+    const prompt = document.getElementById('installLogPrompt');
+    const table = document.getElementById('installLogTable');
     const tbody = document.getElementById('installLogBody');
     const noMsg = document.getElementById('noInstallLog');
+
+    if (!tireId) {
+        table.style.display = 'none';
+        prompt.style.display = 'block';
+        return;
+    }
+
+    prompt.style.display = 'none';
+    table.style.display = 'block';
+
+    const res = await fetch(`/api/tire-install-log?vehicle_id=${vehicleId}&tire_id=${tireId}`);
+    const log = await res.json();
+
     if (!log.length) {
         tbody.innerHTML = '';
         noMsg.style.display = 'block';
@@ -646,7 +671,6 @@ async function loadInstallLog() {
                     ${e.event_type === 'install' ? 'Installed' : 'Uninstalled'}
                 </span>
             </td>
-            <td>${esc(e.tire_name || '—')}</td>
             <td>${e.odometer ? Number(e.odometer).toLocaleString() + ' mi' : '—'}</td>
         </tr>
     `).join('');
