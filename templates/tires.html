@@ -77,7 +77,6 @@
         <h2>Install / Uninstall Log</h2>
         <select id="installLogTireFilter" onchange="loadInstallLog()" style="padding:0.35rem 0.6rem;border:1px solid var(--border-color);border-radius:6px;font-size:0.875rem;background:var(--card-bg);color:var(--dark-text);">
             <option value="">— Select a tire set —</option>
-            <option value="all">All Tire Sets</option>
         </select>
     </div>
     <div id="installLogTable" style="display:none;">
@@ -517,7 +516,7 @@ function populateTireSelect() {
 
     treadSel.innerHTML = '<option value="">— None / All tires —</option>';
     rotSel.innerHTML = '<option value="">— Select tire set —</option>';
-    logSel.innerHTML = '<option value="">— Select a tire set —</option>';
+    logSel.innerHTML = '<option value="">— Select a tire set —</option><option value="all">All Tire Sets</option>';
 
     tiresData.forEach(t => {
         const label = t.brand + (t.model ? ' ' + t.model : '') + (t.is_installed ? ' (installed)' : '');
