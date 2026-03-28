@@ -9,16 +9,16 @@
 
 <!-- Currently Installed -->
 <div class="card" id="installedCard">
-    <div class="flex-between mb-2">
-        <h2>Currently Installed</h2>
-        <button class="btn btn-primary btn-small" onclick="openModal('addTireModal')">Add Tire Set</button>
-    </div>
+    <h2 class="mb-2">Currently Installed</h2>
     <div id="installedTires"><p style="color:var(--light-text);font-size:0.875rem;">No tires marked as installed.</p></div>
 </div>
 
 <!-- Tire Inventory -->
 <div class="card">
-    <h2 class="mb-2">Tire Inventory</h2>
+    <div class="flex-between mb-2">
+        <h2>Tire Inventory</h2>
+        <button class="btn btn-primary btn-small" onclick="openModal('addTireModal')">Add Tire Set</button>
+    </div>
     <div class="table-container">
         <table>
             <thead>
