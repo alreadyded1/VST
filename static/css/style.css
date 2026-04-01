@@ -1224,3 +1224,29 @@ body.mobile-view .flex-between {
 @media (min-width: 1400px) {
     body.desktop-view .container { max-width: 1300px; }
 }
+
+/* ============================================================
+   MOBILE-SPECIFIC TABLE / FORM TWEAKS
+   ============================================================ */
+
+/* Hide Service Provider column on dashboard recent-services table */
+body.mobile-view #recentServices table th:nth-child(2),
+body.mobile-view #recentServices table td:nth-child(2) { display: none; }
+
+@media (max-width: 768px) {
+    #recentServices table th:nth-child(2),
+    #recentServices table td:nth-child(2) { display: none; }
+}
+
+/* Date inputs should be compact, not full-width */
+body.mobile-view input[type="date"] {
+    width: auto;
+    max-width: 100%;
+}
+
+@media (max-width: 768px) {
+    input[type="date"] {
+        width: auto !important;
+        max-width: 100%;
+    }
+}
