@@ -58,6 +58,7 @@ body {
     color: var(--dark-text);
     background-color: var(--bg);
     min-height: 100vh;
+    overflow-x: hidden;
 }
 
 /* ============================================================
@@ -215,6 +216,7 @@ body {
     flex-direction: column;
     min-height: 100vh;
     min-width: 0;
+    overflow-x: hidden;
 }
 
 /* ============================================================
@@ -813,6 +815,8 @@ body.desktop-view .mobile-cards        { display: none !important; }
     border: 1px solid var(--border-color);
     border-left: 3px solid var(--accent);
     box-shadow: var(--shadow);
+    max-width: 100%;
+    overflow: hidden;
 }
 
 .mobile-card-header {
@@ -829,6 +833,11 @@ body.desktop-view .mobile-cards        { display: none !important; }
     font-weight: 600;
     color: var(--dark-text);
     margin: 0;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .mobile-card-body { display: grid; gap: 0.4rem; }
@@ -861,9 +870,14 @@ body.desktop-view .mobile-cards        { display: none !important; }
     margin-top: 0.75rem;
     padding-top: 0.65rem;
     border-top: 1px solid var(--border-color);
+    justify-content: flex-end;
+    flex-wrap: wrap;
 }
 
-.mobile-card-actions .btn { flex: 1; }
+.mobile-card-actions .btn {
+    flex: 0 1 auto;
+    min-width: 0;
+}
 
 /* ============================================================
    SHOW / HIDE MOBILE
@@ -930,10 +944,13 @@ body.mobile-view .bottom-nav {
 
 body.mobile-view {
     padding-bottom: 72px;
+    font-size: 16px;
 }
 
 body.mobile-view .container {
     padding: 1rem 1rem 2rem;
+    overflow-x: hidden;
+    max-width: 100vw;
 }
 
 body.mobile-view .card {
@@ -941,9 +958,21 @@ body.mobile-view .card {
     padding: 1rem;
 }
 
+body.mobile-view .card h2 {
+    font-size: 1.05rem;
+}
+
 body.mobile-view .stats-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr !important;
     gap: 0.75rem;
+}
+
+body.mobile-view .stat-card h3 {
+    font-size: 0.75rem;
+}
+
+body.mobile-view .stat-card .stat-value {
+    font-size: 1.6rem;
 }
 
 body.mobile-view .form-row {
@@ -961,7 +990,31 @@ body.mobile-view textarea {
     min-height: 44px;
 }
 
-body.mobile-view .btn { min-height: 40px; }
+body.mobile-view .btn {
+    min-height: 42px;
+    font-size: 0.9rem;
+}
+
+body.mobile-view .btn-small {
+    min-height: 36px;
+    font-size: 0.82rem;
+}
+
+body.mobile-view .mobile-card-header h4 {
+    font-size: 1rem;
+}
+
+body.mobile-view .mobile-card-label {
+    font-size: 0.8rem;
+}
+
+body.mobile-view .mobile-card-value {
+    font-size: 0.95rem;
+}
+
+body.mobile-view table {
+    font-size: 0.9rem;
+}
 
 body.mobile-view .modal-content {
     margin: 0;
@@ -1021,9 +1074,9 @@ body.mobile-view .flex-between {
         align-items: center;
     }
 
-    .container { padding: 1rem 1rem 2rem; }
+    .container { padding: 1rem 1rem 2rem; overflow-x: hidden; max-width: 100vw; }
 
-    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .stats-grid { grid-template-columns: 1fr 1fr !important; }
     .vehicle-profile { grid-template-columns: 1fr; }
     .form-row { grid-template-columns: 1fr; }
 

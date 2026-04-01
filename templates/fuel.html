@@ -123,11 +123,11 @@
 </style>
 
 <div class="card">
-    <button class="collapsible-header" onclick="toggleSection('statistics')" aria-expanded="true">
+    <button class="collapsible-header" onclick="toggleSection('statistics')" aria-expanded="false">
         <span>Fuel Economy Statistics</span>
-        <svg class="chevron" id="chevron-statistics" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        <svg class="chevron collapsed" id="chevron-statistics" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
-    <div class="collapsible-body" id="section-statistics">
+    <div class="collapsible-body collapsed" id="section-statistics">
         <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-top: 1rem;">
             <div class="stat-card" style="padding: 3rem 0 1rem 0;">
                 <div id="avgMpgGauge"></div>
@@ -148,12 +148,12 @@
 </div>
 
 <div class="card">
-    <button class="collapsible-header" onclick="toggleSection('trends')" aria-expanded="true">
+    <button class="collapsible-header" onclick="toggleSection('trends')" aria-expanded="false">
         <span>Fuel Trends</span>
-        <svg class="chevron" id="chevron-trends" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        <svg class="chevron collapsed" id="chevron-trends" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
-    <div class="collapsible-body" id="section-trends">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 2rem; margin-top: 1rem;">
+    <div class="collapsible-body collapsed" id="section-trends">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; margin-top: 1rem;">
             <div>
                 <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">MPG Over Time</h3>
                 <canvas id="mpgChart"></canvas>
@@ -167,11 +167,11 @@
 </div>
 
 <div class="card">
-    <button class="collapsible-header" onclick="toggleSection('stations')" aria-expanded="true">
+    <button class="collapsible-header" onclick="toggleSection('stations')" aria-expanded="false">
         <span>Station Comparison</span>
-        <svg class="chevron" id="chevron-stations" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        <svg class="chevron collapsed" id="chevron-stations" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
-    <div class="collapsible-body" id="section-stations">
+    <div class="collapsible-body collapsed" id="section-stations">
         <div id="stationComparison" class="table-container" style="margin-top: 1rem;">
             <p class="text-center" style="padding: 2rem;">No station data available</p>
         </div>
@@ -914,20 +914,20 @@ function toggleSection(name) {
     const collapsed = body.classList.toggle('collapsed');
     chevron.classList.toggle('collapsed', collapsed);
     btn.setAttribute('aria-expanded', String(!collapsed));
-    localStorage.setItem(`fuel-section-${name}`, collapsed ? '0' : '1');
+    localStorage.setItem(`fuel-section-${name}`, collapsed ? '0' : '1'); // '1' = open, '0' = collapsed
 }
 
 function initSections() {
     ['statistics', 'trends', 'stations'].forEach(name => {
         const saved = localStorage.getItem(`fuel-section-${name}`);
-        // Default open (null = never set). Collapse only if explicitly saved as '0'.
-        if (saved === '0') {
+        // HTML defaults to collapsed. Open only if explicitly saved as '1'.
+        if (saved === '1') {
             const body = document.getElementById(`section-${name}`);
             const chevron = document.getElementById(`chevron-${name}`);
             const btn = chevron.closest('.collapsible-header');
-            body.classList.add('collapsed');
-            chevron.classList.add('collapsed');
-            btn.setAttribute('aria-expanded', 'false');
+            body.classList.remove('collapsed');
+            chevron.classList.remove('collapsed');
+            btn.setAttribute('aria-expanded', 'true');
         }
     });
 }
