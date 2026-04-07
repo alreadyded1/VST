@@ -2086,6 +2086,92 @@ def delete_document(doc_id):
     db.close()
     return jsonify({'success': True})
 
+# Global search endpoint
+@app.route('/api/search', methods=['GET'])
+@login_required
+def global_search():
+    """Search across all sections for the selected vehicle"""
+    query = request.args.get('q', '').strip()
+    vehicle_id = request.args.get('vehicle_id')
+
+    if not query or len(query) < 2:
+        return jsonify({'results': {}})
+
+    like = f'%{query}%'
+    db = get_db()
+    results = {}
+
+    # Service records
+    base = 'FROM service_records WHERE (LOWER(service_provider) LIKE ? OR LOWER(repairs_completed) LIKE ? OR LOWER(comments) LIKE ?)'
+    params = (like, like, like)
+    if vehicle_id:
+        base += ' AND vehicle_id = ?'
+        params += (vehicle_id,)
+    rows = db.execute(f'SELECT id, date, service_provider, repairs_completed, cost {base} ORDER BY date DESC LIMIT 10', params).fetchall()
+    if rows:
+        results['services'] = [{'id': r['id'], 'date': r['date'], 'label': r['service_provider'],
+                                 'sub': r['repairs_completed'] or '', 'cost': r['cost']} for r in rows]
+
+    # Fuel records
+    base = 'FROM fuel_records WHERE LOWER(station) LIKE ?'
+    params = (like,)
+    if vehicle_id:
+        base += ' AND vehicle_id = ?'
+        params += (vehicle_id,)
+    rows = db.execute(f'SELECT id, date, station, gallons, cost {base} ORDER BY date DESC LIMIT 10', params).fetchall()
+    if rows:
+        results['fuel'] = [{'id': r['id'], 'date': r['date'], 'label': r['station'],
+                             'sub': f"{r['gallons']} gal — ${r['cost']}"} for r in rows]
+
+    # Supplies / parts
+    base = 'FROM supplies WHERE (LOWER(name) LIKE ? OR LOWER(part_number) LIKE ? OR LOWER(brand) LIKE ? OR LOWER(notes) LIKE ? OR LOWER(category) LIKE ?)'
+    params = (like, like, like, like, like)
+    if vehicle_id:
+        base += ' AND vehicle_id = ?'
+        params += (vehicle_id,)
+    rows = db.execute(f'SELECT id, name, brand, part_number, quantity {base} ORDER BY name LIMIT 10', params).fetchall()
+    if rows:
+        results['supplies'] = [{'id': r['id'], 'label': r['name'],
+                                 'sub': ' '.join(filter(None, [r['brand'], r['part_number']])),
+                                 'qty': r['quantity']} for r in rows]
+
+    # Reminders
+    base = 'FROM service_reminders WHERE (LOWER(service_type) LIKE ? OR LOWER(notes) LIKE ?)'
+    params = (like, like)
+    if vehicle_id:
+        base += ' AND vehicle_id = ?'
+        params += (vehicle_id,)
+    rows = db.execute(f'SELECT id, service_type, due_date, notes, completed {base} ORDER BY completed, due_date LIMIT 10', params).fetchall()
+    if rows:
+        results['reminders'] = [{'id': r['id'], 'label': r['service_type'],
+                                  'sub': r['due_date'] or '', 'completed': r['completed']} for r in rows]
+
+    # Documents
+    base = 'FROM documents WHERE (LOWER(title) LIKE ? OR LOWER(category) LIKE ? OR LOWER(notes) LIKE ?)'
+    params = (like, like, like)
+    if vehicle_id:
+        base += ' AND vehicle_id = ?'
+        params += (vehicle_id,)
+    rows = db.execute(f'SELECT id, title, category, notes {base} ORDER BY created_at DESC LIMIT 10', params).fetchall()
+    if rows:
+        results['documents'] = [{'id': r['id'], 'label': r['title'],
+                                  'sub': r['category']} for r in rows]
+
+    # Tires
+    base = 'FROM tires WHERE (LOWER(brand) LIKE ? OR LOWER(model) LIKE ? OR LOWER(size) LIKE ? OR LOWER(notes) LIKE ?)'
+    params = (like, like, like, like)
+    if vehicle_id:
+        base += ' AND vehicle_id = ?'
+        params += (vehicle_id,)
+    rows = db.execute(f'SELECT id, brand, model, size, season {base} ORDER BY is_installed DESC LIMIT 10', params).fetchall()
+    if rows:
+        results['tires'] = [{'id': r['id'], 'label': f"{r['brand']} {r['model'] or ''}".strip(),
+                              'sub': ' '.join(filter(None, [r['size'], r['season']]))} for r in rows]
+
+    db.close()
+    return jsonify({'results': results, 'query': query})
+
+
 # Tire log endpoints
 @app.route('/api/tires', methods=['GET'])
 @login_required

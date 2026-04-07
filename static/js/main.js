@@ -570,3 +570,141 @@ function createMobileCard(title, fields, actions) {
     html += '</div>';
     return html;
 }
+
+// ============================================================
+// GLOBAL SEARCH
+// ============================================================
+
+let _searchDebounce = null;
+
+function openGlobalSearch() {
+    const overlay = document.getElementById('searchOverlay');
+    const input = document.getElementById('globalSearchInput');
+    if (!overlay) return;
+    overlay.classList.add('open');
+    setTimeout(() => input && input.focus(), 50);
+}
+
+function closeGlobalSearch() {
+    const overlay = document.getElementById('searchOverlay');
+    const input = document.getElementById('globalSearchInput');
+    const results = document.getElementById('searchResults');
+    if (!overlay) return;
+    overlay.classList.remove('open');
+    if (input) input.value = '';
+    if (results) results.innerHTML = '<div class="search-hint">Type at least 2 characters to search across all sections.</div>';
+}
+
+function handleSearchOverlayClick(e) {
+    if (e.target === document.getElementById('searchOverlay')) closeGlobalSearch();
+}
+
+function runGlobalSearch(query) {
+    const resultsEl = document.getElementById('searchResults');
+    if (!resultsEl) return;
+
+    if (!query || query.length < 2) {
+        resultsEl.innerHTML = '<div class="search-hint">Type at least 2 characters to search across all sections.</div>';
+        return;
+    }
+
+    resultsEl.innerHTML = '<div class="search-loading">Searching...</div>';
+
+    const vehicleId = getCurrentVehicleId();
+    const params = new URLSearchParams({ q: query });
+    if (vehicleId) params.append('vehicle_id', vehicleId);
+
+    fetch(`/api/search?${params}`)
+        .then(r => r.json())
+        .then(data => renderSearchResults(data.results, query))
+        .catch(() => {
+            resultsEl.innerHTML = '<div class="search-empty">Search failed. Please try again.</div>';
+        });
+}
+
+const SEARCH_SECTIONS = {
+    services:  { label: 'Service Records', url: '/services',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>' },
+    fuel:      { label: 'Fuel Records',    url: '/fuel',      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22V9l7-7 7 7v13"/><path d="M9 22V12h4v10"/></svg>' },
+    supplies:  { label: 'Parts & Supplies', url: '/supplies', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>' },
+    reminders: { label: 'Reminders',       url: '/reminders', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>' },
+    documents: { label: 'Documents',       url: '/documents', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' },
+    tires:     { label: 'Tires',           url: '/tires',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>' },
+};
+
+function renderSearchResults(results, query) {
+    const resultsEl = document.getElementById('searchResults');
+    if (!resultsEl) return;
+
+    const keys = Object.keys(results);
+    if (keys.length === 0) {
+        resultsEl.innerHTML = `<div class="search-empty">No results found for "<strong>${escapeHtml(query)}</strong>".</div>`;
+        return;
+    }
+
+    let html = '';
+    keys.forEach(section => {
+        const items = results[section];
+        if (!items || items.length === 0) return;
+        const meta = SEARCH_SECTIONS[section];
+        if (!meta) return;
+
+        html += `<div class="search-section">`;
+        html += `<div class="search-section-title">${meta.label}</div>`;
+
+        items.forEach(item => {
+            const sub = item.sub ? `<div class="search-result-sub">${escapeHtml(item.sub)}</div>` : '';
+            let badge = '';
+            if (section === 'reminders') {
+                badge = item.completed
+                    ? '<span class="search-result-badge badge-completed">Done</span>'
+                    : '<span class="search-result-badge badge-pending">Pending</span>';
+            } else if (section === 'services' && item.cost != null) {
+                badge = `<span class="search-result-sub" style="flex-shrink:0">$${parseFloat(item.cost).toFixed(2)}</span>`;
+            }
+
+            html += `<a class="search-result-item" href="${meta.url}" onclick="closeGlobalSearch()">
+                <div class="search-result-icon">${meta.icon}</div>
+                <div class="search-result-body">
+                    <div class="search-result-label">${escapeHtml(item.label)}</div>
+                    ${sub}
+                </div>
+                ${badge}
+            </a>`;
+        });
+
+        html += `</div>`;
+    });
+
+    resultsEl.innerHTML = html;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Wire up search input once DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('globalSearchInput');
+    if (!input) return;
+    input.addEventListener('input', () => {
+        clearTimeout(_searchDebounce);
+        _searchDebounce = setTimeout(() => runGlobalSearch(input.value.trim()), 280);
+    });
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeGlobalSearch();
+    });
+});
+
+// Keyboard shortcut: Ctrl+K / Cmd+K to open search
+document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        const overlay = document.getElementById('searchOverlay');
+        if (overlay && overlay.classList.contains('open')) {
+            closeGlobalSearch();
+        } else {
+            openGlobalSearch();
+        }
+    }
+});

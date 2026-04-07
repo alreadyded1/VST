@@ -1238,6 +1238,211 @@ body.mobile-view #recentServices table td:nth-child(2) { display: none; }
     #recentServices table td:nth-child(2) { display: none; }
 }
 
+/* ============================================================
+   GLOBAL SEARCH
+   ============================================================ */
+
+.topbar-search-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--bg);
+    color: var(--light-text);
+    border: 1px solid var(--border-color);
+    padding: 0.38rem 0.75rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-family: var(--font-family);
+    font-weight: 500;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.topbar-search-btn:hover {
+    background: var(--border-color);
+    color: var(--dark-text);
+}
+
+.topbar-search-label {
+    display: inline;
+}
+
+.search-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 500;
+    backdrop-filter: blur(2px);
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 80px;
+}
+
+.search-overlay.open {
+    display: flex;
+}
+
+.search-modal {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+    width: 100%;
+    max-width: 640px;
+    max-height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 0 1rem;
+}
+
+.search-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.9rem 1.1rem;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.search-icon-inline {
+    color: var(--light-text);
+    flex-shrink: 0;
+}
+
+.search-input-field {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 1rem;
+    font-family: var(--font-family);
+    color: var(--dark-text);
+    background: transparent;
+}
+
+.search-input-field::placeholder {
+    color: var(--light-text);
+}
+
+.search-close-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--light-text);
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+
+.search-close-btn:hover {
+    color: var(--dark-text);
+}
+
+.search-results {
+    overflow-y: auto;
+    flex: 1;
+    padding: 0.5rem 0;
+}
+
+.search-hint,
+.search-empty,
+.search-loading {
+    padding: 1.5rem 1.25rem;
+    color: var(--light-text);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.search-section {
+    margin-bottom: 0.25rem;
+}
+
+.search-section-title {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--light-text);
+    padding: 0.6rem 1.25rem 0.3rem;
+}
+
+.search-result-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.6rem 1.25rem;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.1s;
+}
+
+.search-result-item:hover {
+    background: var(--accent-light);
+}
+
+.search-result-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    background: var(--accent-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.search-result-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.search-result-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--dark-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.search-result-sub {
+    font-size: 0.775rem;
+    color: var(--light-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+
+.search-result-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 20px;
+    flex-shrink: 0;
+}
+
+.badge-completed {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--success-color);
+}
+
+.badge-pending {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning-color);
+}
+
+@media (max-width: 480px) {
+    .topbar-search-label { display: none; }
+    .search-overlay { padding-top: 60px; }
+}
+
 /* Date inputs should be compact, not full-width */
 body.mobile-view input[type="date"] {
     width: auto;
