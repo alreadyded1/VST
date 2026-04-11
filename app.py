@@ -1,10 +1,13 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash, make_response
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash, make_response, g
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import sqlite3
 import os
+import secrets
+import jwt
 from werkzeug.utils import secure_filename
 import json
 import csv
@@ -12,10 +15,15 @@ import io
 import requests
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'webp'}
+
+CORS(app, resources={r'/api/*': {'origins': '*'}}, supports_credentials=True)
 
 DATABASE = 'instance/vehicle_tracker.db'
 
@@ -56,6 +64,85 @@ def admin_required(f):
             return jsonify({'error': 'Admin privileges required'}), 403
         return f(*args, **kwargs)
     return decorated_function
+
+
+# ── JWT helpers ──────────────────────────────────────────────────────────────
+
+def _generate_access_token(user_id, username, is_admin):
+    payload = {
+        'sub': user_id,
+        'username': username,
+        'is_admin': bool(is_admin),
+        'iat': datetime.now(timezone.utc),
+        'exp': datetime.now(timezone.utc) + app.config['JWT_ACCESS_TOKEN_EXPIRES'],
+        'type': 'access',
+    }
+    return jwt.encode(payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
+
+
+def _generate_refresh_token(user_id):
+    token = secrets.token_urlsafe(48)
+    expires_at = datetime.now(timezone.utc) + app.config['JWT_REFRESH_TOKEN_EXPIRES']
+    db = get_db()
+    db.execute(
+        'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+        (user_id, token, expires_at.isoformat())
+    )
+    db.commit()
+    db.close()
+    return token
+
+
+def _get_jwt_user():
+    """Return a User from a Bearer token, or None."""
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth[7:]
+    try:
+        data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+        if data.get('type') != 'access':
+            return None
+        return User(data['sub'], data['username'], data['is_admin'])
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+
+def api_login_required(f):
+    """Accepts either a Flask-Login session (web) or a JWT Bearer token (iOS)."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        jwt_user = _get_jwt_user()
+        if jwt_user is not None:
+            g.jwt_user = jwt_user
+            return f(*args, **kwargs)
+        # Fall back to session-based auth
+        if not current_user.is_authenticated:
+            return jsonify({'error': 'Authentication required'}), 401
+        g.jwt_user = None
+        return f(*args, **kwargs)
+    return decorated
+
+
+def api_admin_required(f):
+    """Like api_login_required but also requires admin role."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        jwt_user = _get_jwt_user()
+        if jwt_user is not None:
+            if not jwt_user.is_admin:
+                return jsonify({'error': 'Admin privileges required'}), 403
+            g.jwt_user = jwt_user
+            return f(*args, **kwargs)
+        if not current_user.is_authenticated:
+            return jsonify({'error': 'Authentication required'}), 401
+        if not current_user.is_admin:
+            return jsonify({'error': 'Admin privileges required'}), 403
+        g.jwt_user = None
+        return f(*args, **kwargs)
+    return decorated
 
 def init_db():
     """Initialize database with schema"""
@@ -144,6 +231,15 @@ def init_db():
                 completed BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
             );
         ''')
 
@@ -535,8 +631,7 @@ def tires_page():
 
 # User Management APIs
 @app.route('/api/users', methods=['GET'])
-@login_required
-@admin_required
+@api_admin_required
 def get_users():
     """Get all users (admin only)"""
     db = get_db()
@@ -545,8 +640,7 @@ def get_users():
     return jsonify([dict(row) for row in users])
 
 @app.route('/api/users', methods=['POST'])
-@login_required
-@admin_required
+@api_admin_required
 def create_user():
     """Create new user (admin only)"""
     data = request.json
@@ -573,8 +667,7 @@ def create_user():
     return jsonify({'success': True, 'id': user_id})
 
 @app.route('/api/users/<int:user_id>', methods=['DELETE'])
-@login_required
-@admin_required
+@api_admin_required
 def delete_user(user_id):
     """Delete a user (admin only)"""
     if user_id == current_user.id:
@@ -587,8 +680,7 @@ def delete_user(user_id):
     return jsonify({'success': True})
 
 @app.route('/api/users/<int:user_id>/reset-password', methods=['POST'])
-@login_required
-@admin_required
+@api_admin_required
 def reset_user_password(user_id):
     """Reset user password (admin only)"""
     data = request.json
@@ -605,7 +697,7 @@ def reset_user_password(user_id):
     return jsonify({'success': True})
 
 @app.route('/api/change-password', methods=['POST'])
-@login_required
+@api_login_required
 def change_password():
     """Change own password"""
     data = request.json
@@ -628,9 +720,91 @@ def change_password():
     db.close()
     return jsonify({'success': True})
 
+# ── Token-based auth endpoints (for iOS / API clients) ───────────────────────
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    """Exchange credentials for access + refresh tokens."""
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    if not username or not password:
+        return jsonify({'error': 'username and password required'}), 400
+
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+    db.close()
+
+    if not user or not check_password_hash(user['password_hash'], password):
+        return jsonify({'error': 'Invalid credentials'}), 401
+
+    access_token = _generate_access_token(user['id'], user['username'], user['is_admin'])
+    refresh_token = _generate_refresh_token(user['id'])
+    return jsonify({
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+        'token_type': 'Bearer',
+        'expires_in': int(app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()),
+        'user': {'id': user['id'], 'username': user['username'], 'is_admin': bool(user['is_admin'])},
+    })
+
+
+@app.route('/api/auth/refresh', methods=['POST'])
+def api_refresh():
+    """Exchange a refresh token for a new access token."""
+    data = request.get_json(silent=True) or {}
+    refresh_token = data.get('refresh_token', '')
+    if not refresh_token:
+        return jsonify({'error': 'refresh_token required'}), 400
+
+    db = get_db()
+    row = db.execute(
+        'SELECT * FROM refresh_tokens WHERE token = ?', (refresh_token,)
+    ).fetchone()
+
+    if not row:
+        db.close()
+        return jsonify({'error': 'Invalid refresh token'}), 401
+
+    expires_at = datetime.fromisoformat(row['expires_at'])
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
+        db.execute('DELETE FROM refresh_tokens WHERE token = ?', (refresh_token,))
+        db.commit()
+        db.close()
+        return jsonify({'error': 'Refresh token expired'}), 401
+
+    user = db.execute('SELECT * FROM users WHERE id = ?', (row['user_id'],)).fetchone()
+    db.close()
+
+    if not user:
+        return jsonify({'error': 'User not found'}), 401
+
+    access_token = _generate_access_token(user['id'], user['username'], user['is_admin'])
+    return jsonify({
+        'access_token': access_token,
+        'token_type': 'Bearer',
+        'expires_in': int(app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()),
+    })
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_logout():
+    """Revoke a refresh token."""
+    data = request.get_json(silent=True) or {}
+    refresh_token = data.get('refresh_token', '')
+    if refresh_token:
+        db = get_db()
+        db.execute('DELETE FROM refresh_tokens WHERE token = ?', (refresh_token,))
+        db.commit()
+        db.close()
+    return jsonify({'success': True})
+
+
 # Vehicle endpoints
 @app.route('/api/vehicles', methods=['GET'])
-@login_required
+@api_login_required
 def get_vehicles():
     """Get all vehicles"""
     db = get_db()
@@ -639,7 +813,7 @@ def get_vehicles():
     return jsonify([dict(row) for row in vehicles])
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['GET'])
-@login_required
+@api_login_required
 def get_vehicle(vehicle_id):
     """Get specific vehicle profile"""
     db = get_db()
@@ -650,7 +824,7 @@ def get_vehicle(vehicle_id):
     return jsonify(None)
 
 @app.route('/api/vehicle', methods=['POST'])
-@login_required
+@api_login_required
 def add_vehicle():
     """Add new vehicle"""
     data = request.form
@@ -678,7 +852,7 @@ def add_vehicle():
     return jsonify({'success': True, 'id': vehicle_id})
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_vehicle(vehicle_id):
     """Update existing vehicle"""
     data = request.form
@@ -712,7 +886,7 @@ def update_vehicle(vehicle_id):
     return jsonify({'success': True})
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_vehicle(vehicle_id):
     """Delete a vehicle"""
     db = get_db()
@@ -728,7 +902,7 @@ def delete_vehicle(vehicle_id):
 
 # NHTSA API Integration endpoints
 @app.route('/api/vehicle/decode-vin/<vin>', methods=['GET'])
-@login_required
+@api_login_required
 def decode_vin(vin):
     """Decode VIN using NHTSA API"""
     try:
@@ -781,7 +955,7 @@ def decode_vin(vin):
         return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
 @app.route('/api/vehicle/recalls', methods=['GET'])
-@login_required
+@api_login_required
 def check_recalls():
     """Check for recalls using NHTSA API"""
     try:
@@ -848,7 +1022,7 @@ def check_recalls():
         return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
 @app.route('/api/vehicle/recalls-by-vin/<vin>', methods=['GET'])
-@login_required
+@api_login_required
 def check_recalls_by_vin(vin):
     """Check for recalls by VIN using NHTSA API"""
     try:
@@ -908,7 +1082,7 @@ def check_recalls_by_vin(vin):
         return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
 @app.route('/api/vehicle/recalls/create-reminders', methods=['POST'])
-@login_required
+@api_login_required
 def create_recall_reminders():
     """Create reminders for vehicle recalls"""
     try:
@@ -960,7 +1134,7 @@ def create_recall_reminders():
 
 # Service records endpoints
 @app.route('/api/services', methods=['GET'])
-@login_required
+@api_login_required
 def get_services():
     """Get all service records for a vehicle with optional pagination"""
     vehicle_id = request.args.get('vehicle_id')
@@ -1019,7 +1193,7 @@ def get_services():
         return jsonify([dict(row) for row in services])
 
 @app.route('/api/services/<int:service_id>', methods=['GET'])
-@login_required
+@api_login_required
 def get_service(service_id):
     """Get a specific service record"""
     db = get_db()
@@ -1038,7 +1212,7 @@ def get_service(service_id):
     return jsonify(None), 404
 
 @app.route('/api/services/search', methods=['GET'])
-@login_required
+@api_login_required
 def search_services():
     """Search service records"""
     query = request.args.get('q', '').lower()
@@ -1078,7 +1252,7 @@ def search_services():
     return jsonify([dict(row) for row in services])
 
 @app.route('/api/services', methods=['POST'])
-@login_required
+@api_login_required
 def add_service():
     """Add new service record"""
     data = request.form
@@ -1126,7 +1300,7 @@ def add_service():
     return jsonify({'success': True, 'id': service_id})
 
 @app.route('/api/services/<int:service_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_service(service_id):
     """Update existing service record"""
     data = request.form
@@ -1181,7 +1355,7 @@ def update_service(service_id):
     return jsonify({'success': True})
 
 @app.route('/api/services/<int:service_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_service(service_id):
     """Delete a service record"""
     db = get_db()
@@ -1193,7 +1367,7 @@ def delete_service(service_id):
 
 # CSV Export/Import endpoints for services
 @app.route('/api/services/export-csv', methods=['GET'])
-@login_required
+@api_login_required
 def export_services_csv():
     """Export service records to CSV"""
     try:
@@ -1262,7 +1436,7 @@ def export_services_csv():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/services/template-csv', methods=['GET'])
-@login_required
+@api_login_required
 def download_services_template():
     """Download a CSV template for importing service records"""
     output = io.StringIO()
@@ -1281,7 +1455,7 @@ def download_services_template():
     return response
 
 @app.route('/api/services/import-csv', methods=['POST'])
-@login_required
+@api_login_required
 def import_services_csv():
     """Import service records from CSV"""
     if 'file' not in request.files:
@@ -1353,7 +1527,7 @@ def import_services_csv():
 
 # Supplies endpoints
 @app.route('/api/supplies', methods=['GET'])
-@login_required
+@api_login_required
 def get_supplies():
     """Get all supplies for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -1368,7 +1542,7 @@ def get_supplies():
     return jsonify([dict(row) for row in supplies])
 
 @app.route('/api/supplies', methods=['POST'])
-@login_required
+@api_login_required
 def add_supply():
     """Add new supply/part"""
     data = request.form
@@ -1429,7 +1603,7 @@ def add_supply():
     return jsonify({'success': True, 'id': supply_id})
 
 @app.route('/api/supplies/<int:supply_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_supply(supply_id):
     """Update supply/part"""
     data = request.form
@@ -1511,7 +1685,7 @@ def update_supply(supply_id):
     return jsonify({'success': True})
 
 @app.route('/api/supplies/<int:supply_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_supply(supply_id):
     """Delete a supply"""
     db = get_db()
@@ -1521,7 +1695,7 @@ def delete_supply(supply_id):
     return jsonify({'success': True})
 
 @app.route('/api/supplies/export-csv', methods=['GET'])
-@login_required
+@api_login_required
 def export_supplies_csv():
     """Export supplies to CSV"""
     vehicle_id = request.args.get('vehicle_id')
@@ -1569,7 +1743,7 @@ def export_supplies_csv():
 
 # Fuel endpoints
 @app.route('/api/fuel', methods=['GET'])
-@login_required
+@api_login_required
 def get_fuel_records():
     """Get all fuel records for a vehicle with optional pagination"""
     vehicle_id = request.args.get('vehicle_id')
@@ -1612,7 +1786,7 @@ def get_fuel_records():
         return jsonify([dict(row) for row in records])
 
 @app.route('/api/fuel', methods=['POST'])
-@login_required
+@api_login_required
 def add_fuel_record():
     """Add new fuel record and calculate MPG"""
     data = request.json
@@ -1649,7 +1823,7 @@ def add_fuel_record():
     return jsonify({'success': True, 'id': record_id, 'mpg': mpg})
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['GET'])
-@login_required
+@api_login_required
 def get_fuel_record(fuel_id):
     """Get a specific fuel record"""
     db = get_db()
@@ -1661,7 +1835,7 @@ def get_fuel_record(fuel_id):
     return jsonify({'error': 'Fuel record not found'}), 404
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_fuel_record(fuel_id):
     """Update an existing fuel record"""
     data = request.json
@@ -1701,7 +1875,7 @@ def update_fuel_record(fuel_id):
     return jsonify({'success': True, 'mpg': mpg})
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_fuel_record(fuel_id):
     """Delete a fuel record"""
     db = get_db()
@@ -1712,7 +1886,7 @@ def delete_fuel_record(fuel_id):
 
 # CSV Export/Import endpoints for fuel records
 @app.route('/api/fuel/export-csv', methods=['GET'])
-@login_required
+@api_login_required
 def export_fuel_csv():
     """Export fuel records to CSV"""
     try:
@@ -1769,7 +1943,7 @@ def export_fuel_csv():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/fuel/template-csv', methods=['GET'])
-@login_required
+@api_login_required
 def download_fuel_template():
     """Download a CSV template for importing fuel records"""
     output = io.StringIO()
@@ -1789,7 +1963,7 @@ def download_fuel_template():
     return response
 
 @app.route('/api/fuel/import-csv', methods=['POST'])
-@login_required
+@api_login_required
 def import_fuel_csv():
     """Import fuel records from CSV"""
     if 'file' not in request.files:
@@ -1883,7 +2057,7 @@ def import_fuel_csv():
 
 # Service reminders endpoints
 @app.route('/api/reminders', methods=['GET'])
-@login_required
+@api_login_required
 def get_reminders():
     """Get all service reminders for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -1898,7 +2072,7 @@ def get_reminders():
     return jsonify([dict(row) for row in reminders])
 
 @app.route('/api/reminders', methods=['POST'])
-@login_required
+@api_login_required
 def add_reminder():
     """Add new service reminder"""
     data = request.json
@@ -1920,7 +2094,7 @@ def add_reminder():
     return jsonify({'success': True, 'id': reminder_id})
 
 @app.route('/api/reminders/<int:reminder_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_reminder(reminder_id):
     """Update reminder completion status"""
     data = request.json
@@ -1932,7 +2106,7 @@ def update_reminder(reminder_id):
     return jsonify({'success': True})
 
 @app.route('/api/reminders/<int:reminder_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_reminder(reminder_id):
     """Delete a reminder"""
     db = get_db()
@@ -1943,7 +2117,7 @@ def delete_reminder(reminder_id):
 
 # Dashboard stats
 @app.route('/api/stats', methods=['GET'])
-@login_required
+@api_login_required
 def get_stats():
     """Get dashboard statistics for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -1989,8 +2163,7 @@ def get_stats():
 
 # Settings API
 @app.route('/api/settings', methods=['GET'])
-@login_required
-@admin_required
+@api_admin_required
 def get_settings():
     """Get all settings"""
     return jsonify({
@@ -1998,8 +2171,7 @@ def get_settings():
     })
 
 @app.route('/api/settings', methods=['POST'])
-@login_required
-@admin_required
+@api_admin_required
 def update_settings():
     """Update settings"""
     data = request.json
@@ -2009,7 +2181,7 @@ def update_settings():
 
 # Documents API
 @app.route('/api/documents', methods=['GET'])
-@login_required
+@api_login_required
 def get_documents():
     """Get all documents for a vehicle"""
     vehicle_id = request.args.get('vehicle_id')
@@ -2024,7 +2196,7 @@ def get_documents():
     return jsonify([dict(row) for row in docs])
 
 @app.route('/api/documents', methods=['POST'])
-@login_required
+@api_login_required
 def add_document():
     """Add a new document"""
     data = request.form
@@ -2057,7 +2229,7 @@ def add_document():
     return jsonify({'success': True, 'id': doc_id})
 
 @app.route('/api/documents/<int:doc_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_document(doc_id):
     """Update a document's title, category, and notes"""
     data = request.json
@@ -2071,7 +2243,7 @@ def update_document(doc_id):
     return jsonify({'success': True})
 
 @app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_document(doc_id):
     """Delete a document and its file"""
     db = get_db()
@@ -2088,7 +2260,7 @@ def delete_document(doc_id):
 
 # Global search endpoint
 @app.route('/api/search', methods=['GET'])
-@login_required
+@api_login_required
 def global_search():
     """Search across all sections for the selected vehicle"""
     query = request.args.get('q', '').strip()
@@ -2174,7 +2346,7 @@ def global_search():
 
 # Tire log endpoints
 @app.route('/api/tires', methods=['GET'])
-@login_required
+@api_login_required
 def get_tires():
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
@@ -2186,7 +2358,7 @@ def get_tires():
     return jsonify([dict(t) for t in tires])
 
 @app.route('/api/tires', methods=['POST'])
-@login_required
+@api_login_required
 def add_tire():
     data = request.json
     vehicle_id = data.get('vehicle_id')
@@ -2208,7 +2380,7 @@ def add_tire():
     return jsonify({'success': True, 'id': cursor.lastrowid})
 
 @app.route('/api/tires/<int:tire_id>', methods=['PUT'])
-@login_required
+@api_login_required
 def update_tire(tire_id):
     data = request.json
     db = get_db()
@@ -2225,7 +2397,7 @@ def update_tire(tire_id):
     return jsonify({'success': True})
 
 @app.route('/api/tires/<int:tire_id>/install', methods=['POST'])
-@login_required
+@api_login_required
 def install_tire(tire_id):
     """Mark a tire set as currently installed (uninstalls others for the same vehicle)"""
     data = request.json or {}
@@ -2247,7 +2419,7 @@ def install_tire(tire_id):
     return jsonify({'success': True})
 
 @app.route('/api/tires/<int:tire_id>/uninstall', methods=['POST'])
-@login_required
+@api_login_required
 def uninstall_tire(tire_id):
     data = request.json or {}
     date = data.get('date')
@@ -2267,7 +2439,7 @@ def uninstall_tire(tire_id):
     return jsonify({'success': True})
 
 @app.route('/api/tire-install-log', methods=['GET'])
-@login_required
+@api_login_required
 def get_tire_install_log():
     vehicle_id = request.args.get('vehicle_id')
     tire_id = request.args.get('tire_id')
@@ -2293,7 +2465,7 @@ def get_tire_install_log():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/tires/<int:tire_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_tire(tire_id):
     db = get_db()
     db.execute('DELETE FROM tread_readings WHERE tire_id = ?', (tire_id,))
@@ -2303,7 +2475,7 @@ def delete_tire(tire_id):
     return jsonify({'success': True})
 
 @app.route('/api/tire-rotations', methods=['GET'])
-@login_required
+@api_login_required
 def get_tire_rotations():
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
@@ -2320,7 +2492,7 @@ def get_tire_rotations():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/tire-rotations', methods=['POST'])
-@login_required
+@api_login_required
 def add_tire_rotation():
     data = request.json
     vehicle_id = data.get('vehicle_id')
@@ -2336,7 +2508,7 @@ def add_tire_rotation():
     return jsonify({'success': True, 'id': cursor.lastrowid})
 
 @app.route('/api/tire-rotations/<int:rotation_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_tire_rotation(rotation_id):
     db = get_db()
     db.execute('DELETE FROM tire_rotations WHERE id = ?', (rotation_id,))
@@ -2345,7 +2517,7 @@ def delete_tire_rotation(rotation_id):
     return jsonify({'success': True})
 
 @app.route('/api/tread-readings', methods=['GET'])
-@login_required
+@api_login_required
 def get_tread_readings():
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
@@ -2362,7 +2534,7 @@ def get_tread_readings():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/tread-readings', methods=['POST'])
-@login_required
+@api_login_required
 def add_tread_reading():
     data = request.json
     vehicle_id = data.get('vehicle_id')
@@ -2382,7 +2554,7 @@ def add_tread_reading():
     return jsonify({'success': True, 'id': cursor.lastrowid})
 
 @app.route('/api/tread-readings/<int:reading_id>', methods=['DELETE'])
-@login_required
+@api_login_required
 def delete_tread_reading(reading_id):
     db = get_db()
     db.execute('DELETE FROM tread_readings WHERE id = ?', (reading_id,))
