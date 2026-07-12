@@ -84,8 +84,11 @@ function formatCurrency(amount) {
     }).format(amount);
 }
 
-// Format date for display
 function formatDate(dateString) {
+    // Guard against null/undefined/empty warranty dates
+    if (!dateString) {
+        return 'N/A';
+    }
     // Parse date string directly without Date object to avoid any timezone issues
     const [year, month, day] = dateString.split('-');
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
