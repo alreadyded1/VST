@@ -356,6 +356,7 @@ function getWarrantyStatus(supply) {
         const startDate = new Date(supply.warranty_start_date);
         const expirationDate = new Date(startDate);
         expirationDate.setMonth(expirationDate.getMonth() + supply.warranty_months);
+        const expirationDateStr = expirationDate.toISOString().split('T')[0];
 
         const now = new Date();
         timeDaysRemaining = Math.floor((expirationDate - now) / (1000 * 60 * 60 * 24));
@@ -364,9 +365,9 @@ function getWarrantyStatus(supply) {
             timeExpired = true;
             timeStatus = `<span style="color: var(--danger-color);">Time: Expired</span>`;
         } else if (timeDaysRemaining < 30) {
-            timeStatus = `<span style="color: var(--warning-color);">Time: Expires ${formatDate(expirationDate)}</span>`;
+            timeStatus = `<span style="color: var(--warning-color);">Time: Expires ${formatDate(expirationDateStr)}</span>`;
         } else {
-            timeStatus = `<span style="color: var(--success-color);">Time: Valid until ${formatDate(expirationDate)}</span>`;
+            timeStatus = `<span style="color: var(--success-color);">Time: Valid until ${formatDate(expirationDateStr)}</span>`;
         }
     }
 
