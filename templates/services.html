@@ -276,6 +276,12 @@ let filteredServices = [];
 let availableSupplies = [];
 let currentEditServiceId = null;
 let selectedSupplies = []; // Track supplies to be used in this service
+// Snapshot of supply_id -> quantity_used as originally loaded from the service
+// being edited. Saving will return these amounts to inventory before applying
+// the new list, so they count toward what's "available" while editing -- this
+// stays fixed for the whole edit session regardless of how many times the user
+// adjusts selectedSupplies, so the effective cap doesn't creep with each edit.
+let originalServiceSupplies = {};
 let currentPage = 1;
 const itemsPerPage = 15;
 
@@ -359,13 +365,21 @@ function addSupplyToList() {
         return;
     }
 
-    if (quantity > maxQty) {
-        showAlert(`Only ${maxQty} ${selectedOption.dataset.supplyUnit} available`, 'warning');
+    // Check if supply already added
+    const existingIndex = selectedSupplies.findIndex(s => s.id === supplyId);
+
+    // If this supply was originally reserved on the service being edited, that
+    // amount will be returned to stock on save, so it counts toward what's
+    // available now. Use the frozen original amount, not the live in-progress
+    // quantity, so the cap doesn't creep up if the user adjusts it more than once.
+    const alreadyReserved = originalServiceSupplies[supplyId] || 0;
+    const effectiveMax = maxQty + alreadyReserved;
+
+    if (quantity > effectiveMax) {
+        showAlert(`Only ${effectiveMax} ${selectedOption.dataset.supplyUnit} available`, 'warning');
         return;
     }
 
-    // Check if supply already added
-    const existingIndex = selectedSupplies.findIndex(s => s.id === supplyId);
     if (existingIndex >= 0) {
         selectedSupplies[existingIndex].quantity = quantity;
     } else {
@@ -540,8 +554,19 @@ async function editService(serviceId) {
 
         currentEditServiceId = serviceId;
 
-        // Clear supplies list when editing
-        clearSuppliesList();
+        // Pre-populate the supplies list with the parts already linked to this
+        // service, so saving without touching them keeps them on the record
+        // instead of silently dropping them.
+        selectedSupplies = (service.supplies || []).map(s => ({
+            id: s.id,
+            name: s.name,
+            quantity: s.quantity,
+            cost: s.cost,
+            unit: s.unit
+        }));
+        originalServiceSupplies = {};
+        selectedSupplies.forEach(s => { originalServiceSupplies[s.id] = s.quantity; });
+        updateSuppliesList();
 
         // Populate form
         document.getElementById('serviceDate').value = service.date;
@@ -562,6 +587,7 @@ async function editService(serviceId) {
 
 function openAddServiceModal() {
     clearSuppliesList();
+    originalServiceSupplies = {};
     document.getElementById('serviceForm').reset();
     document.getElementById('receiptPreview').textContent = '';
     document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';

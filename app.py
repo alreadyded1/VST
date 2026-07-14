@@ -1206,10 +1206,22 @@ def get_service(service_id):
         WHERE s.id = ?
         GROUP BY s.id
     ''', (service_id,)).fetchone()
+
+    if not service:
+        db.close()
+        return jsonify(None), 404
+
+    supplies_used = db.execute('''
+        SELECT sup.id, sup.name, sup.cost, ss.quantity_used as quantity
+        FROM service_supplies ss
+        JOIN supplies sup ON ss.supply_id = sup.id
+        WHERE ss.service_id = ?
+    ''', (service_id,)).fetchall()
     db.close()
-    if service:
-        return jsonify(dict(service))
-    return jsonify(None), 404
+
+    result = dict(service)
+    result['supplies'] = [dict(row) for row in supplies_used]
+    return jsonify(result)
 
 @app.route('/api/services/search', methods=['GET'])
 @api_login_required
@@ -1319,6 +1331,15 @@ def update_service(service_id):
 
     db = get_db()
 
+    # Return previously used supplies to inventory before replacing the list,
+    # so editing a service doesn't permanently drain stock that was never removed
+    old_supplies = db.execute(
+        'SELECT supply_id, quantity_used FROM service_supplies WHERE service_id = ?',
+        (service_id,)).fetchall()
+    for old_supply in old_supplies:
+        db.execute('UPDATE supplies SET quantity = quantity + ? WHERE id = ?',
+                  (old_supply['quantity_used'], old_supply['supply_id']))
+
     # Delete existing service_supplies entries
     db.execute('DELETE FROM service_supplies WHERE service_id = ?', (service_id,))
 
@@ -1359,6 +1380,15 @@ def update_service(service_id):
 def delete_service(service_id):
     """Delete a service record"""
     db = get_db()
+
+    # Return used supplies to inventory before removing the service
+    used_supplies = db.execute(
+        'SELECT supply_id, quantity_used FROM service_supplies WHERE service_id = ?',
+        (service_id,)).fetchall()
+    for used_supply in used_supplies:
+        db.execute('UPDATE supplies SET quantity = quantity + ? WHERE id = ?',
+                  (used_supply['quantity_used'], used_supply['supply_id']))
+
     db.execute('DELETE FROM service_supplies WHERE service_id = ?', (service_id,))
     db.execute('DELETE FROM service_records WHERE id = ?', (service_id,))
     db.commit()
