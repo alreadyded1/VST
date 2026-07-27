@@ -204,6 +204,7 @@ def init_db():
                 quantity INTEGER NOT NULL,
                 warranty_start_date DATE,
                 warranty_months INTEGER,
+                warranty_lifetime BOOLEAN DEFAULT 0,
                 receipt_path TEXT,
                 remind_to_reorder BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -308,6 +309,14 @@ def init_db():
             except sqlite3.OperationalError:
                 # Column already exists
                 pass
+
+        # Migration: Add lifetime warranty flag to supplies table
+        try:
+            db.execute('ALTER TABLE supplies ADD COLUMN warranty_lifetime BOOLEAN DEFAULT 0')
+            db.commit()
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
 
         # Migration: Add parts tracking columns to supplies table
         parts_tracking_migrations = [
@@ -1609,21 +1618,24 @@ def add_supply():
     # Get remind_to_reorder checkbox value (defaults to False if not checked)
     remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
 
+    # Get warranty_lifetime checkbox value (defaults to False if not checked)
+    warranty_lifetime = 1 if data.get('warranty_lifetime') == 'on' else 0
+
     db = get_db()
     cursor = db.execute('''INSERT INTO supplies
                           (vehicle_id, name, part_number, brand, cost, quantity,
                            warranty_start_date, warranty_months, warranty_start_mileage,
-                           warranty_mileage_limit, receipt_path, remind_to_reorder,
+                           warranty_mileage_limit, warranty_lifetime, receipt_path, remind_to_reorder,
                            category, location, condition, supplier, purchase_date,
                            installation_date, notes)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['name'], data.get('part_number', ''),
                         data.get('brand', ''), data['cost'], data['quantity'],
                         data.get('warranty_start_date', None),
                         int(data['warranty_months']) if data.get('warranty_months') else None,
                         int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                         int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                        receipt_path, remind_to_reorder,
+                        warranty_lifetime, receipt_path, remind_to_reorder,
                         data.get('category', ''), data.get('location', ''),
                         data.get('condition', 'New'), data.get('supplier', ''),
                         data.get('purchase_date', None), data.get('installation_date', None),
@@ -1666,6 +1678,9 @@ def update_supply(supply_id):
     # Get remind_to_reorder checkbox value (defaults to False if not checked)
     remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
 
+    # Get warranty_lifetime checkbox value (defaults to False if not checked)
+    warranty_lifetime = 1 if data.get('warranty_lifetime') == 'on' else 0
+
     db = get_db()
 
     # Get current supply for vehicle_id
@@ -1677,7 +1692,7 @@ def update_supply(supply_id):
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
                          warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                         warranty_mileage_limit=?, receipt_path=?, remind_to_reorder=?,
+                         warranty_mileage_limit=?, warranty_lifetime=?, receipt_path=?, remind_to_reorder=?,
                          category=?, location=?, condition=?, supplier=?, purchase_date=?,
                          installation_date=?, notes=?
                      WHERE id=?''',
@@ -1687,7 +1702,7 @@ def update_supply(supply_id):
                    int(data['warranty_months']) if data.get('warranty_months') else None,
                    int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                    int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   receipt_path, remind_to_reorder,
+                   warranty_lifetime, receipt_path, remind_to_reorder,
                    data.get('category', ''), data.get('location', ''),
                    data.get('condition', 'New'), data.get('supplier', ''),
                    data.get('purchase_date', None), data.get('installation_date', None),
@@ -1696,7 +1711,7 @@ def update_supply(supply_id):
         db.execute('''UPDATE supplies
                      SET name=?, part_number=?, brand=?, cost=?, quantity=?,
                          warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                         warranty_mileage_limit=?, remind_to_reorder=?,
+                         warranty_mileage_limit=?, warranty_lifetime=?, remind_to_reorder=?,
                          category=?, location=?, condition=?, supplier=?, purchase_date=?,
                          installation_date=?, notes=?
                      WHERE id=?''',
@@ -1706,7 +1721,7 @@ def update_supply(supply_id):
                    int(data['warranty_months']) if data.get('warranty_months') else None,
                    int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                    int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   remind_to_reorder,
+                   warranty_lifetime, remind_to_reorder,
                    data.get('category', ''), data.get('location', ''),
                    data.get('condition', 'New'), data.get('supplier', ''),
                    data.get('purchase_date', None), data.get('installation_date', None),

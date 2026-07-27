@@ -153,6 +153,13 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="warrantyLifetime" name="warranty_lifetime" style="width: auto; margin: 0;" onchange="toggleLifetimeWarranty()">
+                    <span>Lifetime Warranty (never expires)</span>
+                </label>
+            </div>
+
             <div class="form-row">
                 <div class="form-group">
                     <label for="warrantyStartDate">Warranty Start Date</label>
@@ -336,8 +343,22 @@ let currentOdometer = null;
 let currentSuppliesPage = 1;
 const suppliesItemsPerPage = 15;
 
+// Disable expiration fields when Lifetime Warranty is checked
+function toggleLifetimeWarranty() {
+    const lifetime = document.getElementById('warrantyLifetime').checked;
+    ['warrantyMonths', 'warrantyMileageLimit'].forEach(id => {
+        const el = document.getElementById(id);
+        el.disabled = lifetime;
+        if (lifetime) el.value = '';
+    });
+}
+
 // Calculate warranty status
 function getWarrantyStatus(supply) {
+    if (supply.warranty_lifetime) {
+        return '<span style="color: var(--success-color);">Lifetime</span>';
+    }
+
     const hasTimeWarranty = supply.warranty_start_date && supply.warranty_months;
     const hasMileageWarranty = supply.warranty_start_mileage && supply.warranty_mileage_limit;
 
@@ -571,7 +592,9 @@ function viewSupply(supplyId) {
         document.getElementById('viewWarrantyStartDate').textContent = 'N/A';
     }
 
-    if (supply.warranty_months) {
+    if (supply.warranty_lifetime) {
+        document.getElementById('viewWarrantyMonths').textContent = 'Lifetime';
+    } else if (supply.warranty_months) {
         document.getElementById('viewWarrantyMonths').textContent = `${supply.warranty_months} months`;
     } else {
         document.getElementById('viewWarrantyMonths').textContent = 'N/A';
@@ -633,6 +656,7 @@ async function addSupply(event) {
 
         if (result.success) {
             form.reset();
+            toggleLifetimeWarranty();
             document.getElementById('editSupplyId').value = '';
             document.getElementById('receiptPreview').textContent = '';
 
@@ -663,6 +687,8 @@ function editSupply(supplyId) {
     document.getElementById('warrantyMonths').value = supply.warranty_months || '';
     document.getElementById('warrantyStartMileage').value = supply.warranty_start_mileage || '';
     document.getElementById('warrantyMileageLimit').value = supply.warranty_mileage_limit || '';
+    document.getElementById('warrantyLifetime').checked = supply.warranty_lifetime ? true : false;
+    toggleLifetimeWarranty();
     document.getElementById('remindToReorder').checked = supply.remind_to_reorder ? true : false;
     document.getElementById('supplyCategory').value = supply.category || '';
     document.getElementById('supplyLocation').value = supply.location || '';
@@ -727,6 +753,6 @@ document.addEventListener('click', () => {
     });
 });
 
-document.addEventListener('DOMContentLoaded', loadSupplies);
+appReady.then(loadSupplies);
 </script>
 {% endblock %}

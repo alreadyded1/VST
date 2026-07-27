@@ -407,11 +407,13 @@ let vehicleId = null;
 let tiresData = [];
 
 document.addEventListener('DOMContentLoaded', () => {
-    const saved = localStorage.getItem('currentVehicleId');
-    if (saved) {
-        vehicleId = saved;
-        loadAll();
-    }
+    appReady.then(() => {
+        const saved = localStorage.getItem('currentVehicleId');
+        if (saved) {
+            vehicleId = saved;
+            loadAll();
+        }
+    });
     document.addEventListener('vehicleChanged', e => {
         vehicleId = e.detail;
         loadAll();
