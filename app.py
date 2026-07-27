@@ -25,6 +25,17 @@ app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'webp'}
 
 CORS(app, resources={r'/api/*': {'origins': '*'}}, supports_credentials=True)
 
+@app.context_processor
+def inject_static_version():
+    """Version static asset URLs by file mtime so browsers cache them
+    until the file actually changes."""
+    def static_v(filename):
+        try:
+            return int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+        except OSError:
+            return 0
+    return {'static_v': static_v}
+
 DATABASE = 'instance/vehicle_tracker.db'
 
 # Flask-Login setup
@@ -471,12 +482,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS tire_rotations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 vehicle_id INTEGER NOT NULL,
+                tire_id INTEGER,
                 date TEXT NOT NULL,
                 odometer INTEGER,
                 pattern TEXT,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id)
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id),
+                FOREIGN KEY (tire_id) REFERENCES tires(id)
             )
         ''')
         db.execute('''

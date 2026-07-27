@@ -269,38 +269,6 @@ body {
     flex: 1;
 }
 
-.view-toggle {
-    background: var(--bg);
-    color: var(--light-text);
-    border: 1px solid var(--border-color);
-    padding: 0.38rem 0.85rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.78rem;
-    font-family: var(--font-family);
-    font-weight: 500;
-    transition: all 0.15s;
-    white-space: nowrap;
-}
-
-.view-toggle:hover {
-    background: var(--border-color);
-    color: var(--dark-text);
-}
-
-/* Mobile view — show hamburger + brand, hide spacer */
-body.mobile-view .topbar-hamburger { display: flex; }
-body.mobile-view .topbar-brand     { display: block; }
-body.mobile-view .topbar-spacer    { display: none; }
-
-/* Mobile view — collapse sidebar */
-body.mobile-view .sidebar { transform: translateX(-100%); }
-body.mobile-view .sidebar.open {
-    transform: translateX(0);
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.3);
-}
-body.mobile-view .main-wrapper { margin-left: 0; }
-
 /* ============================================================
    CONTAINER
    ============================================================ */
@@ -801,11 +769,11 @@ table tbody tr:hover { background: #fafbff; }
    MOBILE CARDS
    ============================================================ */
 
+/* Hidden on desktop; shown under the 768px media query below.
+   Tables in a .table-container.has-mobile-cards are replaced by
+   cards on small screens; all other tables stay visible and
+   scroll horizontally inside .table-container. */
 .mobile-cards { display: none; }
-
-body.mobile-view .mobile-cards         { display: block !important; }
-body.mobile-view .table-container table { display: none !important; }
-body.desktop-view .mobile-cards        { display: none !important; }
 
 .mobile-card {
     background: var(--card-bg);
@@ -883,18 +851,16 @@ body.desktop-view .mobile-cards        { display: none !important; }
    SHOW / HIDE MOBILE
    ============================================================ */
 
-.show-mobile { display: none !important; }
-body.mobile-view .show-mobile  { display: flex !important; }
-body.desktop-view .show-mobile { display: none !important; }
+.show-mobile { display: none; }
 
 .hide-mobile { display: block; }
-body.mobile-view .hide-mobile { display: none !important; }
 
 /* ============================================================
    BOTTOM NAV
    ============================================================ */
 
-body.mobile-view .bottom-nav {
+.bottom-nav {
+    display: none;
     position: fixed;
     bottom: 0;
     left: 0;
@@ -903,7 +869,6 @@ body.mobile-view .bottom-nav {
     border-top: 1px solid var(--border-color);
     padding: 0.35rem 0;
     z-index: 99;
-    display: flex;
     justify-content: space-around;
     align-items: center;
     box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
@@ -939,113 +904,15 @@ body.mobile-view .bottom-nav {
 }
 
 /* ============================================================
-   MOBILE VIEW ADJUSTMENTS
-   ============================================================ */
-
-body.mobile-view {
-    padding-bottom: 72px;
-    font-size: 16px;
-}
-
-body.mobile-view .container {
-    padding: 1rem 1rem 2rem;
-    overflow-x: hidden;
-    max-width: 100vw;
-}
-
-body.mobile-view .card {
-    border-radius: 8px;
-    padding: 1rem;
-}
-
-body.mobile-view .card h2 {
-    font-size: 1.05rem;
-}
-
-body.mobile-view .stats-grid {
-    grid-template-columns: 1fr 1fr !important;
-    gap: 0.75rem;
-}
-
-body.mobile-view .stat-card h3 {
-    font-size: 0.75rem;
-}
-
-body.mobile-view .stat-card .stat-value {
-    font-size: 1.6rem;
-}
-
-body.mobile-view .form-row {
-    grid-template-columns: 1fr;
-}
-
-body.mobile-view .vehicle-profile {
-    grid-template-columns: 1fr;
-}
-
-body.mobile-view input,
-body.mobile-view select,
-body.mobile-view textarea {
-    font-size: 16px; /* prevents iOS zoom */
-    min-height: 44px;
-}
-
-body.mobile-view .btn {
-    min-height: 42px;
-    font-size: 0.9rem;
-}
-
-body.mobile-view .btn-small {
-    min-height: 36px;
-    font-size: 0.82rem;
-}
-
-body.mobile-view .mobile-card-header h4 {
-    font-size: 1rem;
-}
-
-body.mobile-view .mobile-card-label {
-    font-size: 0.8rem;
-}
-
-body.mobile-view .mobile-card-value {
-    font-size: 0.95rem;
-}
-
-body.mobile-view table {
-    font-size: 0.9rem;
-}
-
-body.mobile-view .modal-content {
-    margin: 0;
-    width: 100%;
-    max-width: 100%;
-    min-height: 100vh;
-    border-radius: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-body.mobile-view .modal-header {
-    position: sticky;
-    top: 0;
-    background: var(--card-bg);
-    z-index: 10;
-}
-
-body.mobile-view .modal-content form { flex: 1; }
-
-body.mobile-view .flex-between {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.75rem;
-}
-
-/* ============================================================
-   ACTUAL SMALL SCREENS (real mobile browsers)
+   SMALL SCREENS
    ============================================================ */
 
 @media (max-width: 768px) {
+    body {
+        padding-bottom: 72px; /* room for bottom nav */
+        font-size: 16px;
+    }
+
     .sidebar { transform: translateX(-100%); }
     .sidebar.open {
         transform: translateX(0);
@@ -1054,36 +921,64 @@ body.mobile-view .flex-between {
 
     .main-wrapper { margin-left: 0; }
 
-    .topbar-hamburger { display: flex !important; }
-    .topbar-brand     { display: block !important; flex: 1; }
-    .topbar-spacer    { display: none !important; }
+    .topbar-hamburger { display: flex; }
+    .topbar-brand     { display: block; flex: 1; }
+    .topbar-spacer    { display: none; }
 
-    body { padding-bottom: 70px; }
+    .bottom-nav,
+    .show-mobile { display: flex; }
+    /* !important so it also wins over inline display styles */
+    .hide-mobile { display: none !important; }
 
-    .bottom-nav {
-        display: flex !important;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: var(--card-bg);
-        border-top: 1px solid var(--border-color);
-        padding: 0.35rem 0;
-        z-index: 99;
-        justify-content: space-around;
-        align-items: center;
+    .mobile-cards { display: block; }
+    .table-container.has-mobile-cards { display: none; }
+
+    .container {
+        padding: 1rem 1rem 2rem;
+        overflow-x: hidden;
+        max-width: 100vw;
     }
 
-    .container { padding: 1rem 1rem 2rem; overflow-x: hidden; max-width: 100vw; }
+    .card {
+        border-radius: 8px;
+        padding: 1rem;
+    }
 
-    .stats-grid { grid-template-columns: 1fr 1fr !important; }
+    .card h2 { font-size: 1.05rem; }
+
+    .stats-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+    }
+
+    .stats-grid > * { min-width: 0; }
+
+    .stat-card h3 { font-size: 0.75rem; }
+    .stat-card .stat-value { font-size: 1.6rem; }
+
     .vehicle-profile { grid-template-columns: 1fr; }
     .form-row { grid-template-columns: 1fr; }
 
     input, select, textarea {
-        font-size: 16px !important;
+        font-size: 16px !important; /* prevents iOS zoom */
         min-height: 44px;
     }
+
+    .btn {
+        min-height: 42px;
+        font-size: 0.9rem;
+    }
+
+    .btn-small {
+        min-height: 36px;
+        font-size: 0.82rem;
+    }
+
+    .mobile-card-header h4 { font-size: 1rem; }
+    .mobile-card-label { font-size: 0.8rem; }
+    .mobile-card-value { font-size: 0.95rem; }
+
+    table { font-size: 0.9rem; }
 
     .modal-content {
         margin: 0;
@@ -1091,6 +986,23 @@ body.mobile-view .flex-between {
         max-width: 100%;
         min-height: 100vh;
         border-radius: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal-header {
+        position: sticky;
+        top: 0;
+        background: var(--card-bg);
+        z-index: 10;
+    }
+
+    .modal-content form { flex: 1; }
+
+    .flex-between {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
     }
 }
 
@@ -1222,7 +1134,7 @@ body.mobile-view .flex-between {
    ============================================================ */
 
 @media (min-width: 1400px) {
-    body.desktop-view .container { max-width: 1300px; }
+    .container { max-width: 1300px; }
 }
 
 /* ============================================================
@@ -1230,9 +1142,6 @@ body.mobile-view .flex-between {
    ============================================================ */
 
 /* Hide Service Provider column on dashboard recent-services table */
-body.mobile-view #recentServices table th:nth-child(2),
-body.mobile-view #recentServices table td:nth-child(2) { display: none; }
-
 @media (max-width: 768px) {
     #recentServices table th:nth-child(2),
     #recentServices table td:nth-child(2) { display: none; }
@@ -1444,11 +1353,6 @@ body.mobile-view #recentServices table td:nth-child(2) { display: none; }
 }
 
 /* Date inputs should be compact, not full-width */
-body.mobile-view input[type="date"] {
-    width: auto;
-    max-width: 100%;
-}
-
 @media (max-width: 768px) {
     input[type="date"] {
         width: auto !important;

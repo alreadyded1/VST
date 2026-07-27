@@ -1,42 +1,5 @@
 // Global utilities and common functions
 
-// View mode toggle
-function toggleView() {
-    const body = document.body;
-    const button = document.querySelector('.view-toggle');
-
-    if (body.classList.contains('mobile-view')) {
-        body.classList.remove('mobile-view');
-        body.classList.add('desktop-view');
-        button.textContent = 'Switch to Mobile';
-        localStorage.setItem('viewMode', 'desktop');
-        closeMobileMenu();
-    } else {
-        body.classList.remove('desktop-view');
-        body.classList.add('mobile-view');
-        button.textContent = 'Switch to Desktop';
-        localStorage.setItem('viewMode', 'mobile');
-        closeMobileMenu();
-    }
-}
-
-// Initialize view mode from localStorage
-function initViewMode() {
-    const savedMode = localStorage.getItem('viewMode') || 'desktop';
-    const body = document.body;
-    const button = document.querySelector('.view-toggle');
-
-    if (savedMode === 'mobile') {
-        body.classList.add('mobile-view');
-        body.classList.remove('desktop-view');
-        if (button) button.textContent = 'Switch to Desktop';
-    } else {
-        body.classList.add('desktop-view');
-        body.classList.remove('mobile-view');
-        if (button) button.textContent = 'Switch to Mobile';
-    }
-}
-
 // Set active navigation link
 function setActiveNav() {
     const currentPath = window.location.pathname;
@@ -338,7 +301,6 @@ function handleVehicleChange() {
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
-    initViewMode();
     setActiveNav();
     loadVehicleSelector();
 });

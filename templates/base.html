@@ -8,9 +8,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ range(1, 1000000) | random }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ static_v('css/style.css') }}">
 </head>
-<body class="desktop-view">
+<body>
 
     <!-- Mobile sidebar overlay -->
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileMenu()"></div>
@@ -152,7 +152,6 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <span class="topbar-search-label">Search</span>
             </button>
-            <button class="view-toggle" onclick="toggleView()">Switch to Mobile</button>
         </header>
 
         <main class="container">
@@ -210,7 +209,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}?v={{ range(1, 1000000) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v={{ static_v('js/main.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

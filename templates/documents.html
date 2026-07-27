@@ -316,12 +316,16 @@ document.addEventListener('DOMContentLoaded', loadDocuments);
     box-shadow: var(--shadow);
 }
 
-.desktop-view .documents-grid {
-    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+@media (min-width: 769px) {
+    .documents-grid {
+        grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    }
 }
 
-.mobile-view .documents-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 768px) {
+    .documents-grid {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 {% endblock %}
