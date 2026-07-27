@@ -471,12 +471,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS tire_rotations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 vehicle_id INTEGER NOT NULL,
+                tire_id INTEGER,
                 date TEXT NOT NULL,
                 odometer INTEGER,
                 pattern TEXT,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id)
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle(id),
+                FOREIGN KEY (tire_id) REFERENCES tires(id)
             )
         ''')
         db.execute('''
