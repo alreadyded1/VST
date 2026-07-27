@@ -171,6 +171,6 @@ async function loadDashboard() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadDashboard);
+appReady.then(loadDashboard);
 </script>
 {% endblock %}

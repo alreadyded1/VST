@@ -641,7 +641,7 @@ async function deleteFuelRecord(fuelId) {
 
 document.addEventListener('DOMContentLoaded', () => {
     initSections();
-    loadFuelRecords();
+    appReady.then(loadFuelRecords);
 
     // Set default date to today
     document.getElementById('fuelDate').valueAsDate = new Date();

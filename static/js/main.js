@@ -336,11 +336,22 @@ function handleVehicleChange() {
     }
 }
 
+// Resolves after the vehicle selector has loaded and auto-selected a
+// current vehicle if needed. Page scripts that read getCurrentVehicleId()
+// on load must wait on this, otherwise a fresh session (first login) races
+// the selector and finds no vehicle selected yet.
+let appReadyResolve;
+const appReady = new Promise(resolve => { appReadyResolve = resolve; });
+
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', () => {
-    initViewMode();
-    setActiveNav();
-    loadVehicleSelector();
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        initViewMode();
+        setActiveNav();
+        await loadVehicleSelector();
+    } finally {
+        appReadyResolve();
+    }
 });
 
 // API helper functions

@@ -781,8 +781,10 @@ async function importCSV(event) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadServices();
-    loadSupplies();
+    appReady.then(() => {
+        loadServices();
+        loadSupplies();
+    });
 
     // Set default date to today
     document.getElementById('serviceDate').valueAsDate = new Date();

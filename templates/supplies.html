@@ -727,6 +727,6 @@ document.addEventListener('click', () => {
     });
 });
 
-document.addEventListener('DOMContentLoaded', loadSupplies);
+appReady.then(loadSupplies);
 </script>
 {% endblock %}

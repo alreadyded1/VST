@@ -238,6 +238,6 @@ async function deleteReminder(reminderId) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadReminders);
+appReady.then(loadReminders);
 </script>
 {% endblock %}

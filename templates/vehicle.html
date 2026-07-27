@@ -164,6 +164,6 @@ async function saveVehicle(event) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadVehicle);
+appReady.then(loadVehicle);
 </script>
 {% endblock %}

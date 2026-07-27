@@ -298,7 +298,7 @@ async function deleteDocument(docId) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadDocuments);
+appReady.then(loadDocuments);
 </script>
 
 <style>
