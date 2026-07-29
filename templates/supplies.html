@@ -231,7 +231,7 @@
                     <label for="supplyLocation">Storage Location</label>
                     <input type="text" id="supplyLocation" name="location" placeholder="e.g., Garage shelf A, Toolbox">
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="supplierFieldGroup">
                     <label for="supplySupplier">Supplier/Vendor</label>
                     <input type="text" id="supplySupplier" name="supplier" placeholder="e.g., AutoZone, O'Reilly">
                 </div>
@@ -396,6 +396,16 @@
                     <input type="number" id="unitAddWarrantyMileageLimit" min="0">
                 </div>
             </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitAddSupplier">Supplier/Vendor</label>
+                    <input type="text" id="unitAddSupplier" placeholder="e.g., AutoZone, O'Reilly">
+                </div>
+                <div class="form-group">
+                    <label for="unitAddReceipt">Receipt (applies to all units added)</label>
+                    <input type="file" id="unitAddReceipt" accept="image/*,.pdf">
+                </div>
+            </div>
             <button type="button" class="btn btn-success" onclick="addUnits()">Add Units</button>
         </div>
 
@@ -466,6 +476,15 @@
                 </div>
             </div>
             <div class="form-group">
+                <label for="unitSupplier">Supplier/Vendor</label>
+                <input type="text" id="unitSupplier" placeholder="e.g., AutoZone, O'Reilly">
+            </div>
+            <div class="form-group">
+                <label for="unitReceipt">Receipt</label>
+                <input type="file" id="unitReceipt" accept="image/*,.pdf">
+                <div id="unitReceiptPreview" class="file-preview"></div>
+            </div>
+            <div class="form-group">
                 <label for="unitNotes">Notes</label>
                 <textarea id="unitNotes" rows="2"></textarea>
             </div>
@@ -494,7 +513,10 @@ function toggleLifetimeWarranty() {
     });
 }
 
-// Swap manual quantity for the derived in-stock display on tracked parts
+// Swap manual quantity for the derived in-stock display on tracked parts.
+// Supplier lives on each unit for tracked parts, so the catalog-level field
+// hides too (its value still submits unchanged — display:none doesn't strip
+// it from FormData — so legacy data isn't wiped).
 function toggleTrackedIndividually() {
     const tracked = document.getElementById('trackedIndividually').checked;
     const qtyGroup = document.getElementById('quantityFieldGroup');
@@ -505,6 +527,7 @@ function toggleTrackedIndividually() {
     qtyInput.required = !tracked;
     if (tracked) qtyInput.value = '';
     derivedGroup.style.display = tracked ? 'block' : 'none';
+    document.getElementById('supplierFieldGroup').style.display = tracked ? 'none' : 'block';
 }
 
 function toggleUnitAddLifetime() {
@@ -973,7 +996,9 @@ function renderUnits() {
                     <div class="mobile-card-row"><span class="mobile-card-label">Purchased</span><span class="mobile-card-value">${purchase}</span></div>
                     <div class="mobile-card-row"><span class="mobile-card-label">Installed</span><span class="mobile-card-value">${installed}</span></div>
                     <div class="mobile-card-row"><span class="mobile-card-label">Cost</span><span class="mobile-card-value">${unit.cost != null ? formatCurrency(unit.cost) : '—'}</span></div>
+                    ${unit.supplier ? `<div class="mobile-card-row"><span class="mobile-card-label">Supplier</span><span class="mobile-card-value">${unit.supplier}</span></div>` : ''}
                     ${warranty && warranty !== '-' ? `<div class="mobile-card-row"><span class="mobile-card-label">Warranty</span><span class="mobile-card-value">${warranty}</span></div>` : ''}
+                    ${unit.receipt_path ? `<div class="mobile-card-row"><span class="mobile-card-label">Receipt</span><span class="mobile-card-value"><a href="/static/${unit.receipt_path}" target="_blank">View Receipt</a></span></div>` : ''}
                     ${unit.notes ? `<div class="mobile-card-row"><span class="mobile-card-label">Notes</span><span class="mobile-card-value">${unit.notes}</span></div>` : ''}
                 </div>
                 <div class="mobile-card-actions">
@@ -993,21 +1018,24 @@ async function addUnits() {
         return;
     }
 
-    const payload = {
-        quantity_to_add: qty,
-        purchase_date: document.getElementById('unitAddPurchaseDate').value || null,
-        cost: document.getElementById('unitAddCost').value ? parseFloat(document.getElementById('unitAddCost').value) : null,
-        warranty_start_date: document.getElementById('unitAddWarrantyStart').value || null,
-        warranty_months: document.getElementById('unitAddWarrantyMonths').value || null,
-        warranty_lifetime: document.getElementById('unitAddLifetime').checked,
-        warranty_start_mileage: document.getElementById('unitAddWarrantyStartMileage').value || null,
-        warranty_mileage_limit: document.getElementById('unitAddWarrantyMileageLimit').value || null
-    };
+    const formData = new FormData();
+    formData.append('quantity_to_add', qty);
+    formData.append('purchase_date', document.getElementById('unitAddPurchaseDate').value);
+    formData.append('cost', document.getElementById('unitAddCost').value);
+    formData.append('warranty_start_date', document.getElementById('unitAddWarrantyStart').value);
+    formData.append('warranty_months', document.getElementById('unitAddWarrantyMonths').value);
+    if (document.getElementById('unitAddLifetime').checked) formData.append('warranty_lifetime', 'on');
+    formData.append('warranty_start_mileage', document.getElementById('unitAddWarrantyStartMileage').value);
+    formData.append('warranty_mileage_limit', document.getElementById('unitAddWarrantyMileageLimit').value);
+    formData.append('supplier', document.getElementById('unitAddSupplier').value);
+    const receiptFile = document.getElementById('unitAddReceipt').files[0];
+    if (receiptFile) formData.append('receipt', receiptFile);
 
     try {
-        await postJSON(`/api/supplies/${currentUnitsSupplyId}/units`, payload);
+        await postFormData(`/api/supplies/${currentUnitsSupplyId}/units`, formData);
         showAlert(`Added ${qty} unit${qty > 1 ? 's' : ''}`, 'success');
         document.getElementById('unitAddQty').value = 1;
+        document.getElementById('unitAddReceipt').value = '';
         await loadUnits();
         await loadSupplies();
     } catch (error) {
@@ -1029,7 +1057,14 @@ function editUnit(unitId) {
     document.getElementById('unitWarrantyMonths').value = unit.warranty_months || '';
     document.getElementById('unitWarrantyStartMileage').value = unit.warranty_start_mileage || '';
     document.getElementById('unitWarrantyMileageLimit').value = unit.warranty_mileage_limit || '';
+    document.getElementById('unitSupplier').value = unit.supplier || '';
     document.getElementById('unitNotes').value = unit.notes || '';
+
+    document.getElementById('unitReceipt').value = '';
+    const receiptPreview = document.getElementById('unitReceiptPreview');
+    receiptPreview.innerHTML = unit.receipt_path
+        ? `Current: <a href="/static/${unit.receipt_path}" target="_blank">View Receipt</a>`
+        : '';
 
     openModal('editUnitModal');
 }
@@ -1038,21 +1073,23 @@ async function saveUnit(event) {
     event.preventDefault();
     const unitId = document.getElementById('editUnitId').value;
 
-    const payload = {
-        status: document.getElementById('unitStatus').value,
-        cost: document.getElementById('unitCost').value ? parseFloat(document.getElementById('unitCost').value) : null,
-        purchase_date: document.getElementById('unitPurchaseDate').value || null,
-        installation_date: document.getElementById('unitInstallDate').value || null,
-        warranty_lifetime: document.getElementById('unitLifetime').checked,
-        warranty_start_date: document.getElementById('unitWarrantyStart').value || null,
-        warranty_months: document.getElementById('unitWarrantyMonths').value || null,
-        warranty_start_mileage: document.getElementById('unitWarrantyStartMileage').value || null,
-        warranty_mileage_limit: document.getElementById('unitWarrantyMileageLimit').value || null,
-        notes: document.getElementById('unitNotes').value
-    };
+    const formData = new FormData();
+    formData.append('status', document.getElementById('unitStatus').value);
+    formData.append('cost', document.getElementById('unitCost').value);
+    formData.append('purchase_date', document.getElementById('unitPurchaseDate').value);
+    formData.append('installation_date', document.getElementById('unitInstallDate').value);
+    if (document.getElementById('unitLifetime').checked) formData.append('warranty_lifetime', 'on');
+    formData.append('warranty_start_date', document.getElementById('unitWarrantyStart').value);
+    formData.append('warranty_months', document.getElementById('unitWarrantyMonths').value);
+    formData.append('warranty_start_mileage', document.getElementById('unitWarrantyStartMileage').value);
+    formData.append('warranty_mileage_limit', document.getElementById('unitWarrantyMileageLimit').value);
+    formData.append('supplier', document.getElementById('unitSupplier').value);
+    formData.append('notes', document.getElementById('unitNotes').value);
+    const receiptFile = document.getElementById('unitReceipt').files[0];
+    if (receiptFile) formData.append('receipt', receiptFile);
 
     try {
-        await putJSON(`/api/supply-units/${unitId}`, payload);
+        await putFormData(`/api/supply-units/${unitId}`, formData);
         showAlert('Unit updated', 'success');
         closeModal('editUnitModal');
         await loadUnits();

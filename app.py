@@ -545,6 +545,7 @@ def init_db():
                 warranty_start_mileage INTEGER,
                 warranty_mileage_limit INTEGER,
                 receipt_path TEXT,
+                supplier TEXT,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (supply_id) REFERENCES supplies (id),
@@ -553,6 +554,20 @@ def init_db():
             )
         ''')
         db.commit()
+
+        # Migration: per-unit supplier. When the column is first added to an
+        # existing table, seed it from the parent supply so backfilled units
+        # keep their provenance. The ALTER fails once the column exists, so
+        # the copy runs exactly once.
+        try:
+            db.execute('ALTER TABLE supply_units ADD COLUMN supplier TEXT')
+            db.execute('''UPDATE supply_units
+                          SET supplier = (SELECT s.supplier FROM supplies s
+                                          WHERE s.id = supply_units.supply_id)
+                          WHERE supplier IS NULL''')
+            db.commit()
+        except sqlite3.OperationalError:
+            pass
 
         # Migration: link service_supplies rows to a specific unit
         try:
@@ -597,13 +612,13 @@ def init_db():
                                   (supply_id, vehicle_id, purchase_date, cost, status,
                                    installation_date, warranty_start_date, warranty_months,
                                    warranty_lifetime, warranty_start_mileage,
-                                   warranty_mileage_limit, receipt_path)
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                   warranty_mileage_limit, receipt_path, supplier)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                               (s['id'], s['vehicle_id'], s['purchase_date'], s['cost'],
                                status, s['installation_date'], s['warranty_start_date'],
                                s['warranty_months'], s['warranty_lifetime'] or 0,
                                s['warranty_start_mileage'], s['warranty_mileage_limit'],
-                               s['receipt_path']))
+                               s['receipt_path'], s['supplier']))
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('supply_units_backfilled', '1')")
             db.commit()
 
@@ -1971,11 +1986,26 @@ def get_supply_units(supply_id):
         result.append(u)
     return jsonify(result)
 
+def save_receipt_upload():
+    """Save an uploaded receipt file if present; returns its static path"""
+    if 'receipt' not in request.files:
+        return None
+    file = request.files['receipt']
+    if not (file and file.filename and allowed_file(file.filename)):
+        return None
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    filename = f"{timestamp}_{filename}"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
+    file.save(filepath)
+    return f'uploads/receipts/{filename}'
+
 @app.route('/api/supplies/<int:supply_id>/units', methods=['POST'])
 @api_login_required
 def add_supply_units(supply_id):
-    """Add N identical units to a tracked supply. `cost` is per unit."""
-    data = request.json
+    """Add N identical units to a tracked supply. `cost` is per unit; an
+    uploaded receipt covers the whole batch (one purchase, N units)."""
+    data = request.form
     quantity_to_add = int(data.get('quantity_to_add', 1))
     if quantity_to_add < 1:
         return jsonify({'error': 'quantity_to_add must be at least 1'}), 400
@@ -1989,20 +2019,22 @@ def add_supply_units(supply_id):
         db.close()
         return jsonify({'error': 'This supply is not tracked individually'}), 400
 
-    warranty_start = data.get('warranty_start_date') or data.get('purchase_date')
+    receipt_path = save_receipt_upload()
+    warranty_start = data.get('warranty_start_date') or data.get('purchase_date') or None
     for _ in range(quantity_to_add):
         db.execute('''INSERT INTO supply_units
                       (supply_id, vehicle_id, purchase_date, cost, status,
                        warranty_start_date, warranty_months, warranty_lifetime,
-                       warranty_start_mileage, warranty_mileage_limit, receipt_path, notes)
-                      VALUES (?, ?, ?, ?, 'in_stock', ?, ?, ?, ?, ?, ?, ?)''',
-                  (supply_id, supply['vehicle_id'], data.get('purchase_date'),
-                   data.get('cost'), warranty_start,
+                       warranty_start_mileage, warranty_mileage_limit,
+                       receipt_path, supplier, notes)
+                      VALUES (?, ?, ?, ?, 'in_stock', ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (supply_id, supply['vehicle_id'], data.get('purchase_date') or None,
+                   data.get('cost') or None, warranty_start,
                    int(data['warranty_months']) if data.get('warranty_months') else None,
-                   1 if data.get('warranty_lifetime') else 0,
+                   1 if data.get('warranty_lifetime') == 'on' else 0,
                    int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                    int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   data.get('receipt_path'), data.get('notes', '')))
+                   receipt_path, data.get('supplier', ''), data.get('notes', '')))
     db.commit()
     db.close()
     return jsonify({'success': True, 'added': quantity_to_add, 'cost_basis': 'per_unit'})
@@ -2010,34 +2042,38 @@ def add_supply_units(supply_id):
 @app.route('/api/supply-units/<int:unit_id>', methods=['PUT'])
 @api_login_required
 def update_supply_unit(unit_id):
-    """Edit a single unit (dates, warranty, notes, status)"""
-    data = request.json
+    """Edit a single unit (dates, warranty, supplier, receipt, notes, status)"""
+    data = request.form
     db = get_db()
     unit = db.execute('SELECT * FROM supply_units WHERE id = ?', (unit_id,)).fetchone()
     if not unit:
         db.close()
         return jsonify({'error': 'Unit not found'}), 404
 
-    status = data.get('status', unit['status'])
+    status = data.get('status') or unit['status']
     if status not in ('in_stock', 'installed', 'used', 'returned'):
         db.close()
         return jsonify({'error': 'Invalid status'}), 400
 
+    # A newly uploaded receipt replaces the old one; otherwise keep it
+    receipt_path = save_receipt_upload() or unit['receipt_path']
+
     db.execute('''UPDATE supply_units
                   SET purchase_date=?, cost=?, status=?, installation_date=?,
                       warranty_start_date=?, warranty_months=?, warranty_lifetime=?,
-                      warranty_start_mileage=?, warranty_mileage_limit=?, notes=?
+                      warranty_start_mileage=?, warranty_mileage_limit=?,
+                      receipt_path=?, supplier=?, notes=?
                   WHERE id=?''',
-              (data.get('purchase_date', unit['purchase_date']),
-               data.get('cost', unit['cost']),
+              (data.get('purchase_date') or None,
+               data.get('cost') or None,
                status,
-               data.get('installation_date', unit['installation_date']),
-               data.get('warranty_start_date', unit['warranty_start_date']),
+               data.get('installation_date') or None,
+               data.get('warranty_start_date') or None,
                int(data['warranty_months']) if data.get('warranty_months') else None,
-               1 if data.get('warranty_lifetime') else 0,
+               1 if data.get('warranty_lifetime') == 'on' else 0,
                int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
                int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-               data.get('notes', unit['notes']),
+               receipt_path, data.get('supplier', ''), data.get('notes', ''),
                unit_id))
     db.commit()
     db.close()
