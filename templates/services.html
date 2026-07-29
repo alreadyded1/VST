@@ -185,13 +185,19 @@
                     <div style="display: grid; grid-template-columns: 1fr 150px 100px; gap: 10px; align-items: end;">
                         <div>
                             <label for="supplySelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Select Supply</label>
-                            <select id="supplySelect" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                            <select id="supplySelect" onchange="handleSupplyPickerChange()" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
                                 <option value="">-- Select a supply --</option>
                             </select>
                         </div>
-                        <div>
+                        <div id="supplyQuantityWrap">
                             <label for="supplyQuantity" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Quantity</label>
                             <input type="number" id="supplyQuantity" min="0.1" step="0.1" value="1" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                        </div>
+                        <div id="supplyUnitWrap" style="display: none;">
+                            <label for="supplyUnitSelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Unit</label>
+                            <select id="supplyUnitSelect" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                                <option value="">-- Select --</option>
+                            </select>
                         </div>
                         <button type="button" class="btn btn-secondary" onclick="addSupplyToList()" style="padding: 0.5rem 1rem;">Add</button>
                     </div>
@@ -337,13 +343,56 @@ function populateSuppliesDropdown() {
     availableSupplies.forEach(supply => {
         const option = document.createElement('option');
         option.value = supply.id;
-        option.textContent = `${supply.name} (${supply.quantity} ${supply.unit} @ ${formatCurrency(supply.cost)} each)`;
+        const qtyLabel = supply.tracked_individually ? `${supply.quantity} in stock` : `${supply.quantity} ${supply.unit}`;
+        option.textContent = `${supply.name} (${qtyLabel} @ ${formatCurrency(supply.cost)} each)`;
         option.dataset.supplyName = supply.name;
         option.dataset.supplyCost = supply.cost;
         option.dataset.supplyUnit = supply.unit;
         option.dataset.supplyMaxQty = supply.quantity;
+        option.dataset.tracked = supply.tracked_individually ? '1' : '0';
         select.appendChild(option);
     });
+}
+
+// Tracked supplies are consumed as specific physical units, not a quantity —
+// swap the quantity input for a unit picker when one is selected.
+async function handleSupplyPickerChange() {
+    const select = document.getElementById('supplySelect');
+    const selectedOption = select.options[select.selectedIndex];
+    const tracked = selectedOption && selectedOption.dataset.tracked === '1';
+
+    document.getElementById('supplyQuantityWrap').style.display = tracked ? 'none' : 'block';
+    document.getElementById('supplyUnitWrap').style.display = tracked ? 'block' : 'none';
+
+    if (!tracked) return;
+
+    const unitSelect = document.getElementById('supplyUnitSelect');
+    unitSelect.innerHTML = '<option value="">Loading...</option>';
+    try {
+        // When editing, units installed on this very service are still
+        // selectable — they'll be reverted to stock on save.
+        const params = currentEditServiceId ? `?available_for_service=${currentEditServiceId}` : '?status=in_stock';
+        const units = await fetchAPI(`/api/supplies/${select.value}/units${params}`);
+        const takenUnitIds = selectedSupplies.filter(s => s.unit_id).map(s => s.unit_id);
+        const selectable = units.filter(u => !takenUnitIds.includes(u.id));
+
+        if (selectable.length === 0) {
+            unitSelect.innerHTML = '<option value="">No units available</option>';
+            return;
+        }
+        unitSelect.innerHTML = '<option value="">-- Select --</option>';
+        selectable.forEach(unit => {
+            const option = document.createElement('option');
+            option.value = unit.id;
+            const purchased = unit.purchase_date ? ` (purchased ${formatDate(unit.purchase_date)})` : '';
+            option.textContent = `Unit #${unit.id}${purchased}`;
+            option.dataset.unitCost = unit.cost != null ? unit.cost : '';
+            unitSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Error loading units:', error);
+        unitSelect.innerHTML = '<option value="">Error loading units</option>';
+    }
 }
 
 function addSupplyToList() {
@@ -357,6 +406,33 @@ function addSupplyToList() {
 
     const selectedOption = select.options[select.selectedIndex];
     const supplyId = parseInt(select.value);
+
+    // Individually-tracked part: add the specific selected unit
+    if (selectedOption.dataset.tracked === '1') {
+        const unitSelect = document.getElementById('supplyUnitSelect');
+        if (!unitSelect.value) {
+            showAlert('Please select a unit', 'warning');
+            return;
+        }
+        const unitOption = unitSelect.options[unitSelect.selectedIndex];
+        const unitCost = unitOption.dataset.unitCost !== ''
+            ? parseFloat(unitOption.dataset.unitCost)
+            : parseFloat(selectedOption.dataset.supplyCost);
+
+        selectedSupplies.push({
+            id: supplyId,
+            unit_id: parseInt(unitSelect.value),
+            name: selectedOption.dataset.supplyName,
+            quantity: 1,
+            cost: unitCost,
+            unit: 'unit'
+        });
+
+        updateSuppliesList();
+        handleSupplyPickerChange(); // refresh unit list minus the one just added
+        return;
+    }
+
     const quantity = parseFloat(quantityInput.value);
     const maxQty = parseFloat(selectedOption.dataset.supplyMaxQty);
 
@@ -399,9 +475,17 @@ function addSupplyToList() {
     quantityInput.value = 1;
 }
 
-function removeSupplyFromList(supplyId) {
-    selectedSupplies = selectedSupplies.filter(s => s.id !== supplyId);
+function removeSupplyFromList(supplyId, unitId) {
+    if (unitId) {
+        selectedSupplies = selectedSupplies.filter(s => s.unit_id !== unitId);
+    } else {
+        selectedSupplies = selectedSupplies.filter(s => s.id !== supplyId || s.unit_id);
+    }
     updateSuppliesList();
+    // If the picker is showing this supply's units, the freed unit is selectable again
+    if (document.getElementById('supplyUnitWrap').style.display !== 'none') {
+        handleSupplyPickerChange();
+    }
 }
 
 function clearSuppliesList() {
@@ -409,6 +493,8 @@ function clearSuppliesList() {
     updateSuppliesList();
     document.getElementById('supplySelect').value = '';
     document.getElementById('supplyQuantity').value = 1;
+    document.getElementById('supplyQuantityWrap').style.display = 'block';
+    document.getElementById('supplyUnitWrap').style.display = 'none';
 }
 
 function updateSuppliesList() {
@@ -430,13 +516,17 @@ function updateSuppliesList() {
         const itemCost = supply.cost * supply.quantity;
         totalCost += itemCost;
 
+        const detail = supply.unit_id
+            ? `Unit #${supply.unit_id} — ${formatCurrency(supply.cost)}`
+            : `${supply.quantity} ${supply.unit} × ${formatCurrency(supply.cost)} = ${formatCurrency(itemCost)}`;
+
         html += `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); margin-bottom: 0.5rem;">
                 <div>
                     <strong>${supply.name}</strong><br>
-                    <small>${supply.quantity} ${supply.unit} × ${formatCurrency(supply.cost)} = ${formatCurrency(itemCost)}</small>
+                    <small>${detail}</small>
                 </div>
-                <button type="button" class="btn btn-small btn-danger" onclick="removeSupplyFromList(${supply.id})">Remove</button>
+                <button type="button" class="btn btn-small btn-danger" onclick="removeSupplyFromList(${supply.id}, ${supply.unit_id || 'null'})">Remove</button>
             </div>
         `;
     });
@@ -559,13 +649,16 @@ async function editService(serviceId) {
         // instead of silently dropping them.
         selectedSupplies = (service.supplies || []).map(s => ({
             id: s.id,
+            unit_id: s.unit_id || undefined,
             name: s.name,
             quantity: s.quantity,
             cost: s.cost,
-            unit: s.unit
+            unit: s.unit_id ? 'unit' : s.unit
         }));
         originalServiceSupplies = {};
-        selectedSupplies.forEach(s => { originalServiceSupplies[s.id] = s.quantity; });
+        // The available-quantity cap only applies to plain consumables;
+        // tracked units are capped by the unit picker itself.
+        selectedSupplies.filter(s => !s.unit_id).forEach(s => { originalServiceSupplies[s.id] = s.quantity; });
         updateSuppliesList();
 
         // Populate form
@@ -609,11 +702,11 @@ async function addService(event) {
     const formData = new FormData(form);
     formData.append('vehicle_id', vehicleId);
 
-    // Add selected supplies (use the global selectedSupplies array)
-    const suppliesToSend = selectedSupplies.map(s => ({
-        id: s.id,
-        quantity: s.quantity
-    }));
+    // Add selected supplies (use the global selectedSupplies array).
+    // Tracked units are sent as {id, unit_id}; consumables as {id, quantity}.
+    const suppliesToSend = selectedSupplies.map(s => s.unit_id
+        ? { id: s.id, unit_id: s.unit_id }
+        : { id: s.id, quantity: s.quantity });
 
     formData.append('supplies', JSON.stringify(suppliesToSend));
 

@@ -142,14 +142,26 @@
                 <input type="text" id="supplyBrand" name="brand" placeholder="Optional">
             </div>
 
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="trackedIndividually" name="tracked_individually" style="width: auto; margin: 0;" onchange="toggleTrackedIndividually()">
+                    <span>Track individual units (purchase/install/warranty per item)</span>
+                </label>
+            </div>
+
             <div class="form-row">
                 <div class="form-group">
                     <label for="supplyCost">Cost per Unit *</label>
                     <input type="number" id="supplyCost" name="cost" step="0.01" min="0" required>
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="quantityFieldGroup">
                     <label for="supplyQuantity">Quantity *</label>
                     <input type="number" id="supplyQuantity" name="quantity" step="0.1" min="0" required>
+                </div>
+                <div class="form-group" id="derivedQuantityGroup" style="display: none;">
+                    <label>In Stock</label>
+                    <p id="derivedQuantityValue" style="margin: 0.6rem 0; font-weight: 600;">0 units</p>
+                    <small style="color: var(--light-text);">Derived from units — manage them via "Units" on this part.</small>
                 </div>
             </div>
 
@@ -333,6 +345,135 @@
     </div>
 </div>
 
+<!-- Units Modal (individually-tracked parts) -->
+<div id="unitsModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="unitsModalTitle">Units</h3>
+            <button class="close" onclick="closeModal('unitsModal')">&times;</button>
+        </div>
+
+        <div class="card" style="box-shadow: none; border: 1px solid var(--border-color);">
+            <h3>Add Units</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitAddQty">Quantity to Add *</label>
+                    <input type="number" id="unitAddQty" min="1" step="1" value="1">
+                </div>
+                <div class="form-group">
+                    <label for="unitAddCost">Cost per Unit</label>
+                    <input type="number" id="unitAddCost" step="0.01" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="unitAddPurchaseDate">Purchase Date</label>
+                    <input type="date" id="unitAddPurchaseDate">
+                </div>
+            </div>
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="unitAddLifetime" style="width: auto; margin: 0;" onchange="toggleUnitAddLifetime()">
+                    <span>Lifetime Warranty (never expires)</span>
+                </label>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitAddWarrantyStart">Warranty Start Date</label>
+                    <input type="date" id="unitAddWarrantyStart" placeholder="Defaults to purchase date">
+                    <small style="color: var(--light-text);">Blank = purchase date; set automatically at install if both are blank.</small>
+                </div>
+                <div class="form-group">
+                    <label for="unitAddWarrantyMonths">Warranty Period (Months)</label>
+                    <input type="number" id="unitAddWarrantyMonths" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitAddWarrantyStartMileage">Warranty Start Mileage</label>
+                    <input type="number" id="unitAddWarrantyStartMileage" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="unitAddWarrantyMileageLimit">Warranty Mileage Limit</label>
+                    <input type="number" id="unitAddWarrantyMileageLimit" min="0">
+                </div>
+            </div>
+            <button type="button" class="btn btn-success" onclick="addUnits()">Add Units</button>
+        </div>
+
+        <div id="unitsList" style="margin-top: 1rem;">
+            <p class="text-center">Loading...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Unit Modal -->
+<div id="editUnitModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Unit</h3>
+            <button class="close" onclick="closeModal('editUnitModal')">&times;</button>
+        </div>
+        <form id="unitForm" onsubmit="saveUnit(event)">
+            <input type="hidden" id="editUnitId">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitStatus">Status</label>
+                    <select id="unitStatus">
+                        <option value="in_stock">In Stock</option>
+                        <option value="installed">Installed</option>
+                        <option value="used">Used</option>
+                        <option value="returned">Returned</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="unitCost">Cost (per unit)</label>
+                    <input type="number" id="unitCost" step="0.01" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitPurchaseDate">Purchase Date</label>
+                    <input type="date" id="unitPurchaseDate">
+                </div>
+                <div class="form-group">
+                    <label for="unitInstallDate">Installation Date</label>
+                    <input type="date" id="unitInstallDate">
+                </div>
+            </div>
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="unitLifetime" style="width: auto; margin: 0;">
+                    <span>Lifetime Warranty (never expires)</span>
+                </label>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitWarrantyStart">Warranty Start Date</label>
+                    <input type="date" id="unitWarrantyStart">
+                </div>
+                <div class="form-group">
+                    <label for="unitWarrantyMonths">Warranty Period (Months)</label>
+                    <input type="number" id="unitWarrantyMonths" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="unitWarrantyStartMileage">Warranty Start Mileage</label>
+                    <input type="number" id="unitWarrantyStartMileage" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="unitWarrantyMileageLimit">Warranty Mileage Limit</label>
+                    <input type="number" id="unitWarrantyMileageLimit" min="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="unitNotes">Notes</label>
+                <textarea id="unitNotes" rows="2"></textarea>
+            </div>
+            <button type="submit" class="btn btn-success">Save Unit</button>
+        </form>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -347,6 +488,28 @@ const suppliesItemsPerPage = 15;
 function toggleLifetimeWarranty() {
     const lifetime = document.getElementById('warrantyLifetime').checked;
     ['warrantyMonths', 'warrantyMileageLimit'].forEach(id => {
+        const el = document.getElementById(id);
+        el.disabled = lifetime;
+        if (lifetime) el.value = '';
+    });
+}
+
+// Swap manual quantity for the derived in-stock display on tracked parts
+function toggleTrackedIndividually() {
+    const tracked = document.getElementById('trackedIndividually').checked;
+    const qtyGroup = document.getElementById('quantityFieldGroup');
+    const qtyInput = document.getElementById('supplyQuantity');
+    const derivedGroup = document.getElementById('derivedQuantityGroup');
+
+    qtyGroup.style.display = tracked ? 'none' : 'block';
+    qtyInput.required = !tracked;
+    if (tracked) qtyInput.value = '';
+    derivedGroup.style.display = tracked ? 'block' : 'none';
+}
+
+function toggleUnitAddLifetime() {
+    const lifetime = document.getElementById('unitAddLifetime').checked;
+    ['unitAddWarrantyMonths', 'unitAddWarrantyMileageLimit'].forEach(id => {
         const el = document.getElementById(id);
         el.disabled = lifetime;
         if (lifetime) el.value = '';
@@ -499,13 +662,19 @@ function displaySupplies() {
         const totalValue = supply.cost * supply.quantity;
         const quantityClass = supply.quantity === 0 ? 'style="color: red; font-weight: bold;"' : '';
         const warrantyStatus = getWarrantyStatus(supply);
+        const quantityDisplay = supply.tracked_individually
+            ? `${supply.quantity} <small style="color: var(--light-text);">in stock of ${supply.unit_count}</small>`
+            : supply.quantity;
+        const unitsMenuItem = supply.tracked_individually
+            ? `<button onclick="openUnitsModal(${supply.id})">Units</button>`
+            : '';
 
         tableHtml += `
             <tr>
                 <td>${supply.name}</td>
                 <td>${supply.part_number || '-'}</td>
                 <td>${supply.brand || '-'}</td>
-                <td ${quantityClass}>${supply.quantity}</td>
+                <td ${quantityClass}>${quantityDisplay}</td>
                 <td>${formatCurrency(supply.cost)}</td>
                 <td>${formatCurrency(totalValue)}</td>
                 <td>${warrantyStatus}</td>
@@ -514,6 +683,7 @@ function displaySupplies() {
                         <button class="menu-button" onclick="toggleMenu(event, ${supply.id})">&#8942;</button>
                         <div class="menu-dropdown" id="menu-${supply.id}">
                             <button onclick="viewSupply(${supply.id})">View</button>
+                            ${unitsMenuItem}
                             <button onclick="editSupply(${supply.id})">Edit</button>
                             <button class="danger" onclick="deleteSupply(${supply.id})">Delete</button>
                         </div>
@@ -531,10 +701,14 @@ function displaySupplies() {
         const warrantyStatus = getWarrantyStatus(supply);
         const title = supply.name;
 
+        const quantityValue = supply.quantity === 0
+            ? `<strong style="color: var(--danger-color)">${supply.quantity} (Out of Stock)</strong>`
+            : (supply.tracked_individually ? `${supply.quantity} of ${supply.unit_count}` : supply.quantity);
+
         const fields = [
             { label: 'Part Number', value: supply.part_number || 'N/A' },
             { label: 'Brand', value: supply.brand || 'N/A' },
-            { label: 'Quantity', value: supply.quantity === 0 ? `<strong style="color: var(--danger-color)">${supply.quantity} (Out of Stock)</strong>` : supply.quantity },
+            { label: 'Quantity', value: quantityValue },
             { label: 'Cost/Unit', value: formatCurrency(supply.cost) },
             { label: 'Total Value', value: formatCurrency(totalValue) }
         ];
@@ -556,6 +730,9 @@ function displaySupplies() {
             { label: 'Edit', class: 'btn-secondary', onclick: `editSupply(${supply.id})` },
             { label: 'Delete', class: 'btn-danger', onclick: `deleteSupply(${supply.id})` }
         ];
+        if (supply.tracked_individually) {
+            actions.unshift({ label: 'Units', class: 'btn-secondary', onclick: `openUnitsModal(${supply.id})` });
+        }
 
         cardsHtml += createMobileCard(title, fields, actions);
     });
@@ -657,6 +834,7 @@ async function addSupply(event) {
         if (result.success) {
             form.reset();
             toggleLifetimeWarranty();
+            toggleTrackedIndividually();
             document.getElementById('editSupplyId').value = '';
             document.getElementById('receiptPreview').textContent = '';
 
@@ -689,6 +867,12 @@ function editSupply(supplyId) {
     document.getElementById('warrantyMileageLimit').value = supply.warranty_mileage_limit || '';
     document.getElementById('warrantyLifetime').checked = supply.warranty_lifetime ? true : false;
     toggleLifetimeWarranty();
+    document.getElementById('trackedIndividually').checked = supply.tracked_individually ? true : false;
+    toggleTrackedIndividually();
+    if (supply.tracked_individually) {
+        document.getElementById('derivedQuantityValue').textContent =
+            `${supply.quantity} in stock of ${supply.unit_count} unit${supply.unit_count === 1 ? '' : 's'}`;
+    }
     document.getElementById('remindToReorder').checked = supply.remind_to_reorder ? true : false;
     document.getElementById('supplyCategory').value = supply.category || '';
     document.getElementById('supplyLocation').value = supply.location || '';
@@ -718,11 +902,177 @@ async function deleteSupply(supplyId) {
     }
 
     try {
-        await deleteAPI(`/api/supplies/${supplyId}`);
+        // fetchAPI surfaces the server's error message (installed-units guard)
+        await fetchAPI(`/api/supplies/${supplyId}`, { method: 'DELETE' });
         showAlert('Supply deleted successfully!', 'success');
         await loadSupplies();
     } catch (error) {
-        console.error('Error deleting supply:', error);
+        showAlert(error.message, 'danger');
+    }
+}
+
+// ============================================================
+// INDIVIDUALLY-TRACKED UNITS
+// ============================================================
+
+let currentUnitsSupplyId = null;
+let currentUnits = [];
+
+const UNIT_STATUS_LABELS = {
+    in_stock: '<span style="color: var(--success-color); font-weight: 600;">In Stock</span>',
+    installed: '<span style="color: var(--accent); font-weight: 600;">Installed</span>',
+    used: '<span style="color: var(--light-text); font-weight: 600;">Used</span>',
+    returned: '<span style="color: var(--warning-color); font-weight: 600;">Returned</span>'
+};
+
+async function openUnitsModal(supplyId) {
+    currentUnitsSupplyId = supplyId;
+    const supply = allSupplies.find(s => s.id === supplyId);
+    document.getElementById('unitsModalTitle').textContent = `Units — ${supply ? supply.name : ''}`;
+    document.getElementById('unitAddQty').value = 1;
+    document.getElementById('unitAddCost').value = supply && supply.cost ? supply.cost : '';
+    openModal('unitsModal');
+    await loadUnits();
+}
+
+async function loadUnits() {
+    const listEl = document.getElementById('unitsList');
+    try {
+        currentUnits = await fetchAPI(`/api/supplies/${currentUnitsSupplyId}/units`);
+        renderUnits();
+    } catch (error) {
+        console.error('Error loading units:', error);
+        listEl.innerHTML = '<p class="text-center">Error loading units</p>';
+    }
+}
+
+function renderUnits() {
+    const listEl = document.getElementById('unitsList');
+    if (currentUnits.length === 0) {
+        listEl.innerHTML = '<p class="text-center">No units yet. Add some above.</p>';
+        return;
+    }
+
+    let html = '';
+    currentUnits.forEach(unit => {
+        // A fresh in-stock unit legitimately has null dates — guard before formatDate
+        const purchase = unit.purchase_date ? formatDate(unit.purchase_date) : '—';
+        const installed = unit.installation_date ? formatDate(unit.installation_date) : '—';
+        const warranty = getWarrantyStatus(unit);
+        const statusLabel = UNIT_STATUS_LABELS[unit.status] || unit.status;
+        const serviceNote = unit.installed_service_id
+            ? `<small style="color: var(--light-text);">via service #${unit.installed_service_id}</small>` : '';
+
+        html += `
+            <div class="mobile-card" style="margin-bottom: 0.5rem;">
+                <div class="mobile-card-header">
+                    <h4>Unit #${unit.id}</h4>
+                    <div>${statusLabel} ${serviceNote}</div>
+                </div>
+                <div class="mobile-card-body">
+                    <div class="mobile-card-row"><span class="mobile-card-label">Purchased</span><span class="mobile-card-value">${purchase}</span></div>
+                    <div class="mobile-card-row"><span class="mobile-card-label">Installed</span><span class="mobile-card-value">${installed}</span></div>
+                    <div class="mobile-card-row"><span class="mobile-card-label">Cost</span><span class="mobile-card-value">${unit.cost != null ? formatCurrency(unit.cost) : '—'}</span></div>
+                    ${warranty && warranty !== '-' ? `<div class="mobile-card-row"><span class="mobile-card-label">Warranty</span><span class="mobile-card-value">${warranty}</span></div>` : ''}
+                    ${unit.notes ? `<div class="mobile-card-row"><span class="mobile-card-label">Notes</span><span class="mobile-card-value">${unit.notes}</span></div>` : ''}
+                </div>
+                <div class="mobile-card-actions">
+                    <button class="btn btn-small btn-secondary" onclick="editUnit(${unit.id})">Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteUnit(${unit.id})">Delete</button>
+                </div>
+            </div>
+        `;
+    });
+    listEl.innerHTML = html;
+}
+
+async function addUnits() {
+    const qty = parseInt(document.getElementById('unitAddQty').value, 10);
+    if (!qty || qty < 1) {
+        showAlert('Enter how many units to add', 'warning');
+        return;
+    }
+
+    const payload = {
+        quantity_to_add: qty,
+        purchase_date: document.getElementById('unitAddPurchaseDate').value || null,
+        cost: document.getElementById('unitAddCost').value ? parseFloat(document.getElementById('unitAddCost').value) : null,
+        warranty_start_date: document.getElementById('unitAddWarrantyStart').value || null,
+        warranty_months: document.getElementById('unitAddWarrantyMonths').value || null,
+        warranty_lifetime: document.getElementById('unitAddLifetime').checked,
+        warranty_start_mileage: document.getElementById('unitAddWarrantyStartMileage').value || null,
+        warranty_mileage_limit: document.getElementById('unitAddWarrantyMileageLimit').value || null
+    };
+
+    try {
+        await postJSON(`/api/supplies/${currentUnitsSupplyId}/units`, payload);
+        showAlert(`Added ${qty} unit${qty > 1 ? 's' : ''}`, 'success');
+        document.getElementById('unitAddQty').value = 1;
+        await loadUnits();
+        await loadSupplies();
+    } catch (error) {
+        console.error('Error adding units:', error);
+    }
+}
+
+function editUnit(unitId) {
+    const unit = currentUnits.find(u => u.id === unitId);
+    if (!unit) return;
+
+    document.getElementById('editUnitId').value = unit.id;
+    document.getElementById('unitStatus').value = unit.status;
+    document.getElementById('unitCost').value = unit.cost != null ? unit.cost : '';
+    document.getElementById('unitPurchaseDate').value = unit.purchase_date || '';
+    document.getElementById('unitInstallDate').value = unit.installation_date || '';
+    document.getElementById('unitLifetime').checked = !!unit.warranty_lifetime;
+    document.getElementById('unitWarrantyStart').value = unit.warranty_start_date || '';
+    document.getElementById('unitWarrantyMonths').value = unit.warranty_months || '';
+    document.getElementById('unitWarrantyStartMileage').value = unit.warranty_start_mileage || '';
+    document.getElementById('unitWarrantyMileageLimit').value = unit.warranty_mileage_limit || '';
+    document.getElementById('unitNotes').value = unit.notes || '';
+
+    openModal('editUnitModal');
+}
+
+async function saveUnit(event) {
+    event.preventDefault();
+    const unitId = document.getElementById('editUnitId').value;
+
+    const payload = {
+        status: document.getElementById('unitStatus').value,
+        cost: document.getElementById('unitCost').value ? parseFloat(document.getElementById('unitCost').value) : null,
+        purchase_date: document.getElementById('unitPurchaseDate').value || null,
+        installation_date: document.getElementById('unitInstallDate').value || null,
+        warranty_lifetime: document.getElementById('unitLifetime').checked,
+        warranty_start_date: document.getElementById('unitWarrantyStart').value || null,
+        warranty_months: document.getElementById('unitWarrantyMonths').value || null,
+        warranty_start_mileage: document.getElementById('unitWarrantyStartMileage').value || null,
+        warranty_mileage_limit: document.getElementById('unitWarrantyMileageLimit').value || null,
+        notes: document.getElementById('unitNotes').value
+    };
+
+    try {
+        await putJSON(`/api/supply-units/${unitId}`, payload);
+        showAlert('Unit updated', 'success');
+        closeModal('editUnitModal');
+        await loadUnits();
+        await loadSupplies();
+    } catch (error) {
+        console.error('Error saving unit:', error);
+    }
+}
+
+async function deleteUnit(unitId) {
+    if (!confirm('Delete this unit?')) return;
+
+    try {
+        // fetchAPI surfaces the server's error message (e.g. installed-unit guard)
+        await fetchAPI(`/api/supply-units/${unitId}`, { method: 'DELETE' });
+        showAlert('Unit deleted', 'success');
+        await loadUnits();
+        await loadSupplies();
+    } catch (error) {
+        showAlert(error.message, 'danger');
     }
 }
 
