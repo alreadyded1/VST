@@ -39,3 +39,4 @@ Thumbs.db
 
 # Environment variables
 .env
+.pytest_cache/

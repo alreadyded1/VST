@@ -340,6 +340,15 @@ Then restart the service:
 systemctl restart vehicle-tracker
 ```
 
+## Running Tests
+
+```bash
+venv/bin/pip install pytest
+venv/bin/python -m pytest tests
+```
+
+Tests run against a throwaway SQLite database and upload directory, so they never touch your real data.
+
 ## Troubleshooting
 
 ### Service Won't Start

@@ -419,7 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAll();
     });
     // Set today as default date in modals
-    const today = new Date().toISOString().split('T')[0];
+    const today = toISODate(new Date());
     ['rotDate', 'treadDate', 'installDate', 'uninstallDate'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = today;
@@ -739,7 +739,7 @@ async function saveRotation(event) {
         showAlert('Rotation logged.', 'success');
         closeModal('addRotationModal');
         document.getElementById('rotationForm').reset();
-        document.getElementById('rotDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('rotDate').value = toISODate(new Date());
         loadRotations();
     } else {
         showAlert(data.error || 'Failed.', 'danger');
@@ -893,7 +893,7 @@ async function saveTreadReading(event) {
         showAlert('Tread reading saved.', 'success');
         closeModal('addTreadModal');
         document.getElementById('treadForm').reset();
-        document.getElementById('treadDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('treadDate').value = toISODate(new Date());
         loadAll();
     } else {
         showAlert(data.error || 'Failed.', 'danger');

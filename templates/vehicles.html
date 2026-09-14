@@ -248,8 +248,8 @@ async function loadVehicleStats(vehicleId) {
 
         // Calculate year-to-date costs
         const currentYear = new Date().getFullYear();
-        const ytdServices = services.filter(s => new Date(s.date).getFullYear() === currentYear);
-        const ytdFuel = fuelRecords.filter(f => new Date(f.date).getFullYear() === currentYear);
+        const ytdServices = services.filter(s => parseLocalDate(s.date).getFullYear() === currentYear);
+        const ytdFuel = fuelRecords.filter(f => parseLocalDate(f.date).getFullYear() === currentYear);
 
         const ytdServiceCost = ytdServices.reduce((sum, s) => sum + (s.cost || 0) + (s.supplies_cost || 0), 0);
         const ytdFuelCost = ytdFuel.reduce((sum, f) => sum + (f.cost || 0), 0);

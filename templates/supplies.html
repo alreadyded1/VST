@@ -560,10 +560,10 @@ function getWarrantyStatus(supply) {
 
     // Check time-based warranty
     if (hasTimeWarranty) {
-        const startDate = new Date(supply.warranty_start_date);
+        const startDate = parseLocalDate(supply.warranty_start_date);
         const expirationDate = new Date(startDate);
         expirationDate.setMonth(expirationDate.getMonth() + supply.warranty_months);
-        const expirationDateStr = expirationDate.toISOString().split('T')[0];
+        const expirationDateStr = toISODate(expirationDate);
 
         const now = new Date();
         timeDaysRemaining = Math.floor((expirationDate - now) / (1000 * 60 * 60 * 24));

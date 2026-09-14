@@ -685,7 +685,7 @@ function openAddServiceModal() {
     document.getElementById('receiptPreview').textContent = '';
     document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
     currentEditServiceId = null;
-    document.getElementById('serviceDate').valueAsDate = new Date();
+    document.getElementById('serviceDate').value = toISODate(new Date());
     openModal('addServiceModal');
 }
 
@@ -880,7 +880,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Set default date to today
-    document.getElementById('serviceDate').valueAsDate = new Date();
+    document.getElementById('serviceDate').value = toISODate(new Date());
 });
 </script>
 {% endblock %}

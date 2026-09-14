@@ -107,9 +107,7 @@ function displayActiveReminders(reminders) {
     reminders.forEach(reminder => {
         let isOverdue = false;
         if (reminder.due_date) {
-            const dueDate = new Date(reminder.due_date);
-            dueDate.setHours(0, 0, 0, 0);
-            isOverdue = dueDate < today;
+            isOverdue = parseLocalDate(reminder.due_date) < today;
         }
 
         const className = isOverdue ? 'reminder-item overdue' : 'reminder-item';
@@ -117,7 +115,7 @@ function displayActiveReminders(reminders) {
         html += `
             <div class="${className}">
                 <div class="reminder-header">
-                    <span class="reminder-title">${reminder.service_type}</span>
+                    <span class="reminder-title">${escapeHtml(reminder.service_type)}</span>
                     <div class="flex gap-1">
                         ${isOverdue ? '<span style="color: var(--danger-color); font-weight: bold; margin-right: 10px;">OVERDUE</span>' : ''}
                         <button class="btn btn-small btn-success" onclick="markComplete(${reminder.id})">Mark Complete</button>
@@ -126,7 +124,7 @@ function displayActiveReminders(reminders) {
                 </div>
                 ${reminder.due_date ? `<p><strong>Due Date:</strong> ${formatDate(reminder.due_date)}</p>` : ''}
                 ${reminder.due_mileage ? `<p><strong>Due at:</strong> ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
-                ${reminder.notes ? `<p><strong>Notes:</strong> ${reminder.notes}</p>` : ''}
+                ${reminder.notes ? `<p><strong>Notes:</strong> ${escapeHtml(reminder.notes)}</p>` : ''}
             </div>
         `;
     });
@@ -148,7 +146,7 @@ function displayCompletedReminders(reminders) {
         html += `
             <div class="reminder-item completed">
                 <div class="reminder-header">
-                    <span class="reminder-title">${reminder.service_type}</span>
+                    <span class="reminder-title">${escapeHtml(reminder.service_type)}</span>
                     <div class="flex gap-1">
                         <button class="btn btn-small btn-secondary" onclick="markIncomplete(${reminder.id})">Mark Incomplete</button>
                         <button class="btn btn-small btn-danger" onclick="deleteReminder(${reminder.id})">Delete</button>
@@ -156,7 +154,7 @@ function displayCompletedReminders(reminders) {
                 </div>
                 ${reminder.due_date ? `<p><strong>Due Date:</strong> ${formatDate(reminder.due_date)}</p>` : ''}
                 ${reminder.due_mileage ? `<p><strong>Due at:</strong> ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
-                ${reminder.notes ? `<p><strong>Notes:</strong> ${reminder.notes}</p>` : ''}
+                ${reminder.notes ? `<p><strong>Notes:</strong> ${escapeHtml(reminder.notes)}</p>` : ''}
             </div>
         `;
     });

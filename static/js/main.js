@@ -47,6 +47,20 @@ function formatCurrency(amount) {
     }).format(amount);
 }
 
+// Parse a 'YYYY-MM-DD' string as a local-time Date. `new Date('YYYY-MM-DD')`
+// parses as UTC midnight, which shows as the previous day west of Greenwich.
+function parseLocalDate(dateString) {
+    if (!dateString) return null;
+    const [year, month, day] = dateString.split('T')[0].split('-').map(Number);
+    return new Date(year, month - 1, day);
+}
+
+// Inverse of parseLocalDate: local Date -> 'YYYY-MM-DD' (no UTC shift)
+function toISODate(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 function formatDate(dateString) {
     // Guard against null/undefined/empty warranty dates
     if (!dateString) {

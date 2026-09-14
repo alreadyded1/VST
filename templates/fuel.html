@@ -538,7 +538,7 @@ function openAddFuelModal() {
     currentEditFuelId = null;
     document.getElementById('fuelForm').reset();
     document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
-    document.getElementById('fuelDate').valueAsDate = new Date();
+    document.getElementById('fuelDate').value = toISODate(new Date());
     document.getElementById('missedFillupHint').style.display = 'none';
     openModal('addFuelModal');
 }
@@ -644,7 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
     appReady.then(loadFuelRecords);
 
     // Set default date to today
-    document.getElementById('fuelDate').valueAsDate = new Date();
+    document.getElementById('fuelDate').value = toISODate(new Date());
 });
 
 // CSV Import/Export functions

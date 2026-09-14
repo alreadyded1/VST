@@ -19,7 +19,7 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
+app.config['UPLOAD_FOLDER'] = os.path.join(app.static_folder, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'webp'}
 
@@ -622,6 +622,14 @@ def init_db():
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('supply_units_backfilled', '1')")
             db.commit()
 
+        # One-time repair: MPG used to be computed only at insert time, so
+        # edits, deletions and backdated fill-ups left stale values behind.
+        if not db.execute("SELECT 1 FROM settings WHERE key = 'mpg_recalculated'").fetchone():
+            for v in db.execute('SELECT id FROM vehicle').fetchall():
+                recalculate_mpg(db, v['id'])
+            db.execute("INSERT INTO settings (key, value) VALUES ('mpg_recalculated', '1')")
+            db.commit()
+
         db.close()
 
 def get_setting(key, default='1'):
@@ -642,6 +650,17 @@ def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+def remove_upload(static_path):
+    """Delete an uploaded file given its static-relative path (e.g.
+    'uploads/receipts/x.pdf'). Missing files are ignored."""
+    if not static_path:
+        return
+    full_path = os.path.join(app.static_folder, static_path)
+    try:
+        os.remove(full_path)
+    except OSError:
+        pass
 
 # Authentication Routes
 @app.route('/login', methods=['GET', 'POST'])
@@ -1012,16 +1031,34 @@ def update_vehicle(vehicle_id):
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['DELETE'])
 @api_login_required
 def delete_vehicle(vehicle_id):
-    """Delete a vehicle"""
+    """Delete a vehicle, everything recorded against it, and its uploaded files"""
     db = get_db()
+    vehicle = db.execute('SELECT picture FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
+    if not vehicle:
+        db.close()
+        return jsonify({'error': 'Vehicle not found'}), 404
+
+    # Collect file paths before the rows go away
+    files = [vehicle['picture']]
+    for table, column in (('service_records', 'receipt_path'),
+                          ('supplies', 'receipt_path'),
+                          ('supply_units', 'receipt_path'),
+                          ('documents', 'file_path')):
+        rows = db.execute(f'SELECT {column} FROM {table} WHERE vehicle_id = ? AND {column} IS NOT NULL',
+                          (vehicle_id,)).fetchall()
+        files.extend(r[column] for r in rows)
+
     db.execute('DELETE FROM service_supplies WHERE service_id IN (SELECT id FROM service_records WHERE vehicle_id = ?)', (vehicle_id,))
-    db.execute('DELETE FROM service_records WHERE vehicle_id = ?', (vehicle_id,))
-    db.execute('DELETE FROM supplies WHERE vehicle_id = ?', (vehicle_id,))
-    db.execute('DELETE FROM fuel_records WHERE vehicle_id = ?', (vehicle_id,))
-    db.execute('DELETE FROM service_reminders WHERE vehicle_id = ?', (vehicle_id,))
+    for table in ('service_records', 'supply_units', 'supplies', 'fuel_records',
+                  'service_reminders', 'documents', 'tire_install_log',
+                  'tire_rotations', 'tread_readings', 'tires'):
+        db.execute(f'DELETE FROM {table} WHERE vehicle_id = ?', (vehicle_id,))
     db.execute('DELETE FROM vehicle WHERE id = ?', (vehicle_id,))
     db.commit()
     db.close()
+
+    for path in files:
+        remove_upload(path)
     return jsonify({'success': True})
 
 # NHTSA API Integration endpoints
@@ -1529,11 +1566,15 @@ def delete_service(service_id):
     """Delete a service record"""
     db = get_db()
 
+    service = db.execute('SELECT receipt_path FROM service_records WHERE id = ?', (service_id,)).fetchone()
+
     # Return used supplies to inventory (and revert tracked units) first
     unlink_service_supplies(db, service_id)
     db.execute('DELETE FROM service_records WHERE id = ?', (service_id,))
     db.commit()
     db.close()
+    if service:
+        remove_upload(service['receipt_path'])
     return jsonify({'success': True})
 
 # CSV Export/Import endpoints for services
@@ -1939,10 +1980,18 @@ def delete_supply(supply_id):
         return jsonify({'error': 'This part has units installed on service records. '
                                  'Remove them from those services first.'}), 400
 
+    files = [r['receipt_path'] for r in db.execute(
+        'SELECT receipt_path FROM supply_units WHERE supply_id = ?', (supply_id,)).fetchall()]
+    supply = db.execute('SELECT receipt_path FROM supplies WHERE id = ?', (supply_id,)).fetchone()
+    if supply:
+        files.append(supply['receipt_path'])
+
     db.execute('DELETE FROM supply_units WHERE supply_id = ?', (supply_id,))
     db.execute('DELETE FROM supplies WHERE id = ?', (supply_id,))
     db.commit()
     db.close()
+    for path in files:
+        remove_upload(path)
     return jsonify({'success': True})
 
 # Supply unit endpoints (individually-tracked parts)
@@ -2096,6 +2145,7 @@ def delete_supply_unit(unit_id):
     db.execute('DELETE FROM supply_units WHERE id = ?', (unit_id,))
     db.commit()
     db.close()
+    remove_upload(unit['receipt_path'])
     return jsonify({'success': True})
 
 @app.route('/api/supplies/export-csv', methods=['GET'])
@@ -2146,6 +2196,28 @@ def export_supplies_csv():
         return jsonify({'error': str(e)}), 500
 
 # Fuel endpoints
+def recalculate_mpg(db, vehicle_id):
+    """Recompute MPG for every fuel record of a vehicle, in odometer order.
+
+    Each record's MPG is miles since the previous fill-up divided by the
+    gallons added at this one. Records flagged missed_fillup get no MPG (the
+    miles span an unlogged tank), but they still act as the odometer baseline
+    for the record after them. Called after any insert/update/delete so
+    out-of-order entries and deletions can't leave stale values behind."""
+    records = db.execute('''SELECT id, odometer, gallons, missed_fillup FROM fuel_records
+                            WHERE vehicle_id = ? ORDER BY odometer, date, id''',
+                         (vehicle_id,)).fetchall()
+    prev_odometer = None
+    for rec in records:
+        mpg = None
+        if prev_odometer is not None and not rec['missed_fillup']:
+            miles_driven = rec['odometer'] - prev_odometer
+            if miles_driven > 0 and rec['gallons'] and rec['gallons'] > 0:
+                mpg = round(miles_driven / rec['gallons'], 2)
+        db.execute('UPDATE fuel_records SET mpg = ? WHERE id = ?', (mpg, rec['id']))
+        prev_odometer = rec['odometer']
+
+
 @app.route('/api/fuel', methods=['GET'])
 @api_login_required
 def get_fuel_records():
@@ -2200,29 +2272,18 @@ def add_fuel_record():
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
     db = get_db()
-
-    # Get previous fuel record to calculate MPG
-    prev_record = db.execute('''SELECT * FROM fuel_records
-                               WHERE vehicle_id = ?
-                               ORDER BY odometer DESC LIMIT 1''',
-                            (vehicle_id,)).fetchone()
-
     missed_fillup = 1 if data.get('missed_fillup') else 0
 
-    mpg = None
-    if prev_record and not missed_fillup:
-        miles_driven = data['odometer'] - prev_record['odometer']
-        if miles_driven > 0 and data['gallons'] > 0:
-            mpg = round(miles_driven / data['gallons'], 2)
-
     cursor = db.execute('''INSERT INTO fuel_records
-                          (vehicle_id, date, gallons, cost, odometer, mpg, station, missed_fillup)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                          (vehicle_id, date, gallons, cost, odometer, station, missed_fillup)
+                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
                        (vehicle_id, data['date'], data['gallons'], data['cost'],
-                        data['odometer'], mpg, data.get('station', ''), missed_fillup))
+                        data['odometer'], data.get('station', ''), missed_fillup))
+    record_id = cursor.lastrowid
+    recalculate_mpg(db, vehicle_id)
+    mpg = db.execute('SELECT mpg FROM fuel_records WHERE id = ?', (record_id,)).fetchone()['mpg']
 
     db.commit()
-    record_id = cursor.lastrowid
     db.close()
     return jsonify({'success': True, 'id': record_id, 'mpg': mpg})
 
@@ -2255,24 +2316,13 @@ def update_fuel_record(fuel_id):
               (data['date'], data['gallons'], data['cost'],
                data['odometer'], data.get('station', ''), missed_fillup, fuel_id))
 
-    # Recalculate MPG for this record
-    record = db.execute('SELECT * FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
-    vehicle_id = record['vehicle_id']
-
-    mpg = None
-    if not missed_fillup:
-        # Get previous fuel record to recalculate MPG
-        prev_record = db.execute('''SELECT * FROM fuel_records
-                                   WHERE vehicle_id = ? AND odometer < ?
-                                   ORDER BY odometer DESC LIMIT 1''',
-                                (vehicle_id, data['odometer'])).fetchone()
-
-        if prev_record:
-            miles_driven = data['odometer'] - prev_record['odometer']
-            if miles_driven > 0 and data['gallons'] > 0:
-                mpg = round(miles_driven / data['gallons'], 2)
-
-    db.execute('UPDATE fuel_records SET mpg=? WHERE id=?', (mpg, fuel_id))
+    # Recalculate the whole chain: this edit may have shifted the neighbours' MPG too
+    record = db.execute('SELECT vehicle_id FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
+    if not record:
+        db.close()
+        return jsonify({'error': 'Fuel record not found'}), 404
+    recalculate_mpg(db, record['vehicle_id'])
+    mpg = db.execute('SELECT mpg FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()['mpg']
 
     db.commit()
     db.close()
@@ -2281,9 +2331,12 @@ def update_fuel_record(fuel_id):
 @app.route('/api/fuel/<int:fuel_id>', methods=['DELETE'])
 @api_login_required
 def delete_fuel_record(fuel_id):
-    """Delete a fuel record"""
+    """Delete a fuel record and fix up the MPG of the record after it"""
     db = get_db()
+    record = db.execute('SELECT vehicle_id FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
     db.execute('DELETE FROM fuel_records WHERE id = ?', (fuel_id,))
+    if record:
+        recalculate_mpg(db, record['vehicle_id'])
     db.commit()
     db.close()
     return jsonify({'success': True})
@@ -2413,37 +2466,26 @@ def import_fuel_csv():
                     errors.append(f"Row {row_num}: Invalid numeric value")
                     continue
 
-                # Calculate MPG if possible
-                prev_record = db.execute('''SELECT * FROM fuel_records
-                                           WHERE vehicle_id = ? AND odometer < ?
-                                           ORDER BY odometer DESC LIMIT 1''',
-                                        (vehicle_id, odometer)).fetchone()
-
-                mpg = None
-                if prev_record:
-                    miles_driven = odometer - prev_record['odometer']
-                    if miles_driven > 0 and gallons > 0:
-                        mpg = round(miles_driven / gallons, 2)
-
-                # Insert fuel record
+                # Insert fuel record; MPG is computed for the whole chain below
                 db.execute('''
                     INSERT INTO fuel_records
-                    (vehicle_id, date, odometer, gallons, cost, station, mpg)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (vehicle_id, date, odometer, gallons, cost, station)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     vehicle_id,
                     row['date'],
                     odometer,
                     gallons,
                     cost,
-                    row.get('station', ''),
-                    mpg
+                    row.get('station', '')
                 ))
                 imported_count += 1
 
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
 
+        if imported_count:
+            recalculate_mpg(db, vehicle_id)
         db.commit()
         db.close()
 
@@ -2652,14 +2694,11 @@ def delete_document(doc_id):
     """Delete a document and its file"""
     db = get_db()
     doc = db.execute('SELECT file_path FROM documents WHERE id = ?', (doc_id,)).fetchone()
-    if doc and doc['file_path']:
-        full_path = os.path.join(app.config['UPLOAD_FOLDER'], '..', 'static', doc['file_path'])
-        full_path = os.path.join('static', doc['file_path'])
-        if os.path.exists(full_path):
-            os.remove(full_path)
     db.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
     db.commit()
     db.close()
+    if doc:
+        remove_upload(doc['file_path'])
     return jsonify({'success': True})
 
 # Global search endpoint
