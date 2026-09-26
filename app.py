@@ -352,34 +352,39 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-        # Migration: Drop location column from fuel_records table
-        try:
-            # SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
-            db.execute('''CREATE TABLE IF NOT EXISTS fuel_records_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                vehicle_id INTEGER NOT NULL,
-                date DATE NOT NULL,
-                gallons REAL NOT NULL,
-                cost REAL NOT NULL,
-                odometer INTEGER NOT NULL,
-                station TEXT,
-                mpg REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
-            )''')
+        # Migration: Drop location column from fuel_records table.
+        # Only rebuild while the old column still exists: the rebuilt table has
+        # no missed_fillup column, so running this on every startup wiped the
+        # missed_fillup flag on every fuel record.
+        fuel_columns = [row['name'] for row in db.execute('PRAGMA table_info(fuel_records)')]
+        if 'location' in fuel_columns:
+            try:
+                # SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
+                db.execute('''CREATE TABLE IF NOT EXISTS fuel_records_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    vehicle_id INTEGER NOT NULL,
+                    date DATE NOT NULL,
+                    gallons REAL NOT NULL,
+                    cost REAL NOT NULL,
+                    odometer INTEGER NOT NULL,
+                    station TEXT,
+                    mpg REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
+                )''')
 
-            # Copy data from old table to new table
-            db.execute('''INSERT INTO fuel_records_new (id, vehicle_id, date, gallons, cost, odometer, station, mpg, created_at)
-                         SELECT id, vehicle_id, date, gallons, cost, odometer, station, mpg, created_at
-                         FROM fuel_records''')
+                # Copy data from old table to new table
+                db.execute('''INSERT INTO fuel_records_new (id, vehicle_id, date, gallons, cost, odometer, station, mpg, created_at)
+                             SELECT id, vehicle_id, date, gallons, cost, odometer, station, mpg, created_at
+                             FROM fuel_records''')
 
-            # Drop old table and rename new table
-            db.execute('DROP TABLE fuel_records')
-            db.execute('ALTER TABLE fuel_records_new RENAME TO fuel_records')
-            db.commit()
-        except sqlite3.OperationalError as e:
-            # Table already migrated or error
-            pass
+                # Drop old table and rename new table
+                db.execute('DROP TABLE fuel_records')
+                db.execute('ALTER TABLE fuel_records_new RENAME TO fuel_records')
+                db.commit()
+            except sqlite3.OperationalError as e:
+                # Table already migrated or error
+                pass
 
         # Migration: Add missed_fillup column to fuel_records
         try:
