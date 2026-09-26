@@ -74,3 +74,13 @@ def test_startup_repairs_stale_mpg(client, vehicle_id, monkeypatch):
 
     app_module.init_db()
     assert _mpgs(client, vehicle_id) == {1000: None, 1300: 30.0}
+
+
+def test_restart_keeps_missed_fillup_flag(client, vehicle_id):
+    import app as app_module
+    _add(client, vehicle_id, 1000, 10)
+    _add(client, vehicle_id, 1300, 10, missed_fillup=True)
+
+    app_module.init_db()  # what every service restart runs
+    records = client.get(f'/api/fuel?vehicle_id={vehicle_id}').get_json()
+    assert {r['odometer']: r['missed_fillup'] for r in records} == {1000: 0, 1300: 1}

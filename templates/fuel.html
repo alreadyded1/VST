@@ -3,7 +3,7 @@
 {% block title %}Fuel Tracker - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/vendor/chart.umd.js') }}"></script>
 <h1>Fuel Tracker</h1>
 
 <style>
@@ -703,6 +703,9 @@ async function importCSV(event) {
 }
 
 function updateCharts(records) {
+    // Charts are optional: if Chart.js failed to load, still show the records
+    if (typeof Chart === 'undefined') return;
+
     // Filter records with MPG data and sort by date
     const recordsWithMpg = records.filter(r => r.mpg !== null && r.mpg > 0)
         .sort((a, b) => new Date(a.date) - new Date(b.date));
