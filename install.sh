@@ -64,6 +64,7 @@ echo ""
 echo "Step 7: Creating upload and data directories..."
 mkdir -p "$INSTALL_DIR/static/uploads/receipts"
 mkdir -p "$INSTALL_DIR/static/uploads/vehicles"
+mkdir -p "$INSTALL_DIR/static/uploads/documents"
 mkdir -p "$INSTALL_DIR/instance"
 
 # Set permissions
@@ -85,7 +86,8 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
-ExecStart=$INSTALL_DIR/venv/bin/python app.py
+# Production WSGI server; settings in gunicorn.conf.py
+ExecStart=$INSTALL_DIR/venv/bin/gunicorn wsgi:app
 Restart=always
 RestartSec=10
 

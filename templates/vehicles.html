@@ -228,85 +228,32 @@ async function loadVehicles() {
 }
 
 async function loadAllVehicleStats() {
-    // Load stats for each vehicle
-    const statsPromises = allVehicles.map(vehicle => loadVehicleStats(vehicle.id));
-    const stats = await Promise.all(statsPromises);
-
-    // Store stats by vehicle ID
-    allVehicles.forEach((vehicle, index) => {
-        vehicleStats[vehicle.id] = stats[index];
-    });
-}
-
-async function loadVehicleStats(vehicleId) {
+    // One request for every vehicle's totals, computed server-side
     try {
-        // Fetch services and fuel records in parallel
-        const [services, fuelRecords] = await Promise.all([
-            fetchAPI(`/api/services?vehicle_id=${vehicleId}`),
-            fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`)
-        ]);
-
-        // Calculate year-to-date costs
-        const currentYear = new Date().getFullYear();
-        const ytdServices = services.filter(s => parseLocalDate(s.date).getFullYear() === currentYear);
-        const ytdFuel = fuelRecords.filter(f => parseLocalDate(f.date).getFullYear() === currentYear);
-
-        const ytdServiceCost = ytdServices.reduce((sum, s) => sum + (s.cost || 0) + (s.supplies_cost || 0), 0);
-        const ytdFuelCost = ytdFuel.reduce((sum, f) => sum + (f.cost || 0), 0);
-
-        // Calculate all-time costs
-        const totalServiceCost = services.reduce((sum, s) => sum + (s.cost || 0) + (s.supplies_cost || 0), 0);
-        const totalFuelCost = fuelRecords.reduce((sum, f) => sum + (f.cost || 0), 0);
-
-        // Get last service and fuel dates
-        const lastService = services.length > 0 ? services[0].date : null;
-        const lastFuel = fuelRecords.length > 0 ? fuelRecords[0].date : null;
-
-        // Get current odometer (latest from fuel or service)
-        let currentOdometer = null;
-        const fuelOdometers = fuelRecords.map(f => f.odometer).filter(o => o);
-        const serviceOdometers = services.map(s => s.odometer).filter(o => o);
-        const allOdometers = [...fuelOdometers, ...serviceOdometers];
-        if (allOdometers.length > 0) {
-            currentOdometer = Math.max(...allOdometers);
-        }
-
-        // Calculate average MPG
-        const recordsWithMpg = fuelRecords.filter(f => f.mpg && f.mpg > 0);
-        const avgMpg = recordsWithMpg.length > 0
-            ? recordsWithMpg.reduce((sum, f) => sum + f.mpg, 0) / recordsWithMpg.length
-            : null;
-
-        return {
-            ytdServiceCost,
-            ytdFuelCost,
-            ytdTotalCost: ytdServiceCost + ytdFuelCost,
-            totalServiceCost,
-            totalFuelCost,
-            totalAllTimeCost: totalServiceCost + totalFuelCost,
-            lastService,
-            lastFuel,
-            currentOdometer,
-            avgMpg,
-            serviceCount: services.length,
-            fuelRecordCount: fuelRecords.length
-        };
+        const params = new URLSearchParams({ year: new Date().getFullYear() });
+        const summary = await fetchAPI(`/api/vehicles/summary?${params}`);
+        vehicleStats = {};
+        allVehicles.forEach(vehicle => {
+            const s = summary[vehicle.id];
+            if (!s) return;
+            vehicleStats[vehicle.id] = {
+                ytdServiceCost: s.ytd_service_cost,
+                ytdFuelCost: s.ytd_fuel_cost,
+                ytdTotalCost: s.ytd_total_cost,
+                totalServiceCost: s.total_service_cost,
+                totalFuelCost: s.total_fuel_cost,
+                totalAllTimeCost: s.total_all_time_cost,
+                lastService: s.last_service,
+                lastFuel: s.last_fuel,
+                currentOdometer: s.current_odometer,
+                avgMpg: s.avg_mpg,
+                serviceCount: s.service_count,
+                fuelRecordCount: s.fuel_record_count
+            };
+        });
     } catch (error) {
-        console.error(`Error loading stats for vehicle ${vehicleId}:`, error);
-        return {
-            ytdServiceCost: 0,
-            ytdFuelCost: 0,
-            ytdTotalCost: 0,
-            totalServiceCost: 0,
-            totalFuelCost: 0,
-            totalAllTimeCost: 0,
-            lastService: null,
-            lastFuel: null,
-            currentOdometer: null,
-            avgMpg: null,
-            serviceCount: 0,
-            fuelRecordCount: 0
-        };
+        console.error('Error loading vehicle stats:', error);
+        vehicleStats = {};
     }
 }
 
@@ -321,7 +268,7 @@ function displayVehicles(vehicles) {
     let html = '<div style="display: flex; flex-direction: column; gap: 1.5rem;">';
 
     vehicles.forEach(vehicle => {
-        const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
+        const nickname = escapeHtml(vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`);
         const imageSrc = vehicle.picture ? `/static/${vehicle.picture}` : '';
         const stats = vehicleStats[vehicle.id] || {};
 
@@ -340,13 +287,13 @@ function displayVehicles(vehicles) {
                     <div style="padding: 1.5rem; display: flex; flex-direction: column; justify-content: space-between;">
                         <div>
                             <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem; color: var(--primary-color);">${nickname}</h3>
-                            <p style="margin: 0 0 0.75rem 0; font-size: 1.1rem;"><strong>${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}</strong></p>
+                            <p style="margin: 0 0 0.75rem 0; font-size: 1.1rem;"><strong>${escapeHtml(`${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`)}</strong></p>
 
                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
                                 ${vehicle.engine ? `
                                 <div>
                                     <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Engine</p>
-                                    <p style="margin: 0; font-weight: 600;">${vehicle.engine}</p>
+                                    <p style="margin: 0; font-weight: 600;">${escapeHtml(vehicle.engine)}</p>
                                 </div>` : ''}
                                 ${stats.currentOdometer ? `
                                 <div>
@@ -368,7 +315,7 @@ function displayVehicles(vehicles) {
                                 </div>
                             </div>
 
-                            ${vehicle.vin ? `<p style="margin: 0.5rem 0 0 0;"><small style="color: var(--light-text);">VIN: ${vehicle.vin}</small></p>` : ''}
+                            ${vehicle.vin ? `<p style="margin: 0.5rem 0 0 0;"><small style="color: var(--light-text);">VIN: ${escapeHtml(vehicle.vin)}</small></p>` : ''}
                         </div>
 
                         <!-- Action Buttons -->
@@ -646,28 +593,28 @@ function displayVINDecodeResults(data) {
     // Check for errors
     if (data.error_codes && data.error_codes !== '0') {
         html += `<div class="alert alert-warning" style="padding: 1rem; background: var(--warning-color); color: white; border-radius: 8px;">
-            <strong>Warning:</strong> ${data.error_text || 'Some errors occurred during decoding'}
+            <strong>Warning:</strong> ${escapeHtml(data.error_text || 'Some errors occurred during decoding')}
         </div>`;
     }
 
     // Display vehicle information
     html += '<div class="form-row">';
-    html += `<div class="form-group"><label>VIN:</label><p>${data.vin || 'N/A'}</p></div>`;
-    html += `<div class="form-group"><label>Year:</label><p>${data.year || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>VIN:</label><p>${escapeHtml(data.vin || 'N/A')}</p></div>`;
+    html += `<div class="form-group"><label>Year:</label><p>${escapeHtml(data.year || 'N/A')}</p></div>`;
     html += '</div>';
 
     html += '<div class="form-row">';
-    html += `<div class="form-group"><label>Manufacturer:</label><p>${data.manufacturer || 'N/A'}</p></div>`;
-    html += `<div class="form-group"><label>Model:</label><p>${data.model || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>Manufacturer:</label><p>${escapeHtml(data.manufacturer || 'N/A')}</p></div>`;
+    html += `<div class="form-group"><label>Model:</label><p>${escapeHtml(data.model || 'N/A')}</p></div>`;
     html += '</div>';
 
     html += '<div class="form-row">';
-    html += `<div class="form-group"><label>Body Type:</label><p>${data.body_type || 'N/A'}</p></div>`;
-    html += `<div class="form-group"><label>Vehicle Type:</label><p>${data.vehicle_type || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>Body Type:</label><p>${escapeHtml(data.body_type || 'N/A')}</p></div>`;
+    html += `<div class="form-group"><label>Vehicle Type:</label><p>${escapeHtml(data.vehicle_type || 'N/A')}</p></div>`;
     html += '</div>';
 
     html += '<div class="form-row">';
-    html += `<div class="form-group"><label>Engine:</label><p>${data.engine || 'N/A'}</p></div>`;
+    html += `<div class="form-group"><label>Engine:</label><p>${escapeHtml(data.engine || 'N/A')}</p></div>`;
     html += '</div>';
 
     // Plant information
@@ -675,9 +622,9 @@ function displayVINDecodeResults(data) {
         html += '<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">';
         html += '<h4>Manufacturing Plant</h4>';
         html += '<div class="form-row">';
-        html += `<div class="form-group"><label>City:</label><p>${data.plant_city || 'N/A'}</p></div>`;
-        html += `<div class="form-group"><label>State:</label><p>${data.plant_state || 'N/A'}</p></div>`;
-        html += `<div class="form-group"><label>Country:</label><p>${data.plant_country || 'N/A'}</p></div>`;
+        html += `<div class="form-group"><label>City:</label><p>${escapeHtml(data.plant_city || 'N/A')}</p></div>`;
+        html += `<div class="form-group"><label>State:</label><p>${escapeHtml(data.plant_state || 'N/A')}</p></div>`;
+        html += `<div class="form-group"><label>Country:</label><p>${escapeHtml(data.plant_country || 'N/A')}</p></div>`;
         html += '</div>';
         html += '</div>';
     }
@@ -753,32 +700,32 @@ function displayRecallResults(response) {
 
         response.recalls.forEach((recall, index) => {
             html += `<div class="card" style="margin-bottom: 1rem; border-left: 4px solid var(--danger-color);">
-                <h4 style="margin-bottom: 0.5rem;">Recall #${index + 1}: ${recall.nhtsa_campaign_number}</h4>
-                <p><strong>Manufacturer:</strong> ${recall.manufacturer}</p>
-                <p><strong>Component:</strong> ${recall.component || 'N/A'}</p>
-                <p><strong>Report Date:</strong> ${recall.report_date || 'N/A'}</p>
+                <h4 style="margin-bottom: 0.5rem;">Recall #${index + 1}: ${escapeHtml(recall.nhtsa_campaign_number)}</h4>
+                <p><strong>Manufacturer:</strong> ${escapeHtml(recall.manufacturer)}</p>
+                <p><strong>Component:</strong> ${escapeHtml(recall.component || 'N/A')}</p>
+                <p><strong>Report Date:</strong> ${escapeHtml(recall.report_date || 'N/A')}</p>
 
                 <div style="margin-top: 1rem;">
                     <p><strong>Subject:</strong></p>
-                    <p>${recall.subject || 'N/A'}</p>
+                    <p>${escapeHtml(recall.subject || 'N/A')}</p>
                 </div>
 
                 <div style="margin-top: 1rem;">
                     <p><strong>Summary:</strong></p>
-                    <p>${recall.summary || 'N/A'}</p>
+                    <p>${escapeHtml(recall.summary || 'N/A')}</p>
                 </div>
 
                 ${recall.consequence ? `
                 <div style="margin-top: 1rem;">
                     <p><strong>Consequence:</strong></p>
-                    <p>${recall.consequence}</p>
+                    <p>${escapeHtml(recall.consequence)}</p>
                 </div>
                 ` : ''}
 
                 ${recall.remedy ? `
                 <div style="margin-top: 1rem;">
                     <p><strong>Remedy:</strong></p>
-                    <p>${recall.remedy}</p>
+                    <p>${escapeHtml(recall.remedy)}</p>
                 </div>
                 ` : ''}
             </div>`;

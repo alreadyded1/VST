@@ -694,9 +694,9 @@ function displaySupplies() {
 
         tableHtml += `
             <tr>
-                <td>${supply.name}</td>
-                <td>${supply.part_number || '-'}</td>
-                <td>${supply.brand || '-'}</td>
+                <td>${escapeHtml(supply.name)}</td>
+                <td>${escapeHtml(supply.part_number || '-')}</td>
+                <td>${escapeHtml(supply.brand || '-')}</td>
                 <td ${quantityClass}>${quantityDisplay}</td>
                 <td>${formatCurrency(supply.cost)}</td>
                 <td>${formatCurrency(totalValue)}</td>
@@ -722,15 +722,15 @@ function displaySupplies() {
     paginatedSupplies.forEach(supply => {
         const totalValue = supply.cost * supply.quantity;
         const warrantyStatus = getWarrantyStatus(supply);
-        const title = supply.name;
+        const title = escapeHtml(supply.name);
 
         const quantityValue = supply.quantity === 0
             ? `<strong style="color: var(--danger-color)">${supply.quantity} (Out of Stock)</strong>`
             : (supply.tracked_individually ? `${supply.quantity} of ${supply.unit_count}` : supply.quantity);
 
         const fields = [
-            { label: 'Part Number', value: supply.part_number || 'N/A' },
-            { label: 'Brand', value: supply.brand || 'N/A' },
+            { label: 'Part Number', value: escapeHtml(supply.part_number || 'N/A') },
+            { label: 'Brand', value: escapeHtml(supply.brand || 'N/A') },
             { label: 'Quantity', value: quantityValue },
             { label: 'Cost/Unit', value: formatCurrency(supply.cost) },
             { label: 'Total Value', value: formatCurrency(totalValue) }
@@ -741,11 +741,11 @@ function displaySupplies() {
         }
 
         if (supply.category) {
-            fields.push({ label: 'Category', value: supply.category });
+            fields.push({ label: 'Category', value: escapeHtml(supply.category) });
         }
 
         if (supply.location) {
-            fields.push({ label: 'Location', value: supply.location });
+            fields.push({ label: 'Location', value: escapeHtml(supply.location) });
         }
 
         const actions = [
@@ -996,10 +996,10 @@ function renderUnits() {
                     <div class="mobile-card-row"><span class="mobile-card-label">Purchased</span><span class="mobile-card-value">${purchase}</span></div>
                     <div class="mobile-card-row"><span class="mobile-card-label">Installed</span><span class="mobile-card-value">${installed}</span></div>
                     <div class="mobile-card-row"><span class="mobile-card-label">Cost</span><span class="mobile-card-value">${unit.cost != null ? formatCurrency(unit.cost) : '—'}</span></div>
-                    ${unit.supplier ? `<div class="mobile-card-row"><span class="mobile-card-label">Supplier</span><span class="mobile-card-value">${unit.supplier}</span></div>` : ''}
+                    ${unit.supplier ? `<div class="mobile-card-row"><span class="mobile-card-label">Supplier</span><span class="mobile-card-value">${escapeHtml(unit.supplier)}</span></div>` : ''}
                     ${warranty && warranty !== '-' ? `<div class="mobile-card-row"><span class="mobile-card-label">Warranty</span><span class="mobile-card-value">${warranty}</span></div>` : ''}
                     ${unit.receipt_path ? `<div class="mobile-card-row"><span class="mobile-card-label">Receipt</span><span class="mobile-card-value"><a href="/static/${unit.receipt_path}" target="_blank">View Receipt</a></span></div>` : ''}
-                    ${unit.notes ? `<div class="mobile-card-row"><span class="mobile-card-label">Notes</span><span class="mobile-card-value">${unit.notes}</span></div>` : ''}
+                    ${unit.notes ? `<div class="mobile-card-row"><span class="mobile-card-label">Notes</span><span class="mobile-card-value">${escapeHtml(unit.notes)}</span></div>` : ''}
                 </div>
                 <div class="mobile-card-actions">
                     <button class="btn btn-small btn-secondary" onclick="editUnit(${unit.id})">Edit</button>

@@ -20,6 +20,7 @@ instance/
 # Uploads
 static/uploads/receipts/*
 static/uploads/vehicles/*
+static/uploads/documents/*
 !static/uploads/receipts/.gitkeep
 !static/uploads/vehicles/.gitkeep
 

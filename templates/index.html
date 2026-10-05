@@ -126,9 +126,9 @@ async function loadDashboard() {
                 html += `
                     <tr>
                         <td>${formatDate(service.date)}</td>
-                        <td>${service.service_provider}</td>
+                        <td>${escapeHtml(service.service_provider)}</td>
                         <td>${formatCurrency(totalCost)}</td>
-                        <td>${service.repairs_completed || 'N/A'}</td>
+                        <td>${escapeHtml(service.repairs_completed || 'N/A')}</td>
                     </tr>
                 `;
             });
@@ -154,12 +154,12 @@ async function loadDashboard() {
                 html += `
                     <div class="${className}">
                         <div class="reminder-header">
-                            <span class="reminder-title">${reminder.service_type}</span>
+                            <span class="reminder-title">${escapeHtml(reminder.service_type)}</span>
                             ${isOverdue ? '<span style="color: var(--danger-color); font-weight: bold;">OVERDUE</span>' : ''}
                         </div>
                         ${reminder.due_date ? `<p>Due: ${formatDate(reminder.due_date)}</p>` : ''}
                         ${reminder.due_mileage ? `<p>Due at: ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
-                        ${reminder.notes ? `<p>${reminder.notes}</p>` : ''}
+                        ${reminder.notes ? `<p>${escapeHtml(reminder.notes)}</p>` : ''}
                     </div>
                 `;
             });

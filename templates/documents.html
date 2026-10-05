@@ -158,7 +158,7 @@ function renderDocuments(docs) {
     let html = '';
     Object.keys(grouped).sort().forEach(category => {
         const color = CATEGORY_COLORS[category] || '#7f8c8d';
-        html += `<h3 style="margin: 1.5rem 0 0.75rem; color: ${color}; border-bottom: 2px solid ${color}; padding-bottom: 0.25rem;">${category}</h3>`;
+        html += `<h3 style="margin: 1.5rem 0 0.75rem; color: ${color}; border-bottom: 2px solid ${color}; padding-bottom: 0.25rem;">${escapeHtml(category)}</h3>`;
         html += '<div class="documents-grid">';
         grouped[category].forEach(doc => {
             html += buildDocCard(doc, color);

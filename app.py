@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash, make_response, g
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, make_response, g, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
+import posixpath
 import sqlite3
 import os
 import secrets
@@ -13,17 +14,49 @@ import json
 import csv
 import io
 import requests
+from urllib.parse import quote
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+
+DATABASE = 'instance/vehicle_tracker.db'
+
+
+def _load_or_create_secret(name):
+    """Return a random secret persisted under instance/, creating it on first
+    use. A hardcoded fallback would let anyone forge session cookies; a
+    per-process random one would log everyone out (and void every JWT) on
+    each restart."""
+    path = os.path.join(os.path.dirname(DATABASE) or '.', name)
+    try:
+        with open(path) as f:
+            value = f.read().strip()
+            if value:
+                return value
+    except OSError:
+        pass
+    value = secrets.token_hex(32)
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(value)
+    return value
+
+
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or _load_or_create_secret('secret_key')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY') or _load_or_create_secret('jwt_secret_key')
+# Lax keeps the session cookie off cross-site POST/PUT/DELETE requests, which
+# is the app's CSRF protection for the browser UI.
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
 app.config['UPLOAD_FOLDER'] = os.path.join(app.static_folder, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'webp'}
 
-CORS(app, resources={r'/api/*': {'origins': '*'}}, supports_credentials=True)
+# API clients (iOS) authenticate with Bearer tokens, so cross-origin requests
+# never need cookies. Allowing credentials with a wildcard origin would let
+# any website read the API with a logged-in user's session.
+CORS(app, resources={r'/api/*': {'origins': '*'}}, supports_credentials=False)
 
 @app.context_processor
 def inject_static_version():
@@ -36,8 +69,6 @@ def inject_static_version():
             return 0
     return {'static_v': static_v}
 
-DATABASE = 'instance/vehicle_tracker.db'
-
 # Flask-Login setup
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -46,7 +77,9 @@ login_manager.login_message = 'Please log in to access this page.'
 
 def get_db():
     """Create database connection"""
-    conn = sqlite3.connect(DATABASE)
+    # Wait for a lock rather than failing at once: under gunicorn several
+    # worker processes share the database file
+    conn = sqlite3.connect(DATABASE, timeout=15)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -81,7 +114,8 @@ def admin_required(f):
 
 def _generate_access_token(user_id, username, is_admin):
     payload = {
-        'sub': user_id,
+        # RFC 7519 requires a string subject; PyJWT >= 2.10 rejects ints
+        'sub': str(user_id),
         'username': username,
         'is_admin': bool(is_admin),
         'iat': datetime.now(timezone.utc),
@@ -114,11 +148,20 @@ def _get_jwt_user():
         data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
         if data.get('type') != 'access':
             return None
-        return User(data['sub'], data['username'], data['is_admin'])
-    except jwt.ExpiredSignatureError:
+        return User(int(data['sub']), data['username'], data['is_admin'])
+    except (jwt.InvalidTokenError, KeyError, ValueError):
         return None
-    except jwt.InvalidTokenError:
-        return None
+
+
+def _api_user():
+    """The authenticated user for an API request, whether it came in with a
+    JWT or a browser session. current_user alone is anonymous for JWT
+    requests."""
+    return g.get('jwt_user') or current_user
+
+
+def _revoke_refresh_tokens(db, user_id):
+    db.execute('DELETE FROM refresh_tokens WHERE user_id = ?', (user_id,))
 
 
 def api_login_required(f):
@@ -155,10 +198,37 @@ def api_admin_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def _is_upload_request():
+    """True if this request is for a file under static/uploads/. The path is
+    normalized the way the static file handler will resolve it, so variants
+    like /static/./uploads/x or /static//uploads/x are caught too."""
+    if request.endpoint != 'static':
+        return False
+    filename = posixpath.normpath((request.view_args or {}).get('filename', '')).lstrip('/')
+    return filename == 'uploads' or filename.startswith('uploads/')
+
+@app.before_request
+def protect_uploads():
+    """Receipts, documents and vehicle photos are private: serve them only
+    to a logged-in user (browser session or Bearer token)."""
+    if _is_upload_request() and _get_jwt_user() is None and not current_user.is_authenticated:
+        return jsonify({'error': 'Authentication required'}), 401
+
+@app.after_request
+def no_shared_caching_of_uploads(response):
+    if _is_upload_request():
+        # Browser may cache for this user; proxies must not share it
+        response.headers['Cache-Control'] = 'private, no-cache'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
 def init_db():
     """Initialize database with schema"""
     with app.app_context():
         db = get_db()
+        # WAL lets readers proceed while another process writes; the mode is
+        # stored in the database file, so this only has to run once
+        db.execute('PRAGMA journal_mode=WAL')
         db.executescript('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,6 +323,14 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             );
+
+            CREATE TABLE IF NOT EXISTS login_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                username TEXT NOT NULL,
+                attempted_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_login_failures_ip ON login_failures(ip, attempted_at);
         ''')
 
         # Migration: Add brand column to supplies table if it doesn't exist
@@ -322,7 +400,7 @@ def init_db():
         parts_tracking_migrations = [
             'ALTER TABLE supplies ADD COLUMN category TEXT',
             'ALTER TABLE supplies ADD COLUMN location TEXT',
-            'ALTER TABLE supplies ADD COLUMN condition TEXT DEFAULT "New"',
+            "ALTER TABLE supplies ADD COLUMN condition TEXT DEFAULT 'New'",
             'ALTER TABLE supplies ADD COLUMN supplier TEXT',
             'ALTER TABLE supplies ADD COLUMN purchase_date DATE',
             'ALTER TABLE supplies ADD COLUMN installation_date DATE',
@@ -656,6 +734,21 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+def save_upload(field, subdir):
+    """Save the uploaded file in request.files[field] under uploads/<subdir>
+    and return its static-relative path, or None if nothing valid was sent.
+    The random suffix keeps two uploads of the same name in the same second
+    from overwriting each other."""
+    file = request.files.get(field)
+    if not (file and file.filename and allowed_file(file.filename)):
+        return None
+    filename = (f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}_"
+                f"{secure_filename(file.filename)}")
+    folder = os.path.join(app.config['UPLOAD_FOLDER'], subdir)
+    os.makedirs(folder, exist_ok=True)
+    file.save(os.path.join(folder, filename))
+    return f'uploads/{subdir}/{filename}'
+
 def remove_upload(static_path):
     """Delete an uploaded file given its static-relative path (e.g.
     'uploads/receipts/x.pdf'). Missing files are ignored."""
@@ -667,6 +760,74 @@ def remove_upload(static_path):
     except OSError:
         pass
 
+# Failed-login throttling. Attempts are recorded in the database (not in
+# memory) so the limits hold across gunicorn worker processes.
+LOGIN_WINDOW = timedelta(minutes=15)
+MAX_FAILURES_PER_ACCOUNT = 5    # per client IP + username
+MAX_FAILURES_PER_IP = 20        # per client IP, any usernames
+DEFAULT_ADMIN_PASSWORD = 'admin'
+
+
+def _login_retry_after(db, ip, username):
+    """Seconds until this IP may try this username again, or 0 if allowed"""
+    now = datetime.now(timezone.utc)
+    db.execute('DELETE FROM login_failures WHERE attempted_at < ?',
+               ((now - LOGIN_WINDOW).isoformat(),))
+    for where, params, limit in (('ip = ? AND username = ?', (ip, username), MAX_FAILURES_PER_ACCOUNT),
+                                 ('ip = ?', (ip,), MAX_FAILURES_PER_IP)):
+        rows = db.execute(f'''SELECT attempted_at FROM login_failures WHERE {where}
+                              ORDER BY attempted_at DESC LIMIT ?''', params + (limit,)).fetchall()
+        if len(rows) >= limit:
+            # Sliding window: allowed again once the oldest of the last
+            # `limit` failures is older than the window
+            oldest = datetime.fromisoformat(rows[-1]['attempted_at'])
+            return max(1, int((oldest + LOGIN_WINDOW - now).total_seconds()) + 1)
+    return 0
+
+
+def authenticate(username, password):
+    """Check credentials, enforcing the failed-login limits.
+    Returns (user_row or None, retry_after_seconds)."""
+    ip = request.remote_addr or 'unknown'
+    username = username or ''
+    db = get_db()
+    try:
+        retry_after = _login_retry_after(db, ip, username)
+        if retry_after:
+            db.commit()
+            return None, retry_after
+        user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        if user and password and check_password_hash(user['password_hash'], password):
+            db.execute('DELETE FROM login_failures WHERE ip = ? AND username = ?', (ip, username))
+            db.commit()
+            return user, 0
+        db.execute('INSERT INTO login_failures (ip, username, attempted_at) VALUES (?, ?, ?)',
+                   (ip, username, datetime.now(timezone.utc).isoformat()))
+        db.commit()
+        return None, 0
+    finally:
+        db.close()
+
+
+def _too_many_attempts_message(retry_after):
+    minutes = -(-retry_after // 60)  # round up
+    return f"Too many failed login attempts. Try again in {minutes} minute{'s' if minutes != 1 else ''}."
+
+
+@lru_cache(maxsize=16)
+def _is_default_password_hash(password_hash):
+    # Keyed on the hash, so a password change naturally invalidates the cache
+    return check_password_hash(password_hash, DEFAULT_ADMIN_PASSWORD)
+
+
+def default_admin_password_active():
+    """True while the built-in admin account still has its default password"""
+    db = get_db()
+    row = db.execute("SELECT password_hash FROM users WHERE username = 'admin'").fetchone()
+    db.close()
+    return bool(row) and _is_default_password_hash(row['password_hash'])
+
+
 # Authentication Routes
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -674,31 +835,41 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
 
+    status = 200
     if request.method == 'POST':
-        data = request.form
-        username = data.get('username')
-        password = data.get('password')
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user, retry_after = authenticate(username, password)
 
-        db = get_db()
-        user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-        db.close()
-
-        if user and check_password_hash(user['password_hash'], password):
-            user_obj = User(user['id'], user['username'], user['is_admin'])
-            login_user(user_obj)
-            next_page = request.args.get('next')
-            return redirect(next_page if next_page else url_for('index'))
+        if user:
+            login_user(User(user['id'], user['username'], user['is_admin']))
+            if password == DEFAULT_ADMIN_PASSWORD:
+                # Nag on every page (see base.html) until it's changed
+                session['default_password'] = True
+                return redirect(url_for('profile_page'))
+            next_page = request.args.get('next', '')
+            # Only follow same-site paths; '//host' and '/\host' are
+            # protocol-relative URLs that browsers send off-site
+            if not next_page.startswith('/') or next_page.startswith(('//', '/\\')):
+                next_page = url_for('index')
+            return redirect(next_page)
+        elif retry_after:
+            flash(_too_many_attempts_message(retry_after), 'error')
+            status = 429
         else:
             flash('Invalid username or password', 'error')
 
-    show_creds = get_setting('show_default_credentials', '1') == '1'
-    return render_template('login.html', show_default_credentials=show_creds)
+    # The hint is only useful (and only shown) while the default still works
+    show_creds = (get_setting('show_default_credentials', '1') == '1'
+                  and default_admin_password_active())
+    return render_template('login.html', show_default_credentials=show_creds), status
 
 @app.route('/logout')
 @login_required
 def logout():
     """User logout"""
     logout_user()
+    session.pop('default_password', None)
     return redirect(url_for('login'))
 
 @app.route('/profile')
@@ -818,10 +989,11 @@ def create_user():
 @api_admin_required
 def delete_user(user_id):
     """Delete a user (admin only)"""
-    if user_id == current_user.id:
+    if user_id == _api_user().id:
         return jsonify({'error': 'Cannot delete your own account'}), 400
 
     db = get_db()
+    _revoke_refresh_tokens(db, user_id)
     db.execute('DELETE FROM users WHERE id = ?', (user_id,))
     db.commit()
     db.close()
@@ -840,7 +1012,10 @@ def reset_user_password(user_id):
     db = get_db()
     password_hash = generate_password_hash(new_password)
     db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, user_id))
+    _revoke_refresh_tokens(db, user_id)
     db.commit()
+    if user_id == _api_user().id:
+        session.pop('default_password', None)
     db.close()
     return jsonify({'success': True})
 
@@ -855,16 +1030,20 @@ def change_password():
     if not current_password or not new_password:
         return jsonify({'error': 'Current and new password are required'}), 400
 
+    user_id = _api_user().id
     db = get_db()
-    user = db.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
+    user = db.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
 
-    if not check_password_hash(user['password_hash'], current_password):
+    if not user or not check_password_hash(user['password_hash'], current_password):
         db.close()
         return jsonify({'error': 'Current password is incorrect'}), 400
 
     password_hash = generate_password_hash(new_password)
-    db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, current_user.id))
+    db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, user_id))
+    # Sign out other devices: refresh tokens issued under the old password
+    _revoke_refresh_tokens(db, user_id)
     db.commit()
+    session.pop('default_password', None)
     db.close()
     return jsonify({'success': True})
 
@@ -874,16 +1053,17 @@ def change_password():
 def api_login():
     """Exchange credentials for access + refresh tokens."""
     data = request.get_json(silent=True) or {}
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
+    username = str(data.get('username') or '').strip()
+    password = str(data.get('password') or '')
     if not username or not password:
         return jsonify({'error': 'username and password required'}), 400
 
-    db = get_db()
-    user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-    db.close()
-
-    if not user or not check_password_hash(user['password_hash'], password):
+    user, retry_after = authenticate(username, password)
+    if retry_after:
+        response = jsonify({'error': _too_many_attempts_message(retry_after)})
+        response.headers['Retry-After'] = str(retry_after)
+        return response, 429
+    if not user:
         return jsonify({'error': 'Invalid credentials'}), 401
 
     access_token = _generate_access_token(user['id'], user['username'], user['is_admin'])
@@ -950,7 +1130,77 @@ def api_logout():
     return jsonify({'success': True})
 
 
+def weighted_avg_mpg(db, vehicle_id):
+    """Average MPG as total miles / total gallons over fill-ups that have an
+    MPG, or None. A plain average of per-fill-up MPG would let a small top-up
+    count as much as a full tank. Each record's miles are mpg * gallons."""
+    row = db.execute('''SELECT SUM(mpg * gallons) / SUM(gallons) AS avg
+                        FROM fuel_records
+                        WHERE vehicle_id = ? AND mpg > 0 AND gallons > 0''',
+                     (vehicle_id,)).fetchone()
+    return round(row['avg'], 2) if row['avg'] else None
+
 # Vehicle endpoints
+@app.route('/api/vehicles/summary', methods=['GET'])
+@api_login_required
+def get_vehicles_summary():
+    """Per-vehicle totals for the Vehicles page, computed in SQL instead of
+    shipping every service and fuel record to the browser. Optional `year`
+    (defaults to the current year) selects the year-to-date window."""
+    year = str(request.args.get('year', type=int) or datetime.now().year)
+    db = get_db()
+    rows = db.execute('''
+        SELECT v.id,
+               (SELECT COUNT(*) FROM service_records s WHERE s.vehicle_id = v.id) AS service_count,
+               (SELECT MAX(date) FROM service_records s WHERE s.vehicle_id = v.id) AS last_service,
+               (SELECT COUNT(*) FROM fuel_records f WHERE f.vehicle_id = v.id) AS fuel_record_count,
+               (SELECT MAX(date) FROM fuel_records f WHERE f.vehicle_id = v.id) AS last_fuel,
+               (SELECT COALESCE(SUM(cost), 0) FROM fuel_records f WHERE f.vehicle_id = v.id) AS total_fuel_cost,
+               (SELECT COALESCE(SUM(cost), 0) FROM fuel_records f
+                 WHERE f.vehicle_id = v.id AND strftime('%Y', f.date) = :year) AS ytd_fuel_cost
+        FROM vehicle v
+    ''', {'year': year}).fetchall()
+
+    # Service cost = labor/shop cost + supplies used, per service
+    service_costs = db.execute('''
+        SELECT s.vehicle_id,
+               SUM(s.cost + COALESCE(sc.supplies_cost, 0)) AS total,
+               SUM(CASE WHEN strftime('%Y', s.date) = :year
+                        THEN s.cost + COALESCE(sc.supplies_cost, 0) ELSE 0 END) AS ytd
+        FROM service_records s
+        LEFT JOIN (
+            SELECT ss.service_id, SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)) AS supplies_cost
+            FROM service_supplies ss
+            JOIN supplies sup ON sup.id = ss.supply_id
+            LEFT JOIN supply_units su ON su.id = ss.supply_unit_id
+            GROUP BY ss.service_id
+        ) sc ON sc.service_id = s.id
+        GROUP BY s.vehicle_id
+    ''', {'year': year}).fetchall()
+    service_costs = {r['vehicle_id']: r for r in service_costs}
+
+    summary = {}
+    for r in rows:
+        sc = service_costs.get(r['id'])
+        total_service = round(sc['total'], 2) if sc else 0
+        ytd_service = round(sc['ytd'], 2) if sc else 0
+        summary[r['id']] = {
+            'service_count': r['service_count'],
+            'fuel_record_count': r['fuel_record_count'],
+            'last_service': r['last_service'],
+            'last_fuel': r['last_fuel'],
+            'current_odometer': latest_odometer(db, r['id']),
+            'avg_mpg': weighted_avg_mpg(db, r['id']),
+            'total_service_cost': total_service,
+            'total_fuel_cost': round(r['total_fuel_cost'], 2),
+            'total_all_time_cost': round(total_service + r['total_fuel_cost'], 2),
+            'ytd_service_cost': ytd_service,
+            'ytd_fuel_cost': round(r['ytd_fuel_cost'], 2),
+            'ytd_total_cost': round(ytd_service + r['ytd_fuel_cost'], 2),
+        }
+    db.close()
+    return jsonify(summary)
+
 @app.route('/api/vehicles', methods=['GET'])
 @api_login_required
 def get_vehicles():
@@ -976,17 +1226,7 @@ def get_vehicle(vehicle_id):
 def add_vehicle():
     """Add new vehicle"""
     data = request.form
-    picture_path = None
-
-    if 'picture' in request.files:
-        file = request.files['picture']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'vehicles', filename)
-            file.save(filepath)
-            picture_path = f'uploads/vehicles/{filename}'
+    picture_path = save_upload('picture', 'vehicles')
 
     db = get_db()
     cursor = db.execute('''INSERT INTO vehicle (manufacturer, model, year, engine, vin, nickname, picture)
@@ -1004,33 +1244,20 @@ def add_vehicle():
 def update_vehicle(vehicle_id):
     """Update existing vehicle"""
     data = request.form
-    picture_path = None
-
-    if 'picture' in request.files:
-        file = request.files['picture']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'vehicles', filename)
-            file.save(filepath)
-            picture_path = f'uploads/vehicles/{filename}'
+    picture_path = save_upload('picture', 'vehicles')
 
     db = get_db()
-    if picture_path:
-        db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
-                     engine=?, vin=?, nickname=?, picture=? WHERE id=?''',
-                  (data['manufacturer'], data['model'], data['year'],
-                   data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
-                   picture_path, vehicle_id))
-    else:
-        db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
-                     engine=?, vin=?, nickname=? WHERE id=?''',
-                  (data['manufacturer'], data['model'], data['year'],
-                   data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
-                   vehicle_id))
+    old = db.execute('SELECT picture FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
+    # A new upload replaces the picture; otherwise keep the existing one
+    db.execute('''UPDATE vehicle SET manufacturer=?, model=?, year=?,
+                 engine=?, vin=?, nickname=?, picture=COALESCE(?, picture) WHERE id=?''',
+              (data['manufacturer'], data['model'], data['year'],
+               data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
+               picture_path, vehicle_id))
     db.commit()
     db.close()
+    if picture_path and old:
+        remove_upload(old['picture'])
     return jsonify({'success': True})
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['DELETE'])
@@ -1067,18 +1294,19 @@ def delete_vehicle(vehicle_id):
     return jsonify({'success': True})
 
 # NHTSA API Integration endpoints
+NHTSA_HEADERS = {
+    'User-Agent': 'VST-Vehicle-Tracker/1.0',
+    'Accept': 'application/json'
+}
+
 @app.route('/api/vehicle/decode-vin/<vin>', methods=['GET'])
 @api_login_required
 def decode_vin(vin):
     """Decode VIN using NHTSA API"""
     try:
         # NHTSA VIN Decoder API
-        url = f'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json'
-        headers = {
-            'User-Agent': 'VST-Vehicle-Tracker/1.0',
-            'Accept': 'application/json'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
+        url = f'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{quote(vin, safe="")}'
+        response = requests.get(url, params={'format': 'json'}, headers=NHTSA_HEADERS, timeout=10)
 
         if response.status_code == 200:
             data = response.json()
@@ -1120,132 +1348,66 @@ def decode_vin(vin):
     except Exception as e:
         return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
-@app.route('/api/vehicle/recalls', methods=['GET'])
-@api_login_required
-def check_recalls():
-    """Check for recalls using NHTSA API"""
+def _fetch_recalls(params):
+    """Query the NHTSA recalls API and return a JSON response for the client"""
     try:
-        make = request.args.get('make')
-        model = request.args.get('model')
-        year = request.args.get('year')
-
-        if not make or not model or not year:
-            return jsonify({'success': False, 'error': 'Make, model, and year are required'}), 400
-
-        # NHTSA Recalls API
-        url = f'https://api.nhtsa.gov/recalls/recallsByVehicle?make={make}&model={model}&modelYear={year}'
-        headers = {
-            'User-Agent': 'VST-Vehicle-Tracker/1.0',
-            'Accept': 'application/json'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
+        # params= URL-encodes values, so makes/models with spaces or '&' work
+        response = requests.get('https://api.nhtsa.gov/recalls/recallsByVehicle',
+                                params=params, headers=NHTSA_HEADERS, timeout=10)
 
         # NHTSA API quirk: returns 400 even for successful queries with no results
         # Check if we got valid JSON regardless of status code
-        if response.status_code in [200, 400]:
-            try:
-                data = response.json()
-
-                # Check if the API returned a valid response structure
-                if 'results' in data or 'Results' in data:
-                    # Extract recall information (handle both lowercase and uppercase keys)
-                    recalls = []
-                    results = data.get('results') or data.get('Results', [])
-
-                    if results and len(results) > 0:
-                        for recall in results:
-                            recalls.append({
-                                'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
-                                'manufacturer': recall.get('Manufacturer', ''),
-                                'subject': recall.get('Subject', ''),
-                                'summary': recall.get('Summary', ''),
-                                'consequence': recall.get('Consequence', ''),
-                                'remedy': recall.get('Remedy', ''),
-                                'report_date': recall.get('ReportReceivedDate', ''),
-                                'component': recall.get('Component', '')
-                            })
-
-                    return jsonify({
-                        'success': True,
-                        'count': len(recalls),
-                        'recalls': recalls
-                    })
-                else:
-                    return jsonify({'success': False, 'error': 'Invalid response format from NHTSA'}), 500
-            except ValueError:
-                return jsonify({'success': False, 'error': 'Invalid JSON response from NHTSA'}), 500
-        else:
+        if response.status_code not in (200, 400):
             error_msg = f'NHTSA Recalls API returned status {response.status_code}'
             if response.text:
                 error_msg += f': {response.text[:100]}'
             return jsonify({'success': False, 'error': error_msg}), 500
 
+        try:
+            data = response.json()
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid JSON response from NHTSA'}), 500
+
+        if 'results' not in data and 'Results' not in data:
+            return jsonify({'success': False, 'error': 'Invalid response format from NHTSA'}), 500
+
+        # Handle both lowercase and uppercase keys
+        results = data.get('results') or data.get('Results') or []
+        recalls = [{
+            'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
+            'manufacturer': recall.get('Manufacturer', ''),
+            'subject': recall.get('Subject', ''),
+            'summary': recall.get('Summary', ''),
+            'consequence': recall.get('Consequence', ''),
+            'remedy': recall.get('Remedy', ''),
+            'report_date': recall.get('ReportReceivedDate', ''),
+            'component': recall.get('Component', '')
+        } for recall in results]
+        return jsonify({'success': True, 'count': len(recalls), 'recalls': recalls})
+
     except requests.exceptions.Timeout:
         return jsonify({'success': False, 'error': 'Request to NHTSA API timed out. Please try again.'}), 504
     except requests.exceptions.RequestException as e:
         return jsonify({'success': False, 'error': f'Network error: {str(e)}'}), 500
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
+
+@app.route('/api/vehicle/recalls', methods=['GET'])
+@api_login_required
+def check_recalls():
+    """Check for recalls using NHTSA API"""
+    make = request.args.get('make')
+    model = request.args.get('model')
+    year = request.args.get('year')
+
+    if not make or not model or not year:
+        return jsonify({'success': False, 'error': 'Make, model, and year are required'}), 400
+
+    return _fetch_recalls({'make': make, 'model': model, 'modelYear': year})
 
 @app.route('/api/vehicle/recalls-by-vin/<vin>', methods=['GET'])
 @api_login_required
 def check_recalls_by_vin(vin):
     """Check for recalls by VIN using NHTSA API"""
-    try:
-        # NHTSA Recalls by VIN API
-        url = f'https://api.nhtsa.gov/recalls/recallsByVehicle?vin={vin}'
-        headers = {
-            'User-Agent': 'VST-Vehicle-Tracker/1.0',
-            'Accept': 'application/json'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-
-        # NHTSA API quirk: returns 400 even for successful queries with no results
-        # Check if we got valid JSON regardless of status code
-        if response.status_code in [200, 400]:
-            try:
-                data = response.json()
-
-                # Check if the API returned a valid response structure
-                if 'results' in data or 'Results' in data:
-                    # Extract recall information (handle both lowercase and uppercase keys)
-                    recalls = []
-                    results = data.get('results') or data.get('Results', [])
-
-                    if results and len(results) > 0:
-                        for recall in results:
-                            recalls.append({
-                                'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
-                                'manufacturer': recall.get('Manufacturer', ''),
-                                'subject': recall.get('Subject', ''),
-                                'summary': recall.get('Summary', ''),
-                                'consequence': recall.get('Consequence', ''),
-                                'remedy': recall.get('Remedy', ''),
-                                'report_date': recall.get('ReportReceivedDate', ''),
-                                'component': recall.get('Component', '')
-                            })
-
-                    return jsonify({
-                        'success': True,
-                        'count': len(recalls),
-                        'recalls': recalls
-                    })
-                else:
-                    return jsonify({'success': False, 'error': 'Invalid response format from NHTSA'}), 500
-            except ValueError:
-                return jsonify({'success': False, 'error': 'Invalid JSON response from NHTSA'}), 500
-        else:
-            error_msg = f'NHTSA Recalls API returned status {response.status_code}'
-            if response.text:
-                error_msg += f': {response.text[:100]}'
-            return jsonify({'success': False, 'error': error_msg}), 500
-
-    except requests.exceptions.Timeout:
-        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out. Please try again.'}), 504
-    except requests.exceptions.RequestException as e:
-        return jsonify({'success': False, 'error': f'Network error: {str(e)}'}), 500
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
+    return _fetch_recalls({'vin': vin})
 
 @app.route('/api/vehicle/recalls/create-reminders', methods=['POST'])
 @api_login_required
@@ -1266,16 +1428,17 @@ def create_recall_reminders():
             campaign_number = recall.get('nhtsa_campaign_number', '')
             subject = recall.get('subject', '')
             component = recall.get('component', '')
+            service_type = f"Recall Repair: {campaign_number}"
 
-            # Check if reminder already exists for this recall
+            # Check if reminder already exists for this recall. Exact match:
+            # a LIKE '%<number>%' with a blank number matched every reminder.
             existing = db.execute(
-                'SELECT id FROM service_reminders WHERE vehicle_id = ? AND service_type LIKE ? AND completed = 0',
-                (vehicle_id, f'%{campaign_number}%')
+                'SELECT id FROM service_reminders WHERE vehicle_id = ? AND service_type = ? AND completed = 0',
+                (vehicle_id, service_type)
             ).fetchone()
 
             if not existing:
                 # Create reminder for this recall
-                service_type = f"Recall Repair: {campaign_number}"
                 notes = f"Component: {component}\n\nSubject: {subject}\n\n"
                 notes += f"Summary: {recall.get('summary', 'N/A')}\n\n"
                 notes += f"Remedy: {recall.get('remedy', 'N/A')}"
@@ -1312,10 +1475,11 @@ def get_services():
     # Base query
     base_query = '''
         SELECT s.*,
-               COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+               COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
         FROM service_records s
         LEFT JOIN service_supplies ss ON s.id = ss.service_id
         LEFT JOIN supplies sup ON ss.supply_id = sup.id
+        LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
         {where_clause}
         GROUP BY s.id
         ORDER BY s.date DESC
@@ -1365,10 +1529,11 @@ def get_service(service_id):
     db = get_db()
     service = db.execute('''
         SELECT s.*,
-               COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+               COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
         FROM service_records s
         LEFT JOIN service_supplies ss ON s.id = ss.service_id
         LEFT JOIN supplies sup ON ss.supply_id = sup.id
+        LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
         WHERE s.id = ?
         GROUP BY s.id
     ''', (service_id,)).fetchone()
@@ -1378,10 +1543,12 @@ def get_service(service_id):
         return jsonify(None), 404
 
     supplies_used = db.execute('''
-        SELECT sup.id, sup.name, sup.cost, ss.quantity_used as quantity,
+        SELECT sup.id, sup.name, COALESCE(su.cost, sup.cost) AS cost,
+               ss.quantity_used as quantity,
                ss.supply_unit_id as unit_id, sup.tracked_individually
         FROM service_supplies ss
         JOIN supplies sup ON ss.supply_id = sup.id
+        LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
         WHERE ss.service_id = ?
     ''', (service_id,)).fetchall()
     db.close()
@@ -1401,10 +1568,11 @@ def search_services():
     if vehicle_id:
         services = db.execute('''
             SELECT s.*,
-                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+                   COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
             FROM service_records s
             LEFT JOIN service_supplies ss ON s.id = ss.service_id
             LEFT JOIN supplies sup ON ss.supply_id = sup.id
+            LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
             WHERE s.vehicle_id = ? AND (
                 LOWER(s.service_provider) LIKE ? OR
                 LOWER(s.comments) LIKE ? OR
@@ -1416,10 +1584,11 @@ def search_services():
     else:
         services = db.execute('''
             SELECT s.*,
-                   COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost
+                   COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
             FROM service_records s
             LEFT JOIN service_supplies ss ON s.id = ss.service_id
             LEFT JOIN supplies sup ON ss.supply_id = sup.id
+            LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
             WHERE LOWER(s.service_provider) LIKE ?
                OR LOWER(s.comments) LIKE ?
                OR LOWER(s.repairs_completed) LIKE ?
@@ -1440,17 +1609,7 @@ def add_service():
     if not vehicle_id:
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
-    receipt_path = None
-
-    if 'receipt' in request.files:
-        file = request.files['receipt']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
-            file.save(filepath)
-            receipt_path = f'uploads/receipts/{filename}'
+    receipt_path = save_upload('receipt', 'receipts')
 
     db = get_db()
     cursor = db.execute('''INSERT INTO service_records
@@ -1521,41 +1680,24 @@ def unlink_service_supplies(db, service_id):
 def update_service(service_id):
     """Update existing service record"""
     data = request.form
-    receipt_path = None
-
-    # Check if we're updating the receipt
-    if 'receipt' in request.files:
-        file = request.files['receipt']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
-            file.save(filepath)
-            receipt_path = f'uploads/receipts/{filename}'
+    receipt_path = save_upload('receipt', 'receipts')
 
     db = get_db()
+    old = db.execute('SELECT receipt_path FROM service_records WHERE id = ?', (service_id,)).fetchone()
 
     # Return previously used supplies to inventory (and revert tracked units)
     # before replacing the list, so editing a service doesn't permanently
     # drain stock that was never removed
     unlink_service_supplies(db, service_id)
 
-    # Update service record
-    if receipt_path:
-        db.execute('''UPDATE service_records
-                     SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?, receipt_path=?
-                     WHERE id=?''',
-                  (data['date'], data['cost'], data['service_provider'],
-                   int(data['odometer']) if data.get('odometer') else None,
-                   data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
-    else:
-        db.execute('''UPDATE service_records
-                     SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?
-                     WHERE id=?''',
-                  (data['date'], data['cost'], data['service_provider'],
-                   int(data['odometer']) if data.get('odometer') else None,
-                   data.get('comments', ''), data.get('repairs_completed', ''), service_id))
+    # Update service record; a new upload replaces the receipt
+    db.execute('''UPDATE service_records
+                 SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?,
+                     receipt_path=COALESCE(?, receipt_path)
+                 WHERE id=?''',
+              (data['date'], data['cost'], data['service_provider'],
+               int(data['odometer']) if data.get('odometer') else None,
+               data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
 
     # Add new supplies used
     if 'supplies' in data:
@@ -1563,6 +1705,8 @@ def update_service(service_id):
 
     db.commit()
     db.close()
+    if receipt_path and old:
+        remove_upload(old['receipt_path'])
     return jsonify({'success': True})
 
 @app.route('/api/services/<int:service_id>', methods=['DELETE'])
@@ -1594,11 +1738,12 @@ def export_services_csv():
         if vehicle_id:
             services = db.execute('''
                 SELECT s.date, s.service_provider, s.odometer, s.cost,
-                       COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost,
+                       COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost,
                        s.repairs_completed, s.comments
                 FROM service_records s
                 LEFT JOIN service_supplies ss ON s.id = ss.service_id
                 LEFT JOIN supplies sup ON ss.supply_id = sup.id
+                LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
                 WHERE s.vehicle_id = ?
                 GROUP BY s.id
                 ORDER BY s.date DESC
@@ -1606,11 +1751,12 @@ def export_services_csv():
         else:
             services = db.execute('''
                 SELECT s.date, s.service_provider, s.odometer, s.cost,
-                       COALESCE(SUM(ss.quantity_used * sup.cost), 0) as supplies_cost,
+                       COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost,
                        s.repairs_completed, s.comments
                 FROM service_records s
                 LEFT JOIN service_supplies ss ON s.id = ss.service_id
                 LEFT JOIN supplies sup ON ss.supply_id = sup.id
+                LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
                 GROUP BY s.id
                 ORDER BY s.date DESC
             ''').fetchall()
@@ -1791,23 +1937,38 @@ def get_supplies():
     else:
         supplies = db.execute('SELECT * FROM supplies ORDER BY name').fetchall()
 
+    # Unit counts for every tracked supply in one query instead of one each
+    unit_counts = {r['supply_id']: r for r in db.execute('''
+        SELECT supply_id, COUNT(*) AS total,
+               SUM(CASE WHEN status = 'in_stock' THEN 1 ELSE 0 END) AS in_stock
+        FROM supply_units GROUP BY supply_id
+    ''').fetchall()}
+
     result = []
     for row in supplies:
         supply = dict(row)
         if supply.get('tracked_individually'):
             # Derived quantity: count of in-stock units. The stored
             # supplies.quantity is not authoritative for tracked supplies.
-            counts = db.execute('''
-                SELECT COUNT(*) AS total,
-                       SUM(CASE WHEN status = 'in_stock' THEN 1 ELSE 0 END) AS in_stock
-                FROM supply_units WHERE supply_id = ?
-            ''', (supply['id'],)).fetchone()
-            supply['quantity'] = counts['in_stock'] or 0
-            supply['unit_count'] = counts['total'] or 0
+            counts = unit_counts.get(supply['id'])
+            supply['quantity'] = (counts['in_stock'] or 0) if counts else 0
+            supply['unit_count'] = counts['total'] if counts else 0
         result.append(supply)
 
     db.close()
     return jsonify(result)
+
+def add_reorder_reminder(db, vehicle_id, name, part_number):
+    """Add a "Re-order <part>" reminder unless an open one already exists, so
+    re-saving a supply that sits at quantity 1 doesn't pile up duplicates."""
+    service_type = f"Re-order {name}" + (f" ({part_number})" if part_number else '')
+    exists = db.execute('''SELECT 1 FROM service_reminders
+                           WHERE vehicle_id = ? AND service_type = ? AND completed = 0''',
+                        (vehicle_id, service_type)).fetchone()
+    if not exists:
+        db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, notes, completed)
+                      VALUES (?, ?, ?, 0)''',
+                   (vehicle_id, service_type, 'Part quantity is at 1. Consider re-ordering soon.'))
 
 @app.route('/api/supplies', methods=['POST'])
 @api_login_required
@@ -1819,17 +1980,7 @@ def add_supply():
     if not vehicle_id:
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
-    receipt_path = None
-
-    if 'receipt' in request.files:
-        file = request.files['receipt']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
-            file.save(filepath)
-            receipt_path = f'uploads/receipts/{filename}'
+    receipt_path = save_upload('receipt', 'receipts')
 
     # Get remind_to_reorder checkbox value (defaults to False if not checked)
     remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
@@ -1861,17 +2012,9 @@ def add_supply():
                         data.get('purchase_date', None), data.get('installation_date', None),
                         data.get('notes', ''), tracked_individually))
 
-    # Create reminder if quantity is 1 AND remind_to_reorder is checked
     supply_id = cursor.lastrowid
     if not tracked_individually and int(data['quantity']) == 1 and remind_to_reorder:
-        part_name = f"{data['name']}"
-        if data.get('part_number'):
-            part_name += f" ({data.get('part_number')})"
-
-        db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, notes, completed)
-                     VALUES (?, ?, ?, ?)''',
-                  (vehicle_id, f"Re-order {part_name}",
-                   'Part quantity is at 1. Consider re-ordering soon.', 0))
+        add_reorder_reminder(db, vehicle_id, data['name'], data.get('part_number'))
 
     db.commit()
     db.close()
@@ -1882,18 +2025,7 @@ def add_supply():
 def update_supply(supply_id):
     """Update supply/part"""
     data = request.form
-    receipt_path = None
-
-    # Check if we're updating the receipt
-    if 'receipt' in request.files:
-        file = request.files['receipt']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
-            file.save(filepath)
-            receipt_path = f'uploads/receipts/{filename}'
+    receipt_path = save_upload('receipt', 'receipts')
 
     # Get remind_to_reorder checkbox value (defaults to False if not checked)
     remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
@@ -1905,67 +2037,44 @@ def update_supply(supply_id):
 
     db = get_db()
 
-    # Get current supply for vehicle_id
     current_supply = db.execute('SELECT * FROM supplies WHERE id = ?', (supply_id,)).fetchone()
+    if not current_supply:
+        db.close()
+        return jsonify({'error': 'Supply not found'}), 404
     vehicle_id = current_supply['vehicle_id']
 
     # Tracked supplies derive quantity from units — the edit form must not
     # write it. Keep whatever is stored (it's ignored by GET anyway).
     quantity = current_supply['quantity'] if tracked_individually else data['quantity']
 
-    # Update supply record
-    if receipt_path:
-        db.execute('''UPDATE supplies
-                     SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                         warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                         warranty_mileage_limit=?, warranty_lifetime=?, receipt_path=?, remind_to_reorder=?,
-                         category=?, location=?, condition=?, supplier=?, purchase_date=?,
-                         installation_date=?, notes=?, tracked_individually=?
-                     WHERE id=?''',
-                  (data['name'], data.get('part_number', ''),
-                   data.get('brand', ''), data['cost'], quantity,
-                   data.get('warranty_start_date', None),
-                   int(data['warranty_months']) if data.get('warranty_months') else None,
-                   int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
-                   int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   warranty_lifetime, receipt_path, remind_to_reorder,
-                   data.get('category', ''), data.get('location', ''),
-                   data.get('condition', 'New'), data.get('supplier', ''),
-                   data.get('purchase_date', None), data.get('installation_date', None),
-                   data.get('notes', ''), tracked_individually, supply_id))
-    else:
-        db.execute('''UPDATE supplies
-                     SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                         warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                         warranty_mileage_limit=?, warranty_lifetime=?, remind_to_reorder=?,
-                         category=?, location=?, condition=?, supplier=?, purchase_date=?,
-                         installation_date=?, notes=?, tracked_individually=?
-                     WHERE id=?''',
-                  (data['name'], data.get('part_number', ''),
-                   data.get('brand', ''), data['cost'], quantity,
-                   data.get('warranty_start_date', None),
-                   int(data['warranty_months']) if data.get('warranty_months') else None,
-                   int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
-                   int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   warranty_lifetime, remind_to_reorder,
-                   data.get('category', ''), data.get('location', ''),
-                   data.get('condition', 'New'), data.get('supplier', ''),
-                   data.get('purchase_date', None), data.get('installation_date', None),
-                   data.get('notes', ''), tracked_individually, supply_id))
+    # Update supply record; a new upload replaces the receipt
+    db.execute('''UPDATE supplies
+                 SET name=?, part_number=?, brand=?, cost=?, quantity=?,
+                     warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
+                     warranty_mileage_limit=?, warranty_lifetime=?,
+                     receipt_path=COALESCE(?, receipt_path), remind_to_reorder=?,
+                     category=?, location=?, condition=?, supplier=?, purchase_date=?,
+                     installation_date=?, notes=?, tracked_individually=?
+                 WHERE id=?''',
+              (data['name'], data.get('part_number', ''),
+               data.get('brand', ''), data['cost'], quantity,
+               data.get('warranty_start_date', None),
+               int(data['warranty_months']) if data.get('warranty_months') else None,
+               int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
+               int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
+               warranty_lifetime, receipt_path, remind_to_reorder,
+               data.get('category', ''), data.get('location', ''),
+               data.get('condition', 'New'), data.get('supplier', ''),
+               data.get('purchase_date', None), data.get('installation_date', None),
+               data.get('notes', ''), tracked_individually, supply_id))
 
-    # Create reminder if quantity is 1 AND remind_to_reorder is checked
     if not tracked_individually and int(data['quantity']) == 1 and remind_to_reorder:
-        part_name = f"{data['name']}"
-        if data.get('part_number'):
-            part_name += f" ({data.get('part_number')})"
-
-        db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, notes, completed)
-                     VALUES (?, ?, ?, ?)''',
-                  (vehicle_id, f"Re-order {part_name}",
-                   'Part quantity is at 1. Consider re-ordering soon.', 0))
+        add_reorder_reminder(db, vehicle_id, data['name'], data.get('part_number'))
 
     db.commit()
     db.close()
+    if receipt_path:
+        remove_upload(current_supply['receipt_path'])
     return jsonify({'success': True})
 
 @app.route('/api/supplies/<int:supply_id>', methods=['DELETE'])
@@ -2040,20 +2149,6 @@ def get_supply_units(supply_id):
         result.append(u)
     return jsonify(result)
 
-def save_receipt_upload():
-    """Save an uploaded receipt file if present; returns its static path"""
-    if 'receipt' not in request.files:
-        return None
-    file = request.files['receipt']
-    if not (file and file.filename and allowed_file(file.filename)):
-        return None
-    filename = secure_filename(file.filename)
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    filename = f"{timestamp}_{filename}"
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts', filename)
-    file.save(filepath)
-    return f'uploads/receipts/{filename}'
-
 @app.route('/api/supplies/<int:supply_id>/units', methods=['POST'])
 @api_login_required
 def add_supply_units(supply_id):
@@ -2073,7 +2168,7 @@ def add_supply_units(supply_id):
         db.close()
         return jsonify({'error': 'This supply is not tracked individually'}), 400
 
-    receipt_path = save_receipt_upload()
+    receipt_path = save_upload('receipt', 'receipts')
     warranty_start = data.get('warranty_start_date') or data.get('purchase_date') or None
     for _ in range(quantity_to_add):
         db.execute('''INSERT INTO supply_units
@@ -2110,7 +2205,8 @@ def update_supply_unit(unit_id):
         return jsonify({'error': 'Invalid status'}), 400
 
     # A newly uploaded receipt replaces the old one; otherwise keep it
-    receipt_path = save_receipt_upload() or unit['receipt_path']
+    new_receipt = save_upload('receipt', 'receipts')
+    receipt_path = new_receipt or unit['receipt_path']
 
     db.execute('''UPDATE supply_units
                   SET purchase_date=?, cost=?, status=?, installation_date=?,
@@ -2131,6 +2227,8 @@ def update_supply_unit(unit_id):
                unit_id))
     db.commit()
     db.close()
+    if new_receipt:
+        remove_upload(unit['receipt_path'])
     return jsonify({'success': True})
 
 @app.route('/api/supply-units/<int:unit_id>', methods=['DELETE'])
@@ -2594,15 +2692,21 @@ def get_stats():
                        (vehicle_id,)).fetchone()
     stats['total_services'] = result['count']
 
-    # Total spent on services
-    result = db.execute('SELECT COALESCE(SUM(cost), 0) as total FROM service_records WHERE vehicle_id = ?',
-                       (vehicle_id,)).fetchone()
+    # Total spent on services, including supplies used (matches the
+    # per-service totals shown on the Services page)
+    result = db.execute('''
+        SELECT
+            (SELECT COALESCE(SUM(cost), 0) FROM service_records WHERE vehicle_id = ?)
+          + (SELECT COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0)
+             FROM service_supplies ss
+             JOIN service_records s ON s.id = ss.service_id
+             JOIN supplies sup ON sup.id = ss.supply_id
+             LEFT JOIN supply_units su ON su.id = ss.supply_unit_id
+             WHERE s.vehicle_id = ?) AS total
+    ''', (vehicle_id, vehicle_id)).fetchone()
     stats['total_spent'] = round(result['total'], 2)
 
-    # Average MPG
-    result = db.execute('SELECT AVG(mpg) as avg FROM fuel_records WHERE vehicle_id = ? AND mpg IS NOT NULL',
-                       (vehicle_id,)).fetchone()
-    stats['avg_mpg'] = round(result['avg'], 2) if result['avg'] else 0
+    stats['avg_mpg'] = weighted_avg_mpg(db, vehicle_id) or 0
 
     # Pending reminders
     result = db.execute('SELECT COUNT(*) as count FROM service_reminders WHERE vehicle_id = ? AND completed = 0',
@@ -2658,16 +2762,7 @@ def add_document():
     if not vehicle_id or not title or not category:
         return jsonify({'error': 'vehicle_id, title, and category are required'}), 400
 
-    file_path = None
-    if 'file' in request.files:
-        file = request.files['file']
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'documents', filename)
-            file.save(filepath)
-            file_path = f'uploads/documents/{filename}'
+    file_path = save_upload('file', 'documents')
 
     db = get_db()
     cursor = db.execute(
@@ -2917,6 +3012,9 @@ def get_tire_install_log():
 def delete_tire(tire_id):
     db = get_db()
     db.execute('DELETE FROM tread_readings WHERE tire_id = ?', (tire_id,))
+    db.execute('DELETE FROM tire_install_log WHERE tire_id = ?', (tire_id,))
+    # Rotations are vehicle history worth keeping; just unlink the tire set
+    db.execute('UPDATE tire_rotations SET tire_id = NULL WHERE tire_id = ?', (tire_id,))
     db.execute('DELETE FROM tires WHERE id = ?', (tire_id,))
     db.commit()
     db.close()
@@ -2928,7 +3026,7 @@ def get_tire_rotations():
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
     query = '''
-        SELECT tr.*, t.brand || COALESCE(' ' || t.model, '') AS tire_name
+        SELECT tr.*, t.brand || COALESCE(' ' || NULLIF(t.model, ''), '') AS tire_name
         FROM tire_rotations tr
         LEFT JOIN tires t ON t.id = tr.tire_id
     '''
@@ -2971,7 +3069,7 @@ def get_tread_readings():
     db = get_db()
     if vehicle_id:
         rows = db.execute(
-            '''SELECT tr.*, t.brand || CASE WHEN t.model != "" THEN " " || t.model ELSE "" END as tire_name
+            '''SELECT tr.*, t.brand || COALESCE(' ' || NULLIF(t.model, ''), '') AS tire_name
                FROM tread_readings tr
                LEFT JOIN tires t ON tr.tire_id = t.id
                WHERE tr.vehicle_id = ? ORDER BY tr.date DESC''', (vehicle_id,)
@@ -3010,15 +3108,16 @@ def delete_tread_reading(reading_id):
     db.close()
     return jsonify({'success': True})
 
-if __name__ == '__main__':
-    # Initialize database
-    if not os.path.exists('instance'):
-        os.makedirs('instance')
+def setup():
+    """Create runtime directories and bring the database schema up to date.
+    Run once per server start, before serving requests (wsgi.py does this for
+    gunicorn, in the master process before workers fork)."""
+    os.makedirs(os.path.dirname(DATABASE) or '.', exist_ok=True)
+    for sub in ('receipts', 'vehicles', 'documents'):
+        os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], sub), exist_ok=True)
     init_db()
 
-    # Ensure upload directories exist
-    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'receipts'), exist_ok=True)
-    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'vehicles'), exist_ok=True)
-    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'documents'), exist_ok=True)
-
+if __name__ == '__main__':
+    # Development server; production runs gunicorn via wsgi.py
+    setup()
     app.run(host='0.0.0.0', port=5000, debug=False)

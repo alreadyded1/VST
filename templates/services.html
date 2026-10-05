@@ -343,11 +343,9 @@ function populateSuppliesDropdown() {
     availableSupplies.forEach(supply => {
         const option = document.createElement('option');
         option.value = supply.id;
-        const qtyLabel = supply.tracked_individually ? `${supply.quantity} in stock` : `${supply.quantity} ${supply.unit}`;
-        option.textContent = `${supply.name} (${qtyLabel} @ ${formatCurrency(supply.cost)} each)`;
+        option.textContent = `${supply.name} (${supply.quantity} in stock @ ${formatCurrency(supply.cost)} each)`;
         option.dataset.supplyName = supply.name;
         option.dataset.supplyCost = supply.cost;
-        option.dataset.supplyUnit = supply.unit;
         option.dataset.supplyMaxQty = supply.quantity;
         option.dataset.tracked = supply.tracked_individually ? '1' : '0';
         select.appendChild(option);
@@ -424,8 +422,7 @@ function addSupplyToList() {
             unit_id: parseInt(unitSelect.value),
             name: selectedOption.dataset.supplyName,
             quantity: 1,
-            cost: unitCost,
-            unit: 'unit'
+            cost: unitCost
         });
 
         updateSuppliesList();
@@ -452,7 +449,7 @@ function addSupplyToList() {
     const effectiveMax = maxQty + alreadyReserved;
 
     if (quantity > effectiveMax) {
-        showAlert(`Only ${effectiveMax} ${selectedOption.dataset.supplyUnit} available`, 'warning');
+        showAlert(`Only ${effectiveMax} available`, 'warning');
         return;
     }
 
@@ -463,8 +460,7 @@ function addSupplyToList() {
             id: supplyId,
             name: selectedOption.dataset.supplyName,
             quantity: quantity,
-            cost: parseFloat(selectedOption.dataset.supplyCost),
-            unit: selectedOption.dataset.supplyUnit
+            cost: parseFloat(selectedOption.dataset.supplyCost)
         });
     }
 
@@ -518,12 +514,12 @@ function updateSuppliesList() {
 
         const detail = supply.unit_id
             ? `Unit #${supply.unit_id} — ${formatCurrency(supply.cost)}`
-            : `${supply.quantity} ${supply.unit} × ${formatCurrency(supply.cost)} = ${formatCurrency(itemCost)}`;
+            : `${supply.quantity} × ${formatCurrency(supply.cost)} = ${formatCurrency(itemCost)}`;
 
         html += `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); margin-bottom: 0.5rem;">
                 <div>
-                    <strong>${supply.name}</strong><br>
+                    <strong>${escapeHtml(supply.name)}</strong><br>
                     <small>${detail}</small>
                 </div>
                 <button type="button" class="btn btn-small btn-danger" onclick="removeSupplyFromList(${supply.id}, ${supply.unit_id || 'null'})">Remove</button>
@@ -557,10 +553,10 @@ function displayServices() {
         tableHtml += `
             <tr>
                 <td>${formatDate(service.date)}</td>
-                <td>${service.service_provider}</td>
+                <td>${escapeHtml(service.service_provider)}</td>
                 <td>${service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A'}</td>
                 <td>${formatCurrency(totalCost)}</td>
-                <td>${service.repairs_completed || 'N/A'}</td>
+                <td>${escapeHtml(service.repairs_completed || 'N/A')}</td>
                 <td>
                     ${service.receipt_path ? `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-small btn-secondary">View</a>` : 'N/A'}
                 </td>
@@ -585,13 +581,13 @@ function displayServices() {
         const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
         const fields = [
             { label: 'Date', value: formatDate(service.date) },
-            { label: 'Provider', value: service.service_provider },
+            { label: 'Provider', value: escapeHtml(service.service_provider) },
             { label: 'Odometer', value: service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A' },
             { label: 'Total Cost', value: formatCurrency(totalCost) }
         ];
 
         if (service.repairs_completed) {
-            fields.push({ label: 'Repairs', value: service.repairs_completed });
+            fields.push({ label: 'Repairs', value: escapeHtml(service.repairs_completed) });
         }
 
         const actions = [
@@ -600,7 +596,7 @@ function displayServices() {
             { label: 'Delete', class: 'btn-danger', onclick: `deleteService(${service.id})` }
         ];
 
-        cardsHtml += createMobileCard(service.service_provider, fields, actions);
+        cardsHtml += createMobileCard(escapeHtml(service.service_provider), fields, actions);
     });
     mobileCards.innerHTML = cardsHtml;
 
@@ -652,8 +648,7 @@ async function editService(serviceId) {
             unit_id: s.unit_id || undefined,
             name: s.name,
             quantity: s.quantity,
-            cost: s.cost,
-            unit: s.unit_id ? 'unit' : s.unit
+            cost: s.cost
         }));
         originalServiceSupplies = {};
         // The available-quantity cap only applies to plain consumables;
