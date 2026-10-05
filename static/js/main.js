@@ -39,6 +39,20 @@ function closeMobileMenu() {
     if (overlay) overlay.classList.remove('open');
 }
 
+// Average MPG as total miles / total gallons over fill-ups that have an MPG
+// (miles = mpg * gallons), so a small top-up doesn't count as much as a full
+// tank. Matches the server's weighted_avg_mpg(). Returns 0 if none qualify.
+function weightedAvgMpg(records) {
+    let miles = 0, gallons = 0;
+    records.forEach(r => {
+        if (r.mpg > 0 && r.gallons > 0) {
+            miles += r.mpg * r.gallons;
+            gallons += r.gallons;
+        }
+    });
+    return gallons > 0 ? miles / gallons : 0;
+}
+
 // Format currency
 function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', {

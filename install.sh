@@ -86,7 +86,8 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
-ExecStart=$INSTALL_DIR/venv/bin/python app.py
+# Production WSGI server; settings in gunicorn.conf.py
+ExecStart=$INSTALL_DIR/venv/bin/gunicorn wsgi:app
 Restart=always
 RestartSec=10
 

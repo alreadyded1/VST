@@ -62,6 +62,8 @@ echo ""
 echo "Step 4: Updating application files..."
 # Copy new files, preserving database and uploads
 cp "$TEMP_DIR/app.py" "$INSTALL_DIR/"
+cp "$TEMP_DIR/wsgi.py" "$INSTALL_DIR/"
+cp "$TEMP_DIR/gunicorn.conf.py" "$INSTALL_DIR/"
 cp "$TEMP_DIR/requirements.txt" "$INSTALL_DIR/"
 cp -r "$TEMP_DIR/templates" "$INSTALL_DIR/"
 cp -r "$TEMP_DIR/static/css" "$INSTALL_DIR/static/"
@@ -89,6 +91,28 @@ chmod 755 "$INSTALL_DIR/static/uploads/vehicles"
 mkdir -p "$INSTALL_DIR/static/uploads/documents"
 chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/static/uploads/documents"
 chmod 755 "$INSTALL_DIR/static/uploads/documents"
+
+# Older installs ran Flask's development server (python app.py); switch the
+# service to gunicorn. Rewriting the unit every time keeps it current.
+cat > /etc/systemd/system/vehicle-tracker.service << EOF
+[Unit]
+Description=Vehicle Maintenance Tracker
+After=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_DIR
+Environment="PATH=$INSTALL_DIR/venv/bin"
+# Production WSGI server; settings in gunicorn.conf.py
+ExecStart=$INSTALL_DIR/venv/bin/gunicorn wsgi:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
 
 echo ""
 echo "Step 7: Starting service..."

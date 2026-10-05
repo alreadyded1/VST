@@ -153,6 +153,7 @@ document.getElementById('passwordForm').addEventListener('submit', async functio
 
         if (response.ok && data.success) {
             alertContainer.innerHTML = '<div class="alert alert-success">Password changed successfully!</div>';
+            document.querySelectorAll('.default-password-banner').forEach(el => el.remove());
             document.getElementById('passwordForm').reset();
         } else {
             alertContainer.innerHTML = `<div class="alert alert-error">${data.error || 'Failed to change password'}</div>`;

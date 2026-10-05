@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, flash, make_response, g
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, make_response, g, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
+import posixpath
 import sqlite3
 import os
 import secrets
@@ -76,7 +77,9 @@ login_manager.login_message = 'Please log in to access this page.'
 
 def get_db():
     """Create database connection"""
-    conn = sqlite3.connect(DATABASE)
+    # Wait for a lock rather than failing at once: under gunicorn several
+    # worker processes share the database file
+    conn = sqlite3.connect(DATABASE, timeout=15)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -195,10 +198,37 @@ def api_admin_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def _is_upload_request():
+    """True if this request is for a file under static/uploads/. The path is
+    normalized the way the static file handler will resolve it, so variants
+    like /static/./uploads/x or /static//uploads/x are caught too."""
+    if request.endpoint != 'static':
+        return False
+    filename = posixpath.normpath((request.view_args or {}).get('filename', '')).lstrip('/')
+    return filename == 'uploads' or filename.startswith('uploads/')
+
+@app.before_request
+def protect_uploads():
+    """Receipts, documents and vehicle photos are private: serve them only
+    to a logged-in user (browser session or Bearer token)."""
+    if _is_upload_request() and _get_jwt_user() is None and not current_user.is_authenticated:
+        return jsonify({'error': 'Authentication required'}), 401
+
+@app.after_request
+def no_shared_caching_of_uploads(response):
+    if _is_upload_request():
+        # Browser may cache for this user; proxies must not share it
+        response.headers['Cache-Control'] = 'private, no-cache'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
 def init_db():
     """Initialize database with schema"""
     with app.app_context():
         db = get_db()
+        # WAL lets readers proceed while another process writes; the mode is
+        # stored in the database file, so this only has to run once
+        db.execute('PRAGMA journal_mode=WAL')
         db.executescript('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +323,14 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             );
+
+            CREATE TABLE IF NOT EXISTS login_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                username TEXT NOT NULL,
+                attempted_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_login_failures_ip ON login_failures(ip, attempted_at);
         ''')
 
         # Migration: Add brand column to supplies table if it doesn't exist
@@ -722,6 +760,74 @@ def remove_upload(static_path):
     except OSError:
         pass
 
+# Failed-login throttling. Attempts are recorded in the database (not in
+# memory) so the limits hold across gunicorn worker processes.
+LOGIN_WINDOW = timedelta(minutes=15)
+MAX_FAILURES_PER_ACCOUNT = 5    # per client IP + username
+MAX_FAILURES_PER_IP = 20        # per client IP, any usernames
+DEFAULT_ADMIN_PASSWORD = 'admin'
+
+
+def _login_retry_after(db, ip, username):
+    """Seconds until this IP may try this username again, or 0 if allowed"""
+    now = datetime.now(timezone.utc)
+    db.execute('DELETE FROM login_failures WHERE attempted_at < ?',
+               ((now - LOGIN_WINDOW).isoformat(),))
+    for where, params, limit in (('ip = ? AND username = ?', (ip, username), MAX_FAILURES_PER_ACCOUNT),
+                                 ('ip = ?', (ip,), MAX_FAILURES_PER_IP)):
+        rows = db.execute(f'''SELECT attempted_at FROM login_failures WHERE {where}
+                              ORDER BY attempted_at DESC LIMIT ?''', params + (limit,)).fetchall()
+        if len(rows) >= limit:
+            # Sliding window: allowed again once the oldest of the last
+            # `limit` failures is older than the window
+            oldest = datetime.fromisoformat(rows[-1]['attempted_at'])
+            return max(1, int((oldest + LOGIN_WINDOW - now).total_seconds()) + 1)
+    return 0
+
+
+def authenticate(username, password):
+    """Check credentials, enforcing the failed-login limits.
+    Returns (user_row or None, retry_after_seconds)."""
+    ip = request.remote_addr or 'unknown'
+    username = username or ''
+    db = get_db()
+    try:
+        retry_after = _login_retry_after(db, ip, username)
+        if retry_after:
+            db.commit()
+            return None, retry_after
+        user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        if user and password and check_password_hash(user['password_hash'], password):
+            db.execute('DELETE FROM login_failures WHERE ip = ? AND username = ?', (ip, username))
+            db.commit()
+            return user, 0
+        db.execute('INSERT INTO login_failures (ip, username, attempted_at) VALUES (?, ?, ?)',
+                   (ip, username, datetime.now(timezone.utc).isoformat()))
+        db.commit()
+        return None, 0
+    finally:
+        db.close()
+
+
+def _too_many_attempts_message(retry_after):
+    minutes = -(-retry_after // 60)  # round up
+    return f"Too many failed login attempts. Try again in {minutes} minute{'s' if minutes != 1 else ''}."
+
+
+@lru_cache(maxsize=16)
+def _is_default_password_hash(password_hash):
+    # Keyed on the hash, so a password change naturally invalidates the cache
+    return check_password_hash(password_hash, DEFAULT_ADMIN_PASSWORD)
+
+
+def default_admin_password_active():
+    """True while the built-in admin account still has its default password"""
+    db = get_db()
+    row = db.execute("SELECT password_hash FROM users WHERE username = 'admin'").fetchone()
+    db.close()
+    return bool(row) and _is_default_password_hash(row['password_hash'])
+
+
 # Authentication Routes
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -729,35 +835,41 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
 
+    status = 200
     if request.method == 'POST':
-        data = request.form
-        username = data.get('username')
-        password = data.get('password')
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user, retry_after = authenticate(username, password)
 
-        db = get_db()
-        user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-        db.close()
-
-        if user and password and check_password_hash(user['password_hash'], password):
-            user_obj = User(user['id'], user['username'], user['is_admin'])
-            login_user(user_obj)
+        if user:
+            login_user(User(user['id'], user['username'], user['is_admin']))
+            if password == DEFAULT_ADMIN_PASSWORD:
+                # Nag on every page (see base.html) until it's changed
+                session['default_password'] = True
+                return redirect(url_for('profile_page'))
             next_page = request.args.get('next', '')
             # Only follow same-site paths; '//host' and '/\host' are
             # protocol-relative URLs that browsers send off-site
             if not next_page.startswith('/') or next_page.startswith(('//', '/\\')):
                 next_page = url_for('index')
             return redirect(next_page)
+        elif retry_after:
+            flash(_too_many_attempts_message(retry_after), 'error')
+            status = 429
         else:
             flash('Invalid username or password', 'error')
 
-    show_creds = get_setting('show_default_credentials', '1') == '1'
-    return render_template('login.html', show_default_credentials=show_creds)
+    # The hint is only useful (and only shown) while the default still works
+    show_creds = (get_setting('show_default_credentials', '1') == '1'
+                  and default_admin_password_active())
+    return render_template('login.html', show_default_credentials=show_creds), status
 
 @app.route('/logout')
 @login_required
 def logout():
     """User logout"""
     logout_user()
+    session.pop('default_password', None)
     return redirect(url_for('login'))
 
 @app.route('/profile')
@@ -902,6 +1014,8 @@ def reset_user_password(user_id):
     db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, user_id))
     _revoke_refresh_tokens(db, user_id)
     db.commit()
+    if user_id == _api_user().id:
+        session.pop('default_password', None)
     db.close()
     return jsonify({'success': True})
 
@@ -929,6 +1043,7 @@ def change_password():
     # Sign out other devices: refresh tokens issued under the old password
     _revoke_refresh_tokens(db, user_id)
     db.commit()
+    session.pop('default_password', None)
     db.close()
     return jsonify({'success': True})
 
@@ -938,16 +1053,17 @@ def change_password():
 def api_login():
     """Exchange credentials for access + refresh tokens."""
     data = request.get_json(silent=True) or {}
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
+    username = str(data.get('username') or '').strip()
+    password = str(data.get('password') or '')
     if not username or not password:
         return jsonify({'error': 'username and password required'}), 400
 
-    db = get_db()
-    user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-    db.close()
-
-    if not user or not check_password_hash(user['password_hash'], password):
+    user, retry_after = authenticate(username, password)
+    if retry_after:
+        response = jsonify({'error': _too_many_attempts_message(retry_after)})
+        response.headers['Retry-After'] = str(retry_after)
+        return response, 429
+    if not user:
         return jsonify({'error': 'Invalid credentials'}), 401
 
     access_token = _generate_access_token(user['id'], user['username'], user['is_admin'])
@@ -1014,7 +1130,77 @@ def api_logout():
     return jsonify({'success': True})
 
 
+def weighted_avg_mpg(db, vehicle_id):
+    """Average MPG as total miles / total gallons over fill-ups that have an
+    MPG, or None. A plain average of per-fill-up MPG would let a small top-up
+    count as much as a full tank. Each record's miles are mpg * gallons."""
+    row = db.execute('''SELECT SUM(mpg * gallons) / SUM(gallons) AS avg
+                        FROM fuel_records
+                        WHERE vehicle_id = ? AND mpg > 0 AND gallons > 0''',
+                     (vehicle_id,)).fetchone()
+    return round(row['avg'], 2) if row['avg'] else None
+
 # Vehicle endpoints
+@app.route('/api/vehicles/summary', methods=['GET'])
+@api_login_required
+def get_vehicles_summary():
+    """Per-vehicle totals for the Vehicles page, computed in SQL instead of
+    shipping every service and fuel record to the browser. Optional `year`
+    (defaults to the current year) selects the year-to-date window."""
+    year = str(request.args.get('year', type=int) or datetime.now().year)
+    db = get_db()
+    rows = db.execute('''
+        SELECT v.id,
+               (SELECT COUNT(*) FROM service_records s WHERE s.vehicle_id = v.id) AS service_count,
+               (SELECT MAX(date) FROM service_records s WHERE s.vehicle_id = v.id) AS last_service,
+               (SELECT COUNT(*) FROM fuel_records f WHERE f.vehicle_id = v.id) AS fuel_record_count,
+               (SELECT MAX(date) FROM fuel_records f WHERE f.vehicle_id = v.id) AS last_fuel,
+               (SELECT COALESCE(SUM(cost), 0) FROM fuel_records f WHERE f.vehicle_id = v.id) AS total_fuel_cost,
+               (SELECT COALESCE(SUM(cost), 0) FROM fuel_records f
+                 WHERE f.vehicle_id = v.id AND strftime('%Y', f.date) = :year) AS ytd_fuel_cost
+        FROM vehicle v
+    ''', {'year': year}).fetchall()
+
+    # Service cost = labor/shop cost + supplies used, per service
+    service_costs = db.execute('''
+        SELECT s.vehicle_id,
+               SUM(s.cost + COALESCE(sc.supplies_cost, 0)) AS total,
+               SUM(CASE WHEN strftime('%Y', s.date) = :year
+                        THEN s.cost + COALESCE(sc.supplies_cost, 0) ELSE 0 END) AS ytd
+        FROM service_records s
+        LEFT JOIN (
+            SELECT ss.service_id, SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)) AS supplies_cost
+            FROM service_supplies ss
+            JOIN supplies sup ON sup.id = ss.supply_id
+            LEFT JOIN supply_units su ON su.id = ss.supply_unit_id
+            GROUP BY ss.service_id
+        ) sc ON sc.service_id = s.id
+        GROUP BY s.vehicle_id
+    ''', {'year': year}).fetchall()
+    service_costs = {r['vehicle_id']: r for r in service_costs}
+
+    summary = {}
+    for r in rows:
+        sc = service_costs.get(r['id'])
+        total_service = round(sc['total'], 2) if sc else 0
+        ytd_service = round(sc['ytd'], 2) if sc else 0
+        summary[r['id']] = {
+            'service_count': r['service_count'],
+            'fuel_record_count': r['fuel_record_count'],
+            'last_service': r['last_service'],
+            'last_fuel': r['last_fuel'],
+            'current_odometer': latest_odometer(db, r['id']),
+            'avg_mpg': weighted_avg_mpg(db, r['id']),
+            'total_service_cost': total_service,
+            'total_fuel_cost': round(r['total_fuel_cost'], 2),
+            'total_all_time_cost': round(total_service + r['total_fuel_cost'], 2),
+            'ytd_service_cost': ytd_service,
+            'ytd_fuel_cost': round(r['ytd_fuel_cost'], 2),
+            'ytd_total_cost': round(ytd_service + r['ytd_fuel_cost'], 2),
+        }
+    db.close()
+    return jsonify(summary)
+
 @app.route('/api/vehicles', methods=['GET'])
 @api_login_required
 def get_vehicles():
@@ -2520,10 +2706,7 @@ def get_stats():
     ''', (vehicle_id, vehicle_id)).fetchone()
     stats['total_spent'] = round(result['total'], 2)
 
-    # Average MPG
-    result = db.execute('SELECT AVG(mpg) as avg FROM fuel_records WHERE vehicle_id = ? AND mpg IS NOT NULL',
-                       (vehicle_id,)).fetchone()
-    stats['avg_mpg'] = round(result['avg'], 2) if result['avg'] else 0
+    stats['avg_mpg'] = weighted_avg_mpg(db, vehicle_id) or 0
 
     # Pending reminders
     result = db.execute('SELECT COUNT(*) as count FROM service_reminders WHERE vehicle_id = ? AND completed = 0',
@@ -2925,15 +3108,16 @@ def delete_tread_reading(reading_id):
     db.close()
     return jsonify({'success': True})
 
-if __name__ == '__main__':
-    # Initialize database
-    if not os.path.exists('instance'):
-        os.makedirs('instance')
+def setup():
+    """Create runtime directories and bring the database schema up to date.
+    Run once per server start, before serving requests (wsgi.py does this for
+    gunicorn, in the master process before workers fork)."""
+    os.makedirs(os.path.dirname(DATABASE) or '.', exist_ok=True)
+    for sub in ('receipts', 'vehicles', 'documents'):
+        os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], sub), exist_ok=True)
     init_db()
 
-    # Ensure upload directories exist
-    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'receipts'), exist_ok=True)
-    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'vehicles'), exist_ok=True)
-    os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'documents'), exist_ok=True)
-
+if __name__ == '__main__':
+    # Development server; production runs gunicorn via wsgi.py
+    setup()
     app.run(host='0.0.0.0', port=5000, debug=False)

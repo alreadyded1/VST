@@ -139,13 +139,9 @@ source venv/bin/activate
 # Install Python packages
 pip install -r requirements.txt
 
-# Create upload directories
-mkdir -p static/uploads/receipts
-mkdir -p static/uploads/vehicles
-mkdir -p instance
-
-# Run the application
-python app.py
+# Run the application (creates instance/ and upload directories on start)
+gunicorn wsgi:app        # production server, settings in gunicorn.conf.py
+# or: python app.py      # Flask development server
 ```
 
 The application will be available at `http://<your-ip>:5000`
@@ -392,9 +388,11 @@ chmod -R 755 /opt/vehicle-tracker/static/uploads/
 
 - This application is designed for use on a private network
 - For internet access, use a reverse proxy (nginx/Apache) with HTTPS
-- Change the default SECRET_KEY in production
-- Consider implementing authentication for multi-user environments
-- Regular backups are recommended
+- Change the default `admin`/`admin` password right after installing. Until you do, every page shows a reminder, and the login page shows the default credentials (the admin settings can hide that hint)
+- Session and API-token signing keys are generated on first start and stored in `instance/secret_key` and `instance/jwt_secret_key`. To manage them yourself, set the `SECRET_KEY` / `JWT_SECRET_KEY` environment variables in the systemd unit
+- Uploaded receipts, documents and vehicle photos are only served to logged-in users
+- After 5 failed logins for one username (or 20 for any usernames) from the same IP address within 15 minutes, further attempts from that IP are refused until the window passes. Behind a reverse proxy every client shares the proxy's address, so those limits apply to everyone together
+- Regular backups are recommended (`instance/` and `static/uploads/`)
 
 ## Uninstallation
 

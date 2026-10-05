@@ -28,14 +28,15 @@ def test_jwt_admin_cannot_delete_self(client):
 
 
 def test_login_ignores_offsite_next(client):
+    client.post('/api/users', json={'username': 'sam', 'password': 'pw-sam'})
     client.get('/logout')
     for target in ('https://evil.example', '//evil.example', '/\\evil.example'):
-        r = client.post(f'/login?next={target}', data={'username': 'admin', 'password': 'admin'})
+        r = client.post(f'/login?next={target}', data={'username': 'sam', 'password': 'pw-sam'})
         assert r.status_code == 302
         assert r.headers['Location'] == '/', target
         client.get('/logout')
 
-    r = client.post('/login?next=/fuel', data={'username': 'admin', 'password': 'admin'})
+    r = client.post('/login?next=/fuel', data={'username': 'sam', 'password': 'pw-sam'})
     assert r.headers['Location'] == '/fuel'
 
 

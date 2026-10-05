@@ -155,6 +155,11 @@
         </header>
 
         <main class="container">
+            {% if session.get('default_password') %}
+            <div class="alert alert-warning default-password-banner">
+                You're signed in with the default password. <a href="{{ url_for('profile_page') }}">Change it now</a> &mdash; anyone who knows it can sign in as you.
+            </div>
+            {% endif %}
             {% block content %}{% endblock %}
         </main>
     </div>
