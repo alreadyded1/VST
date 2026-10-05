@@ -183,12 +183,12 @@ async function loadUsers() {
             const date = new Date(user.created_at).toLocaleDateString();
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${user.username}${isMe ? ' <span style="color:var(--light-text);font-size:0.75rem;">(you)</span>' : ''}</td>
+                <td>${escapeHtml(user.username)}${isMe ? ' <span style="color:var(--light-text);font-size:0.75rem;">(you)</span>' : ''}</td>
                 <td><span class="badge ${user.is_admin ? 'badge-admin' : 'badge-user'}">${user.is_admin ? 'Admin' : 'User'}</span></td>
                 <td>${date}</td>
                 <td style="display:flex;gap:0.5rem;flex-wrap:wrap;">
                     <button class="btn btn-small btn-secondary" onclick="openResetPasswordModal(${user.id})">Reset Password</button>
-                    ${!isMe ? `<button class="btn btn-small btn-danger" onclick="deleteUser(${user.id}, '${user.username}')">Delete</button>` : ''}
+                    ${!isMe ? `<button class="btn btn-small btn-danger" data-username="${escapeHtml(user.username)}" onclick="deleteUser(${user.id}, this.dataset.username)">Delete</button>` : ''}
                 </td>
             `;
             tbody.appendChild(tr);
@@ -298,7 +298,7 @@ async function saveSettings() {
 
 function showAdminAlert(message, type) {
     const el = document.getElementById('alertContainer');
-    el.innerHTML = `<div class="alert alert-${type}" style="margin-bottom:1rem;">${message}</div>`;
+    el.innerHTML = `<div class="alert alert-${type}" style="margin-bottom:1rem;">${escapeHtml(message)}</div>`;
     setTimeout(() => el.innerHTML = '', 4000);
 }
 </script>

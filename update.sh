@@ -66,6 +66,7 @@ cp "$TEMP_DIR/requirements.txt" "$INSTALL_DIR/"
 cp -r "$TEMP_DIR/templates" "$INSTALL_DIR/"
 cp -r "$TEMP_DIR/static/css" "$INSTALL_DIR/static/"
 cp -r "$TEMP_DIR/static/js" "$INSTALL_DIR/static/"
+cp "$TEMP_DIR/static/favicon.svg" "$INSTALL_DIR/static/"
 
 # Clean up temp directory
 rm -rf "$TEMP_DIR"
@@ -85,6 +86,9 @@ chmod -R 755 "$INSTALL_DIR"
 # Ensure upload directories have correct permissions
 chmod 755 "$INSTALL_DIR/static/uploads/receipts"
 chmod 755 "$INSTALL_DIR/static/uploads/vehicles"
+mkdir -p "$INSTALL_DIR/static/uploads/documents"
+chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/static/uploads/documents"
+chmod 755 "$INSTALL_DIR/static/uploads/documents"
 
 echo ""
 echo "Step 7: Starting service..."

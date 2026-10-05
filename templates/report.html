@@ -421,11 +421,11 @@ async function init() {
     vehicles.forEach(v => {
         const opt = document.createElement('option');
         opt.value = v.id;
-        opt.textContent = `${v.year} ${v.make} ${v.model}`;
+        opt.textContent = v.nickname || `${v.year} ${v.manufacturer} ${v.model}`;
         sel.appendChild(opt);
     });
-    // Try to match localStorage vehicle
-    const saved = localStorage.getItem('selectedVehicleId');
+    // Default to the vehicle selected elsewhere in the app
+    const saved = localStorage.getItem('currentVehicleId');
     if (saved && vehicles.find(v => String(v.id) === saved)) {
         sel.value = saved;
     }
@@ -493,7 +493,7 @@ async function loadServices() {
             <td>${esc(s.service_provider || '')}</td>
             <td>${s.odometer ? Number(s.odometer).toLocaleString() : '—'}</td>
             <td>${esc(s.repairs_completed || '')}</td>
-            <td>$${Number(s.cost || 0).toFixed(2)}</td>
+            <td>$${(Number(s.cost || 0) + Number(s.supplies_cost || 0)).toFixed(2)}</td>
             <td>${esc(s.comments || '')}</td>
         </tr>
     `).join('');

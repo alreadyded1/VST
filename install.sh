@@ -64,6 +64,7 @@ echo ""
 echo "Step 7: Creating upload and data directories..."
 mkdir -p "$INSTALL_DIR/static/uploads/receipts"
 mkdir -p "$INSTALL_DIR/static/uploads/vehicles"
+mkdir -p "$INSTALL_DIR/static/uploads/documents"
 mkdir -p "$INSTALL_DIR/instance"
 
 # Set permissions

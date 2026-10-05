@@ -105,7 +105,7 @@ function makeSortable(table) {
 
 function sortTable(table, columnIndex, header) {
     const tbody = table.querySelector('tbody');
-    const rows = Array.from(tbody.querySelectorAll('tr'));
+    let rows = Array.from(tbody.querySelectorAll('tr'));
     const isAscending = !header.classList.contains('sort-asc');
 
     // Remove sort classes from all headers
@@ -116,35 +116,40 @@ function sortTable(table, columnIndex, header) {
     // Add appropriate class to clicked header
     header.classList.add(isAscending ? 'sort-asc' : 'sort-desc');
 
-    // Sort rows
-    rows.sort((a, b) => {
-        const aValue = a.cells[columnIndex].textContent.trim();
-        const bValue = b.cells[columnIndex].textContent.trim();
-
-        // Try to parse as date first (before numbers)
-        const aDate = new Date(aValue);
-        const bDate = new Date(bValue);
-
-        if (!isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
-            return isAscending ? aDate - bDate : bDate - aDate;
+    // Sort rows. Blank / "N/A" cells always sort last.
+    const keyed = rows.map(row => ({ row, key: sortKey(row.cells[columnIndex].textContent.trim()) }));
+    keyed.sort((a, b) => {
+        if (a.key === null || b.key === null) {
+            return (a.key === null) - (b.key === null);
         }
-
-        // Try to parse as number
-        const aNum = parseFloat(aValue.replace(/[^0-9.-]/g, ''));
-        const bNum = parseFloat(bValue.replace(/[^0-9.-]/g, ''));
-
-        if (!isNaN(aNum) && !isNaN(bNum)) {
-            return isAscending ? aNum - bNum : bNum - aNum;
-        }
-
-        // Sort as string
-        return isAscending
-            ? aValue.localeCompare(bValue)
-            : bValue.localeCompare(aValue);
+        const cmp = typeof a.key === 'number' && typeof b.key === 'number'
+            ? a.key - b.key
+            : String(a.key).localeCompare(String(b.key), undefined, { numeric: true });
+        return isAscending ? cmp : -cmp;
     });
+    rows = keyed.map(k => k.row);
 
     // Re-append sorted rows
     rows.forEach(row => tbody.appendChild(row));
+}
+
+const SORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Sort key for a table cell's text: a timestamp for dates as rendered by
+// formatDate() ("Jan 5, 2024", possibly followed by a badge), a number for
+// numeric cells ("$45.00", "50,000 mi", "12.500"), null for empty / "N/A",
+// otherwise the text itself. Matching explicit formats avoids `new Date()`,
+// which happily parses strings like "12.5" as dates in some browsers.
+function sortKey(text) {
+    if (!text || text === 'N/A' || text === '-' || text === '—') return null;
+    const date = text.match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})/);
+    if (date && SORT_MONTHS.includes(date[1])) {
+        return new Date(Number(date[3]), SORT_MONTHS.indexOf(date[1]), Number(date[2])).getTime();
+    }
+    const num = text.replace(/[$,]/g, '').match(/^-?\d*\.?\d+(?=\s|$)/);
+    if (num) return parseFloat(num[0]);
+    return text;
 }
 
 // Modal handling
@@ -334,7 +339,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function fetchAPI(url, options = {}) {
     try {
         const response = await fetch(url, options);
-        const data = await response.json();
+
+        // Session expired: send the user back to log in rather than
+        // surfacing a confusing error on every widget
+        if (response.status === 401) {
+            window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+            throw new Error('Authentication required');
+        }
+
+        const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
             // If the response has an error message, use it
@@ -668,9 +681,16 @@ function renderSearchResults(results, query) {
     resultsEl.innerHTML = html;
 }
 
+// Escape user-entered text before interpolating it into innerHTML. Every
+// string that came from the database must go through this.
 function escapeHtml(str) {
-    if (!str) return '';
-    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // Wire up search input once DOM is ready

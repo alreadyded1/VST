@@ -462,7 +462,7 @@ function installedTile(tire) {
     return `
         <div class="installed-tile">
             <div class="tire-name">${name}</div>
-            <div class="tire-meta">${meta || '—'}</div>
+            <div class="tire-meta">${esc(meta) || '—'}</div>
             <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.75rem;">
                 <span class="season-badge">${esc(tire.season || 'All-Season')}</span>
                 <span class="status-installed">

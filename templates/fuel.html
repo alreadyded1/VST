@@ -387,7 +387,7 @@ function displayFuelRecords() {
                 <td>${record.gallons.toFixed(3)}</td>
                 <td>${formatCurrency(record.cost)}</td>
                 <td>${formatCurrency(pricePerGal)}</td>
-                <td>${record.station || 'N/A'}</td>
+                <td>${escapeHtml(record.station || 'N/A')}</td>
                 <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
                 <td>
                     <div class="action-menu">
@@ -407,7 +407,7 @@ function displayFuelRecords() {
     let cardsHtml = '';
     paginatedRecords.forEach(record => {
         const pricePerGal = record.cost / record.gallons;
-        const title = (record.station || 'Fuel Fill-up') + (record.missed_fillup ? ' <span style="font-size: 0.7rem; background: var(--warning-color); color: #fff; border-radius: 3px; padding: 1px 4px;">missed</span>' : '');
+        const title = escapeHtml(record.station || 'Fuel Fill-up') + (record.missed_fillup ? ' <span style="font-size: 0.7rem; background: var(--warning-color); color: #fff; border-radius: 3px; padding: 1px 4px;">missed</span>' : '');
 
         const fields = [
             { label: 'Date', value: formatDate(record.date) },
@@ -422,7 +422,7 @@ function displayFuelRecords() {
         }
 
         if (record.station) {
-            fields.push({ label: 'Station', value: record.station });
+            fields.push({ label: 'Station', value: escapeHtml(record.station) });
         }
 
         const actions = [
@@ -893,7 +893,7 @@ function updateStationComparison(records) {
     stations.forEach(station => {
         html += `
             <tr>
-                <td><strong>${station.name}</strong></td>
+                <td><strong>${escapeHtml(station.name)}</strong></td>
                 <td>${station.visits}</td>
                 <td>${station.totalGallons.toFixed(1)} gal</td>
                 <td>${formatCurrency(station.avgPricePerGal)}</td>
@@ -947,7 +947,7 @@ function updateStationDatalist(records) {
 
     datalist.innerHTML = Array.from(stations)
         .sort()
-        .map(station => `<option value="${station}">`)
+        .map(station => `<option value="${escapeHtml(station)}">`)
         .join('');
 }
 </script>
