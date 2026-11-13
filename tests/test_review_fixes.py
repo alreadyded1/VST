@@ -1,5 +1,3 @@
-import json
-
 import app as app_module
 
 
@@ -45,28 +43,12 @@ def test_cors_does_not_allow_credentials(client):
     assert r.headers.get('Access-Control-Allow-Credentials') != 'true'
 
 
-def _add_supply(client, vehicle_id, **fields):
-    data = {'vehicle_id': vehicle_id, 'name': 'Wiper', 'cost': '10', 'quantity': '1'}
-    data.update(fields)
-    return client.post('/api/supplies', data=data).get_json()['id']
-
-
 def _reminders(client, vehicle_id):
     return client.get(f'/api/reminders?vehicle_id={vehicle_id}').get_json()
 
 
-def test_resaving_supply_at_quantity_one_does_not_duplicate_reorder_reminder(client, vehicle_id):
-    supply_id = _add_supply(client, vehicle_id, remind_to_reorder='on')
-    for _ in range(3):
-        r = client.put(f'/api/supplies/{supply_id}', data={
-            'name': 'Wiper', 'cost': '10', 'quantity': '1', 'remind_to_reorder': 'on'})
-        assert r.status_code == 200
-    reorder = [r for r in _reminders(client, vehicle_id) if r['service_type'].startswith('Re-order')]
-    assert len(reorder) == 1
-
-
-def test_update_missing_supply_is_404(client):
-    r = client.put('/api/supplies/999', data={'name': 'x', 'cost': '1', 'quantity': '1'})
+def test_update_missing_part_is_404(client):
+    r = client.put('/api/parts/999', data={'name': 'x'})
     assert r.status_code == 404
 
 
@@ -75,24 +57,6 @@ def test_recall_with_blank_campaign_number_does_not_match_existing_reminders(cli
     r = client.post('/api/vehicle/recalls/create-reminders', json={
         'vehicle_id': vehicle_id, 'recalls': [{'nhtsa_campaign_number': '', 'subject': 'Airbag'}]})
     assert r.get_json()['created'] == 1
-
-
-def test_service_supplies_cost_uses_unit_cost_and_counts_toward_total_spent(client, vehicle_id):
-    supply_id = _add_supply(client, vehicle_id, cost='50', tracked_individually='on')
-    client.post(f'/api/supplies/{supply_id}/units', data={'quantity_to_add': '1', 'cost': '80'})
-    unit_id = client.get(f'/api/supplies/{supply_id}/units').get_json()[0]['id']
-
-    r = client.post('/api/services', data={
-        'vehicle_id': vehicle_id, 'date': '2024-05-01', 'cost': '100', 'service_provider': 'Shop',
-        'supplies': json.dumps([{'id': supply_id, 'unit_id': unit_id}])})
-    service_id = r.get_json()['id']
-
-    service = client.get(f'/api/services/{service_id}').get_json()
-    assert service['supplies_cost'] == 80
-    assert service['supplies'][0]['cost'] == 80
-
-    stats = client.get(f'/api/stats?vehicle_id={vehicle_id}').get_json()
-    assert stats['total_spent'] == 180
 
 
 def test_tread_readings_and_rotations_show_tire_names(client, vehicle_id):

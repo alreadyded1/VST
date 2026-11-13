@@ -180,34 +180,28 @@
             </div>
 
             <div class="form-group">
-                <label>Supplies Used</label>
+                <label>Parts Used</label>
                 <div style="margin-bottom: 1rem;">
-                    <div style="display: grid; grid-template-columns: 1fr 150px 100px; gap: 10px; align-items: end;">
+                    <div style="display: grid; grid-template-columns: 1fr 110px auto; gap: 10px; align-items: end;">
                         <div>
-                            <label for="supplySelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Select Supply</label>
-                            <select id="supplySelect" onchange="handleSupplyPickerChange()" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
-                                <option value="">-- Select a supply --</option>
+                            <label for="partSelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Part</label>
+                            <select id="partSelect" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                                <option value="">-- Select a part --</option>
                             </select>
                         </div>
-                        <div id="supplyQuantityWrap">
-                            <label for="supplyQuantity" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Quantity</label>
-                            <input type="number" id="supplyQuantity" min="0.1" step="0.1" value="1" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
+                        <div>
+                            <label for="partQuantity" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Quantity</label>
+                            <input type="number" id="partQuantity" min="0" step="any" value="1" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
                         </div>
-                        <div id="supplyUnitWrap" style="display: none;">
-                            <label for="supplyUnitSelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Unit</label>
-                            <select id="supplyUnitSelect" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
-                                <option value="">-- Select --</option>
-                            </select>
-                        </div>
-                        <button type="button" class="btn btn-secondary" onclick="addSupplyToList()" style="padding: 0.5rem 1rem;">Add</button>
+                        <button type="button" class="btn btn-secondary" onclick="addPartToList()" style="padding: 0.5rem 1rem;">Add</button>
                     </div>
+                    <small style="color: var(--light-text);">Taken from the oldest stock first. Any warranty starts on this service's date and odometer.</small>
                 </div>
 
-                <div id="suppliesListContainer" style="display: none; margin-top: 1rem;">
-                    <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">Supplies to be used:</h4>
-                    <div id="suppliesList" style="background: #f8f9fa; padding: 1rem; border-radius: 5px; border: 1px solid var(--border-color);"></div>
+                <div id="partsListContainer" style="display: none; margin-top: 1rem;">
+                    <div id="partsList" style="background: #f8f9fa; padding: 1rem; border-radius: 5px; border: 1px solid var(--border-color);"></div>
                     <div style="margin-top: 0.5rem; text-align: right; font-weight: bold; font-size: 1.1rem;">
-                        Total Supplies Cost: <span id="totalSuppliesCost">$0.00</span>
+                        Total Parts Cost: <span id="totalPartsCost">$0.00</span>
                     </div>
                 </div>
             </div>
@@ -247,13 +241,18 @@
 
             <div class="form-row">
                 <div class="form-group">
-                    <label>Supplies Cost</label>
+                    <label>Parts Cost</label>
                     <p id="viewSuppliesCost" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
                 </div>
                 <div class="form-group">
                     <label>Total Cost</label>
                     <p id="viewTotalCost" style="font-size: 1.1rem; font-weight: bold; margin: 0.5rem 0;"></p>
                 </div>
+            </div>
+
+            <div class="form-group">
+                <label>Parts Used</label>
+                <div id="viewParts" style="margin: 0.5rem 0;"></div>
             </div>
 
             <div class="form-group">
@@ -279,15 +278,14 @@
 <script>
 let allServices = [];
 let filteredServices = [];
-let availableSupplies = [];
+let availableParts = [];
 let currentEditServiceId = null;
-let selectedSupplies = []; // Track supplies to be used in this service
-// Snapshot of supply_id -> quantity_used as originally loaded from the service
-// being edited. Saving will return these amounts to inventory before applying
-// the new list, so they count toward what's "available" while editing -- this
-// stays fixed for the whole edit session regardless of how many times the user
-// adjusts selectedSupplies, so the effective cap doesn't creep with each edit.
-let originalServiceSupplies = {};
+// Parts on the service being added or edited. Entries loaded from an existing
+// service carry install_id; ones added in this session only have part_id.
+let selectedParts = [];
+// part_id -> quantity this service held when the edit started. Saving returns
+// whatever is dropped to the shelf first, so it counts as available here.
+let originalPartQuantities = {};
 let currentPage = 1;
 const itemsPerPage = 15;
 
@@ -313,222 +311,102 @@ async function loadServices() {
     }
 }
 
-async function loadSupplies() {
-    const vehicleId = getCurrentVehicleId();
-    if (!vehicleId) {
-        return;
-    }
-
+async function loadParts() {
     try {
-        availableSupplies = await fetchAPI(`/api/supplies?vehicle_id=${vehicleId}`);
-        populateSuppliesDropdown();
+        availableParts = await fetchAPI('/api/parts');
+        populatePartsDropdown();
     } catch (error) {
-        console.error('Error loading supplies:', error);
+        console.error('Error loading parts:', error);
     }
 }
 
-function populateSuppliesDropdown() {
-    const select = document.getElementById('supplySelect');
-
-    // Clear existing options except the first one
-    select.innerHTML = '<option value="">-- Select a supply --</option>';
-
-    if (availableSupplies.length === 0) {
-        select.innerHTML = '<option value="">No supplies available</option>';
+function populatePartsDropdown() {
+    const select = document.getElementById('partSelect');
+    if (availableParts.length === 0) {
+        select.innerHTML = '<option value="">No parts on the shelf</option>';
         select.disabled = true;
         return;
     }
-
     select.disabled = false;
-    availableSupplies.forEach(supply => {
+    select.innerHTML = '<option value="">-- Select a part --</option>';
+    availableParts.forEach(part => {
         const option = document.createElement('option');
-        option.value = supply.id;
-        option.textContent = `${supply.name} (${supply.quantity} in stock @ ${formatCurrency(supply.cost)} each)`;
-        option.dataset.supplyName = supply.name;
-        option.dataset.supplyCost = supply.cost;
-        option.dataset.supplyMaxQty = supply.quantity;
-        option.dataset.tracked = supply.tracked_individually ? '1' : '0';
+        option.value = part.id;
+        option.textContent = `${part.name} (${part.in_stock} in stock @ ${formatCurrency(part.cost)} each)`;
         select.appendChild(option);
     });
 }
 
-// Tracked supplies are consumed as specific physical units, not a quantity —
-// swap the quantity input for a unit picker when one is selected.
-async function handleSupplyPickerChange() {
-    const select = document.getElementById('supplySelect');
-    const selectedOption = select.options[select.selectedIndex];
-    const tracked = selectedOption && selectedOption.dataset.tracked === '1';
-
-    document.getElementById('supplyQuantityWrap').style.display = tracked ? 'none' : 'block';
-    document.getElementById('supplyUnitWrap').style.display = tracked ? 'block' : 'none';
-
-    if (!tracked) return;
-
-    const unitSelect = document.getElementById('supplyUnitSelect');
-    unitSelect.innerHTML = '<option value="">Loading...</option>';
-    try {
-        // When editing, units installed on this very service are still
-        // selectable — they'll be reverted to stock on save.
-        const params = currentEditServiceId ? `?available_for_service=${currentEditServiceId}` : '?status=in_stock';
-        const units = await fetchAPI(`/api/supplies/${select.value}/units${params}`);
-        const takenUnitIds = selectedSupplies.filter(s => s.unit_id).map(s => s.unit_id);
-        const selectable = units.filter(u => !takenUnitIds.includes(u.id));
-
-        if (selectable.length === 0) {
-            unitSelect.innerHTML = '<option value="">No units available</option>';
-            return;
-        }
-        unitSelect.innerHTML = '<option value="">-- Select --</option>';
-        selectable.forEach(unit => {
-            const option = document.createElement('option');
-            option.value = unit.id;
-            const purchased = unit.purchase_date ? ` (purchased ${formatDate(unit.purchase_date)})` : '';
-            option.textContent = `Unit #${unit.id}${purchased}`;
-            option.dataset.unitCost = unit.cost != null ? unit.cost : '';
-            unitSelect.appendChild(option);
-        });
-    } catch (error) {
-        console.error('Error loading units:', error);
-        unitSelect.innerHTML = '<option value="">Error loading units</option>';
-    }
-}
-
-function addSupplyToList() {
-    const select = document.getElementById('supplySelect');
-    const quantityInput = document.getElementById('supplyQuantity');
-
-    if (!select.value) {
-        showAlert('Please select a supply', 'warning');
+function addPartToList() {
+    const select = document.getElementById('partSelect');
+    const quantityInput = document.getElementById('partQuantity');
+    const part = availableParts.find(p => p.id === parseInt(select.value));
+    if (!part) {
+        showAlert('Please select a part', 'warning');
         return;
     }
-
-    const selectedOption = select.options[select.selectedIndex];
-    const supplyId = parseInt(select.value);
-
-    // Individually-tracked part: add the specific selected unit
-    if (selectedOption.dataset.tracked === '1') {
-        const unitSelect = document.getElementById('supplyUnitSelect');
-        if (!unitSelect.value) {
-            showAlert('Please select a unit', 'warning');
-            return;
-        }
-        const unitOption = unitSelect.options[unitSelect.selectedIndex];
-        const unitCost = unitOption.dataset.unitCost !== ''
-            ? parseFloat(unitOption.dataset.unitCost)
-            : parseFloat(selectedOption.dataset.supplyCost);
-
-        selectedSupplies.push({
-            id: supplyId,
-            unit_id: parseInt(unitSelect.value),
-            name: selectedOption.dataset.supplyName,
-            quantity: 1,
-            cost: unitCost
-        });
-
-        updateSuppliesList();
-        handleSupplyPickerChange(); // refresh unit list minus the one just added
-        return;
-    }
-
     const quantity = parseFloat(quantityInput.value);
-    const maxQty = parseFloat(selectedOption.dataset.supplyMaxQty);
-
-    if (quantity <= 0) {
+    if (!(quantity > 0)) {
         showAlert('Quantity must be greater than 0', 'warning');
         return;
     }
 
-    // Check if supply already added
-    const existingIndex = selectedSupplies.findIndex(s => s.id === supplyId);
-
-    // If this supply was originally reserved on the service being edited, that
-    // amount will be returned to stock on save, so it counts toward what's
-    // available now. Use the frozen original amount, not the live in-progress
-    // quantity, so the cap doesn't creep up if the user adjusts it more than once.
-    const alreadyReserved = originalServiceSupplies[supplyId] || 0;
-    const effectiveMax = maxQty + alreadyReserved;
-
-    if (quantity > effectiveMax) {
-        showAlert(`Only ${effectiveMax} available`, 'warning');
+    const alreadyListed = selectedParts.filter(p => p.part_id === part.id)
+        .reduce((sum, p) => sum + p.quantity, 0);
+    const available = part.in_stock + (originalPartQuantities[part.id] || 0) - alreadyListed;
+    if (quantity > available + 1e-9) {
+        showAlert(`Only ${Math.max(available, 0)} of ${part.name} available`, 'warning');
         return;
     }
 
-    if (existingIndex >= 0) {
-        selectedSupplies[existingIndex].quantity = quantity;
+    const pending = selectedParts.find(p => p.part_id === part.id && !p.install_id);
+    if (pending) {
+        pending.quantity += quantity;
     } else {
-        selectedSupplies.push({
-            id: supplyId,
-            name: selectedOption.dataset.supplyName,
-            quantity: quantity,
-            cost: parseFloat(selectedOption.dataset.supplyCost)
-        });
+        selectedParts.push({ part_id: part.id, name: part.name, quantity: quantity, unit_cost: part.cost });
     }
-
-    updateSuppliesList();
-
-    // Reset form
+    updatePartsList();
     select.value = '';
     quantityInput.value = 1;
 }
 
-function removeSupplyFromList(supplyId, unitId) {
-    if (unitId) {
-        selectedSupplies = selectedSupplies.filter(s => s.unit_id !== unitId);
-    } else {
-        selectedSupplies = selectedSupplies.filter(s => s.id !== supplyId || s.unit_id);
-    }
-    updateSuppliesList();
-    // If the picker is showing this supply's units, the freed unit is selectable again
-    if (document.getElementById('supplyUnitWrap').style.display !== 'none') {
-        handleSupplyPickerChange();
-    }
+function removePartFromList(index) {
+    selectedParts.splice(index, 1);
+    updatePartsList();
 }
 
-function clearSuppliesList() {
-    selectedSupplies = [];
-    updateSuppliesList();
-    document.getElementById('supplySelect').value = '';
-    document.getElementById('supplyQuantity').value = 1;
-    document.getElementById('supplyQuantityWrap').style.display = 'block';
-    document.getElementById('supplyUnitWrap').style.display = 'none';
+function clearPartsList() {
+    selectedParts = [];
+    updatePartsList();
+    document.getElementById('partSelect').value = '';
+    document.getElementById('partQuantity').value = 1;
 }
 
-function updateSuppliesList() {
-    const container = document.getElementById('suppliesListContainer');
-    const listDiv = document.getElementById('suppliesList');
-    const totalCostSpan = document.getElementById('totalSuppliesCost');
-
-    if (selectedSupplies.length === 0) {
+function updatePartsList() {
+    const container = document.getElementById('partsListContainer');
+    if (selectedParts.length === 0) {
         container.style.display = 'none';
         return;
     }
-
     container.style.display = 'block';
 
     let html = '';
     let totalCost = 0;
-
-    selectedSupplies.forEach(supply => {
-        const itemCost = supply.cost * supply.quantity;
+    selectedParts.forEach((part, index) => {
+        const itemCost = part.unit_cost * part.quantity;
         totalCost += itemCost;
-
-        const detail = supply.unit_id
-            ? `Unit #${supply.unit_id} — ${formatCurrency(supply.cost)}`
-            : `${supply.quantity} × ${formatCurrency(supply.cost)} = ${formatCurrency(itemCost)}`;
-
         html += `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); margin-bottom: 0.5rem;">
                 <div>
-                    <strong>${escapeHtml(supply.name)}</strong><br>
-                    <small>${detail}</small>
+                    <strong>${escapeHtml(part.name)}</strong><br>
+                    <small>${part.quantity} × ${formatCurrency(part.unit_cost)} = ${formatCurrency(itemCost)}</small>
                 </div>
-                <button type="button" class="btn btn-small btn-danger" onclick="removeSupplyFromList(${supply.id}, ${supply.unit_id || 'null'})">Remove</button>
+                <button type="button" class="btn btn-small btn-danger" onclick="removePartFromList(${index})">Remove</button>
             </div>
         `;
     });
-
-    listDiv.innerHTML = html;
-    totalCostSpan.textContent = formatCurrency(totalCost);
+    document.getElementById('partsList').innerHTML = html;
+    document.getElementById('totalPartsCost').textContent = formatCurrency(totalCost);
 }
 
 function displayServices() {
@@ -640,21 +518,20 @@ async function editService(serviceId) {
 
         currentEditServiceId = serviceId;
 
-        // Pre-populate the supplies list with the parts already linked to this
-        // service, so saving without touching them keeps them on the record
-        // instead of silently dropping them.
-        selectedSupplies = (service.supplies || []).map(s => ({
-            id: s.id,
-            unit_id: s.unit_id || undefined,
-            name: s.name,
-            quantity: s.quantity,
-            cost: s.cost
+        // Pre-populate the list with the parts already on this service, so
+        // saving without touching them keeps them (and their warranty) as is
+        selectedParts = (service.parts || []).map(p => ({
+            install_id: p.id,
+            part_id: p.part_id,
+            name: p.part_name,
+            quantity: p.quantity,
+            unit_cost: p.unit_cost
         }));
-        originalServiceSupplies = {};
-        // The available-quantity cap only applies to plain consumables;
-        // tracked units are capped by the unit picker itself.
-        selectedSupplies.filter(s => !s.unit_id).forEach(s => { originalServiceSupplies[s.id] = s.quantity; });
-        updateSuppliesList();
+        originalPartQuantities = {};
+        selectedParts.forEach(p => {
+            originalPartQuantities[p.part_id] = (originalPartQuantities[p.part_id] || 0) + p.quantity;
+        });
+        updatePartsList();
 
         // Populate form
         document.getElementById('serviceDate').value = service.date;
@@ -674,8 +551,8 @@ async function editService(serviceId) {
 }
 
 function openAddServiceModal() {
-    clearSuppliesList();
-    originalServiceSupplies = {};
+    clearPartsList();
+    originalPartQuantities = {};
     document.getElementById('serviceForm').reset();
     document.getElementById('receiptPreview').textContent = '';
     document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
@@ -697,42 +574,29 @@ async function addService(event) {
     const formData = new FormData(form);
     formData.append('vehicle_id', vehicleId);
 
-    // Add selected supplies (use the global selectedSupplies array).
-    // Tracked units are sent as {id, unit_id}; consumables as {id, quantity}.
-    const suppliesToSend = selectedSupplies.map(s => s.unit_id
-        ? { id: s.id, unit_id: s.unit_id }
-        : { id: s.id, quantity: s.quantity });
-
-    formData.append('supplies', JSON.stringify(suppliesToSend));
+    // Parts already on the service are sent by install; new ones by part
+    formData.append('parts', JSON.stringify(selectedParts.map(p => p.install_id
+        ? { install_id: p.install_id, quantity: p.quantity }
+        : { part_id: p.part_id, quantity: p.quantity })));
 
     try {
-        let result;
-        if (currentEditServiceId) {
-            // Update existing service using PUT
-            const response = await fetch(`/api/services/${currentEditServiceId}`, {
-                method: 'PUT',
-                body: formData
-            });
-            result = await response.json();
-            showAlert('Service record updated successfully!', 'success');
-        } else {
-            // Add new service
-            result = await postFormData('/api/services', formData);
-            showAlert('Service record added successfully!', 'success');
-        }
+        const editing = currentEditServiceId;
+        await fetchAPI(editing ? `/api/services/${editing}` : '/api/services',
+                       { method: editing ? 'PUT' : 'POST', body: formData });
+        showAlert(editing ? 'Service record updated successfully!' : 'Service record added successfully!', 'success');
 
-        if (result.success) {
-            form.reset();
-            document.getElementById('receiptPreview').textContent = '';
-            document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
-            currentEditServiceId = null;
-            clearSuppliesList(); // Clear the supplies list
-            closeModal('addServiceModal');
-            await loadServices();
-            await loadSupplies(); // Reload supplies to update quantities
-        }
+        form.reset();
+        document.getElementById('receiptPreview').textContent = '';
+        document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
+        currentEditServiceId = null;
+        originalPartQuantities = {};
+        clearPartsList();
+        closeModal('addServiceModal');
+        await loadServices();
+        await loadParts(); // stock has changed
     } catch (error) {
-        console.error('Error saving service:', error);
+        // e.g. "Only 2 of Oil in stock"
+        showAlert(error.message, 'danger');
     }
 }
 
@@ -777,6 +641,15 @@ async function viewService(serviceId) {
 
         const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
         document.getElementById('viewTotalCost').textContent = formatCurrency(totalCost);
+
+        const warrantyLabels = { lifetime: 'lifetime warranty', active: 'under warranty',
+                                 expiring: 'warranty expiring soon', expired: 'warranty expired' };
+        document.getElementById('viewParts').innerHTML = (service.parts || []).length
+            ? service.parts.map(p => `<div>${escapeHtml(p.part_name)} — ${p.quantity} × ${formatCurrency(p.unit_cost)}`
+                + (p.warranty ? ` <small style="color: var(--light-text);">(${warrantyLabels[p.warranty.status]}`
+                    + (p.warranty.expires_on ? `, ${p.warranty.status === 'expired' ? 'ended' : 'until'} ${formatDate(p.warranty.expires_on)}` : '')
+                    + ')</small>' : '') + '</div>').join('')
+            : '<p>None</p>';
 
         document.getElementById('viewRepairs').textContent = service.repairs_completed || 'N/A';
         document.getElementById('viewComments').textContent = service.comments || 'N/A';
@@ -871,7 +744,7 @@ async function importCSV(event) {
 document.addEventListener('DOMContentLoaded', () => {
     appReady.then(() => {
         loadServices();
-        loadSupplies();
+        loadParts();
     });
 
     // Set default date to today

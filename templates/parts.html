@@ -1,0 +1,936 @@
+{% extends "base.html" %}
+
+{% block title %}Parts & Warranties - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<style>
+.card { overflow: visible !important; }
+.table-container { overflow-x: auto; overflow-y: visible !important; }
+
+.parts-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border-color); margin-bottom: 1rem; }
+.parts-tab {
+    background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+    padding: 0.6rem 1rem; font: inherit; font-weight: 600; color: var(--light-text);
+}
+.parts-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.pill {
+    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+}
+.pill-ok { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.pill-warn { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.pill-bad { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.pill-muted { background: var(--light-bg); color: var(--light-text); }
+.sub { display: block; font-size: 0.8rem; color: var(--light-text); }
+
+.action-menu { position: static; }
+.menu-button { background: none; border: none; font-size: 1.5rem; cursor: pointer; padding: 0.25rem 0.5rem; color: var(--dark-text); }
+.menu-button:hover { color: var(--secondary-color); }
+.menu-dropdown {
+    display: none; position: fixed; background-color: white; min-width: 160px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2); border-radius: 5px; z-index: 9999; overflow: hidden;
+}
+.menu-dropdown.show { display: block; }
+.menu-dropdown button {
+    display: block; width: 100%; padding: 0.75rem 1rem; border: none; background: none;
+    text-align: left; cursor: pointer; font-size: 0.9rem; color: var(--dark-text);
+}
+.menu-dropdown button:hover { background-color: var(--light-bg); }
+.menu-dropdown button.danger { color: var(--danger-color); }
+
+.detail-section { margin-top: 1.25rem; }
+.detail-section h4 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem 1rem; }
+.detail-grid div span { display: block; font-size: 0.75rem; color: var(--light-text); }
+.fieldset { border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+.fieldset > legend { padding: 0 0.4rem; font-weight: 600; font-size: 0.9rem; }
+.check-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+.check-label input { width: auto; margin: 0; }
+.hint { color: var(--light-text); font-size: 0.8rem; }
+</style>
+
+<h1>Parts &amp; Warranties</h1>
+
+<div class="card">
+    <div class="parts-tabs" role="tablist">
+        <button class="parts-tab active" id="tabShelf" role="tab" onclick="showTab('shelf')">Parts Shelf</button>
+        <button class="parts-tab" id="tabWarranties" role="tab" onclick="showTab('warranties')">Warranties</button>
+    </div>
+
+    <!-- Shelf -->
+    <div id="shelfPanel">
+        <div class="flex-between mb-2">
+            <h2>Parts Shelf</h2>
+            <button class="btn btn-primary" onclick="openPartModal()">Add Part</button>
+        </div>
+        <p class="hint mb-2">One shelf for every vehicle. Stock is what you bought minus what you have installed.</p>
+
+        <div class="search-container">
+            <input type="text" id="partSearch" class="search-input" placeholder="Search parts by name, number, brand or category..." oninput="filterParts()">
+        </div>
+
+        <div class="mobile-cards" id="partsMobileCards"><p class="text-center">Loading...</p></div>
+
+        <div class="table-container has-mobile-cards">
+            <table id="partsTable">
+                <thead>
+                    <tr>
+                        <th class="sortable">Part</th>
+                        <th class="sortable">In Stock</th>
+                        <th class="sortable">Stock Value</th>
+                        <th class="sortable">Installed</th>
+                        <th>Warranty</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="partsTableBody">
+                    <tr><td colspan="6" class="text-center">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="partsPaginationControls"></div>
+    </div>
+
+    <!-- Warranties -->
+    <div id="warrantiesPanel" style="display: none;">
+        <div class="flex-between mb-2">
+            <h2>Warranties</h2>
+            <label class="check-label">
+                <input type="checkbox" id="warrantyAllVehicles" onchange="loadWarranties()">
+                <span>All vehicles</span>
+            </label>
+        </div>
+        <p class="hint mb-2">Parts currently installed that were sold with a warranty, soonest to expire first.</p>
+
+        <div class="mobile-cards" id="warrantiesMobileCards"></div>
+        <div class="table-container has-mobile-cards">
+            <table id="warrantiesTable">
+                <thead>
+                    <tr>
+                        <th>Part</th>
+                        <th>Vehicle</th>
+                        <th>Installed</th>
+                        <th>Terms</th>
+                        <th>Status</th>
+                        <th>Receipt</th>
+                    </tr>
+                </thead>
+                <tbody id="warrantiesTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Part details -->
+<div id="partDetailModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="detailTitle">Part</h3>
+            <button class="close" onclick="closeModal('partDetailModal')">&times;</button>
+        </div>
+        <div id="detailBody"></div>
+    </div>
+</div>
+
+<!-- Add / edit part -->
+<div id="partModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="partModalTitle">Add Part</h3>
+            <button class="close" onclick="closeModal('partModal')">&times;</button>
+        </div>
+        <form id="partForm" onsubmit="savePart(event)">
+            <input type="hidden" id="partId">
+            <div class="form-group">
+                <label for="partName">Part Name *</label>
+                <input type="text" id="partName" name="name" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="partNumber">Part Number</label>
+                    <input type="text" id="partNumber" name="part_number">
+                </div>
+                <div class="form-group">
+                    <label for="partBrand">Brand</label>
+                    <input type="text" id="partBrand" name="brand">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="partCategory">Category</label>
+                    <select id="partCategory" name="category">
+                        <option value="">Select category...</option>
+                        <option>Engine</option>
+                        <option>Brakes</option>
+                        <option>Suspension</option>
+                        <option>Electrical</option>
+                        <option>Transmission</option>
+                        <option>Cooling System</option>
+                        <option>Exhaust</option>
+                        <option>Fuel System</option>
+                        <option>Interior</option>
+                        <option>Exterior</option>
+                        <option>Wheels/Tires</option>
+                        <option>Fluids</option>
+                        <option>Filters</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="partLocation">Storage Location</label>
+                    <input type="text" id="partLocation" name="location" placeholder="e.g., Garage shelf A">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="partReorder">Remind me to re-order when stock falls to</label>
+                <input type="number" id="partReorder" name="reorder_threshold" min="0" step="any" placeholder="Leave blank for no reminder">
+            </div>
+            <div class="form-group">
+                <label for="partNotes">Notes</label>
+                <textarea id="partNotes" name="notes" rows="2"></textarea>
+            </div>
+
+            <fieldset class="fieldset" id="firstPurchaseFieldset">
+                <legend>First purchase (optional)</legend>
+                <p class="hint" style="margin-bottom: 0.75rem;">Leave the quantity blank to add the part with nothing in stock.</p>
+                <div id="firstPurchaseFields"></div>
+            </fieldset>
+
+            <button type="submit" class="btn btn-success">Save Part</button>
+        </form>
+    </div>
+</div>
+
+<!-- Add / edit purchase -->
+<div id="purchaseModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="purchaseModalTitle">Add Purchase</h3>
+            <button class="close" onclick="closeModal('purchaseModal')">&times;</button>
+        </div>
+        <form id="purchaseForm" onsubmit="savePurchase(event)">
+            <div id="purchaseFields"></div>
+            <button type="submit" class="btn btn-success">Save Purchase</button>
+        </form>
+    </div>
+</div>
+
+<!-- Add / edit install -->
+<div id="installModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="installModalTitle">Install Part</h3>
+            <button class="close" onclick="closeModal('installModal')">&times;</button>
+        </div>
+        <form id="installForm" onsubmit="saveInstall(event)">
+            <p class="hint" id="installHint" style="margin-bottom: 0.75rem;"></p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="installVehicle">Vehicle *</label>
+                    <select id="installVehicle" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="installQuantity">Quantity *</label>
+                    <input type="number" id="installQuantity" min="0" step="any" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="installDate">Install Date *</label>
+                    <input type="date" id="installDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="installOdometer">Odometer</label>
+                    <input type="number" id="installOdometer" min="0" step="1" placeholder="Miles at install">
+                </div>
+            </div>
+            <div class="form-group" id="installPurchaseGroup">
+                <label for="installPurchase">Take from</label>
+                <select id="installPurchase"></select>
+            </div>
+            <div id="installEditFields">
+                <div class="form-group">
+                    <label for="installRemoved">Removed From Vehicle</label>
+                    <input type="date" id="installRemoved">
+                    <span class="hint">Set this when the part comes off the vehicle. It stays in the history but drops off the warranty list.</span>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="installWarrantyStart">Warranty Start Date</label>
+                        <input type="date" id="installWarrantyStart">
+                    </div>
+                    <div class="form-group">
+                        <label for="installWarrantyMileage">Warranty Start Mileage</label>
+                        <input type="number" id="installWarrantyMileage" min="0" step="1">
+                    </div>
+                </div>
+                <p class="hint" style="margin-bottom: 0.75rem;">Leave the warranty start blank to use the install date and odometer.</p>
+            </div>
+            <div class="form-group">
+                <label for="installNotes">Notes</label>
+                <textarea id="installNotes" rows="2"></textarea>
+            </div>
+            <button type="submit" class="btn btn-success">Save</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allParts = [];
+let filteredParts = [];
+let allVehicles = [];
+let partsPage = 1;
+const partsPerPage = 15;
+
+let detailPartId = null;      // part shown in the details modal, if open
+let purchaseContext = null;   // {partId, purchaseId} being added / edited
+let installContext = null;    // {partId, installId} being added / edited
+
+// ── Formatting ──────────────────────────────────────────────────────────────
+
+function fmtQty(n) {
+    return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function fmtDate(d) {
+    return d ? formatDate(d) : '—';
+}
+
+// "36 mo / 36,000 mi", "Lifetime" or "None" for a purchase's warranty terms
+function warrantyTerms(p) {
+    if (p.warranty_lifetime || p.lifetime) return 'Lifetime';
+    const months = p.warranty_months || p.months;
+    const miles = p.warranty_miles || p.miles;
+    const terms = [];
+    if (months) terms.push(`${months} mo`);
+    if (miles) terms.push(`${Number(miles).toLocaleString()} mi`);
+    return terms.length ? terms.join(' / ') : 'None';
+}
+
+// Status pill plus what is left, for a warranty object from the API
+function warrantyBadge(w) {
+    if (!w) return '<span class="sub">No warranty</span>';
+    if (w.status === 'lifetime') return '<span class="pill pill-ok">Lifetime</span>';
+
+    const left = [];
+    if (w.expires_on) left.push((w.days_remaining < 0 ? 'ended ' : 'until ') + formatDate(w.expires_on));
+    if (w.miles_remaining !== null) {
+        left.push(w.miles_remaining < 0
+            ? `${Math.abs(w.miles_remaining).toLocaleString()} mi over`
+            : `${w.miles_remaining.toLocaleString()} mi left`);
+    } else if (w.expires_at_mileage !== null) {
+        left.push(`to ${w.expires_at_mileage.toLocaleString()} mi`);
+    }
+    const pill = { active: ['pill-ok', 'Covered'], expiring: ['pill-warn', 'Expiring soon'], expired: ['pill-bad', 'Expired'] }[w.status];
+    return `<span class="pill ${pill[0]}">${pill[1]}</span><span class="sub">${left.join(' · ') || 'Start date or mileage unknown'}</span>`;
+}
+
+// Summary of the warranties on a part's current installs
+function partWarrantySummary(part) {
+    const w = part.warranty;
+    const pills = [];
+    if (w.expiring) pills.push(`<span class="pill pill-warn">${w.expiring} expiring soon</span>`);
+    if (w.active) pills.push(`<span class="pill pill-ok">${w.active} covered</span>`);
+    if (w.lifetime) pills.push(`<span class="pill pill-ok">${w.lifetime} lifetime</span>`);
+    if (w.expired) pills.push(`<span class="pill pill-bad">${w.expired} expired</span>`);
+    if (!pills.length) {
+        // Nothing installed under warranty; show what the stock is sold with
+        const lot = part.purchases.find(p => p.remaining > 0 && warrantyTerms(p) !== 'None');
+        return lot ? `<span class="sub">${warrantyTerms(lot)} once installed</span>` : '—';
+    }
+    const next = w.next_expiry ? `<span class="sub">next ends ${formatDate(w.next_expiry)}</span>` : '';
+    return pills.join(' ') + next;
+}
+
+function receiptLink(path, label = 'Receipt') {
+    return path ? `<a href="/static/${escapeHtml(path)}" target="_blank">${label}</a>` : '';
+}
+
+// ── Loading ─────────────────────────────────────────────────────────────────
+
+async function loadParts() {
+    try {
+        allParts = await fetchAPI('/api/parts');
+        filterParts(false);
+        makeSortable(document.getElementById('partsTable'));
+        if (detailPartId && document.getElementById('partDetailModal').style.display === 'block') {
+            renderDetail();
+        }
+    } catch (error) {
+        document.getElementById('partsTableBody').innerHTML = '<tr><td colspan="6" class="text-center">Error loading parts</td></tr>';
+    }
+}
+
+function filterParts(resetPage = true) {
+    const query = document.getElementById('partSearch').value.trim().toLowerCase();
+    filteredParts = !query ? allParts : allParts.filter(p =>
+        [p.name, p.part_number, p.brand, p.category, p.location, p.notes]
+            .some(v => v && v.toLowerCase().includes(query)));
+    if (resetPage) partsPage = 1;
+    displayParts();
+}
+
+function stockCell(part) {
+    const low = part.low_stock ? ' <span class="pill pill-warn">Low</span>' : '';
+    const style = part.in_stock <= 0 ? ' style="color: var(--danger-color); font-weight: 600;"' : '';
+    return `<span${style}>${fmtQty(part.in_stock)}</span>${low}`;
+}
+
+function displayParts() {
+    const tbody = document.getElementById('partsTableBody');
+    const cards = document.getElementById('partsMobileCards');
+    const pagination = document.getElementById('partsPaginationControls');
+
+    if (filteredParts.length === 0) {
+        const message = allParts.length ? 'No parts match your search.' : 'No parts yet. Click "Add Part" to get started.';
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center">${message}</td></tr>`;
+        cards.innerHTML = `<p class="text-center">${message}</p>`;
+        pagination.innerHTML = '';
+        return;
+    }
+
+    const page = paginateArray(filteredParts, partsPage, partsPerPage);
+    let rows = '';
+    let cardsHtml = '';
+    page.forEach(part => {
+        const identity = [part.brand, part.part_number].filter(Boolean).map(escapeHtml).join(' · ');
+        rows += `
+            <tr>
+                <td><a href="#" onclick="openDetail(${part.id}); return false;"><strong>${escapeHtml(part.name)}</strong></a>
+                    ${identity ? `<span class="sub">${identity}</span>` : ''}</td>
+                <td>${stockCell(part)}</td>
+                <td>${formatCurrency(part.stock_value)}</td>
+                <td>${fmtQty(part.installed)}</td>
+                <td>${partWarrantySummary(part)}</td>
+                <td>
+                    <div class="action-menu">
+                        <button class="menu-button" onclick="toggleMenu(event, ${part.id})" aria-label="Actions">&#8942;</button>
+                        <div class="menu-dropdown" id="menu-${part.id}">
+                            <button onclick="openDetail(${part.id})">Details</button>
+                            <button onclick="openPurchaseModal(${part.id})">Add Purchase</button>
+                            <button onclick="openInstallModal(${part.id})">Install on Vehicle</button>
+                            <button onclick="openPartModal(${part.id})">Edit</button>
+                            <button class="danger" onclick="deletePart(${part.id})">Delete</button>
+                        </div>
+                    </div>
+                </td>
+            </tr>`;
+
+        const fields = [
+            { label: 'In Stock', value: stockCell(part) },
+            { label: 'Stock Value', value: formatCurrency(part.stock_value) },
+            { label: 'Installed', value: fmtQty(part.installed) },
+            { label: 'Warranty', value: partWarrantySummary(part) }
+        ];
+        if (identity) fields.unshift({ label: 'Brand / Part #', value: identity });
+        cardsHtml += createMobileCard(escapeHtml(part.name), fields, [
+            { label: 'Details', class: 'btn-secondary', onclick: `openDetail(${part.id})` },
+            { label: 'Add Purchase', class: 'btn-secondary', onclick: `openPurchaseModal(${part.id})` },
+            { label: 'Install', class: 'btn-secondary', onclick: `openInstallModal(${part.id})` }
+        ]);
+    });
+    tbody.innerHTML = rows;
+    cards.innerHTML = cardsHtml;
+    pagination.innerHTML = createPagination(filteredParts.length, partsPage, partsPerPage, 'goToPartsPage');
+}
+
+function goToPartsPage(page) {
+    partsPage = page;
+    displayParts();
+    document.getElementById('partsTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function showTab(tab) {
+    const shelf = tab === 'shelf';
+    document.getElementById('shelfPanel').style.display = shelf ? 'block' : 'none';
+    document.getElementById('warrantiesPanel').style.display = shelf ? 'none' : 'block';
+    document.getElementById('tabShelf').classList.toggle('active', shelf);
+    document.getElementById('tabWarranties').classList.toggle('active', !shelf);
+    if (!shelf) loadWarranties();
+}
+
+async function loadWarranties() {
+    const tbody = document.getElementById('warrantiesTableBody');
+    const cards = document.getElementById('warrantiesMobileCards');
+    const all = document.getElementById('warrantyAllVehicles').checked;
+    const vehicleId = getCurrentVehicleId();
+
+    if (!all && !vehicleId) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">Select a vehicle, or tick "All vehicles".</td></tr>';
+        cards.innerHTML = '<p class="text-center">Select a vehicle, or tick "All vehicles".</p>';
+        return;
+    }
+    try {
+        const warranties = await fetchAPI('/api/warranties' + (all ? '' : `?vehicle_id=${vehicleId}`));
+        if (!warranties.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center">No installed parts are under warranty.</td></tr>';
+            cards.innerHTML = '<p class="text-center">No installed parts are under warranty.</p>';
+            return;
+        }
+        let rows = '';
+        let cardsHtml = '';
+        warranties.forEach(i => {
+            const qty = i.quantity !== 1 ? ` <span class="sub">× ${fmtQty(i.quantity)}</span>` : '';
+            const installed = fmtDate(i.install_date) + (i.odometer ? `<span class="sub">${i.odometer.toLocaleString()} mi</span>` : '');
+            rows += `
+                <tr>
+                    <td><a href="#" onclick="openDetail(${i.part_id}); return false;">${escapeHtml(i.part_name)}</a>${qty}</td>
+                    <td>${escapeHtml(i.vehicle_name)}</td>
+                    <td>${installed}</td>
+                    <td>${warrantyTerms(i.warranty)}</td>
+                    <td>${warrantyBadge(i.warranty)}</td>
+                    <td>${receiptLink(i.receipt_path, 'View') || '—'}</td>
+                </tr>`;
+            cardsHtml += createMobileCard(escapeHtml(i.part_name), [
+                { label: 'Vehicle', value: escapeHtml(i.vehicle_name) },
+                { label: 'Installed', value: fmtDate(i.install_date) },
+                { label: 'Terms', value: warrantyTerms(i.warranty) },
+                { label: 'Status', value: warrantyBadge(i.warranty) }
+            ], [{ label: 'Details', class: 'btn-secondary', onclick: `openDetail(${i.part_id})` }]);
+        });
+        tbody.innerHTML = rows;
+        cards.innerHTML = cardsHtml;
+    } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">Error loading warranties</td></tr>';
+    }
+}
+
+// ── Part details ────────────────────────────────────────────────────────────
+
+function openDetail(partId) {
+    detailPartId = partId;
+    renderDetail();
+    openModal('partDetailModal');
+}
+
+function renderDetail() {
+    const part = allParts.find(p => p.id === detailPartId);
+    if (!part) {
+        closeModal('partDetailModal');
+        return;
+    }
+    document.getElementById('detailTitle').textContent = part.name;
+
+    const info = [
+        ['Part number', part.part_number], ['Brand', part.brand], ['Category', part.category],
+        ['Location', part.location], ['In stock', fmtQty(part.in_stock)],
+        ['Stock value', formatCurrency(part.stock_value)],
+        ['Re-order at', part.reorder_threshold !== null ? fmtQty(part.reorder_threshold) : null]
+    ].filter(([, value]) => value !== null && value !== undefined && value !== '')
+     .map(([label, value]) => `<div><span>${label}</span>${escapeHtml(String(value))}</div>`).join('');
+
+    let purchases = '';
+    part.purchases.slice().reverse().forEach(p => {
+        const shelf = p.shelf_warranty && p.remaining > 0 ? `<div class="mobile-card-row"><span class="mobile-card-label">On the shelf</span><span class="mobile-card-value">${warrantyBadge(p.shelf_warranty)}</span></div>` : '';
+        const terms = warrantyTerms(p);
+        purchases += `
+            <div class="mobile-card" style="margin-bottom: 0.5rem;">
+                <div class="mobile-card-header">
+                    <h4>${p.purchase_date ? formatDate(p.purchase_date) : 'Undated purchase'}${p.supplier ? ' · ' + escapeHtml(p.supplier) : ''}</h4>
+                    <div>${fmtQty(p.remaining)} of ${fmtQty(p.quantity)} left</div>
+                </div>
+                <div class="mobile-card-body">
+                    <div class="mobile-card-row"><span class="mobile-card-label">Cost each</span><span class="mobile-card-value">${formatCurrency(p.unit_cost)}${p.condition && p.condition !== 'New' ? ' · ' + escapeHtml(p.condition) : ''}</span></div>
+                    <div class="mobile-card-row"><span class="mobile-card-label">Warranty</span><span class="mobile-card-value">${terms}${terms !== 'None' && terms !== 'Lifetime' ? (p.warranty_starts === 'purchase' ? ', from purchase' : ', from install') : ''}</span></div>
+                    ${shelf}
+                    ${p.receipt_path ? `<div class="mobile-card-row"><span class="mobile-card-label">Receipt</span><span class="mobile-card-value">${receiptLink(p.receipt_path, 'View Receipt')}</span></div>` : ''}
+                    ${p.notes ? `<div class="mobile-card-row"><span class="mobile-card-label">Notes</span><span class="mobile-card-value" style="white-space: pre-wrap;">${escapeHtml(p.notes)}</span></div>` : ''}
+                </div>
+                <div class="mobile-card-actions">
+                    ${p.remaining > 0 ? `<button class="btn btn-small btn-secondary" onclick="openInstallModal(${part.id}, null, ${p.id})">Install</button>` : ''}
+                    <button class="btn btn-small btn-secondary" onclick="openPurchaseModal(${part.id}, ${p.id})">Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deletePurchase(${p.id})">Delete</button>
+                </div>
+            </div>`;
+    });
+
+    let installs = '';
+    part.installs.forEach(i => {
+        const where = i.service_id
+            ? '<span class="sub">on a service record</span>'
+            : '<span class="sub">no service record</span>';
+        installs += `
+            <div class="mobile-card" style="margin-bottom: 0.5rem;">
+                <div class="mobile-card-header">
+                    <h4>${escapeHtml(i.vehicle_name)}${i.quantity !== 1 ? ' × ' + fmtQty(i.quantity) : ''}</h4>
+                    <div>${i.removed_date ? `<span class="pill pill-muted">Removed ${fmtDate(i.removed_date)}</span>` : warrantyBadge(i.warranty)}</div>
+                </div>
+                <div class="mobile-card-body">
+                    <div class="mobile-card-row"><span class="mobile-card-label">Installed</span><span class="mobile-card-value">${fmtDate(i.install_date)}${i.odometer ? ' at ' + i.odometer.toLocaleString() + ' mi' : ''}${where}</span></div>
+                    <div class="mobile-card-row"><span class="mobile-card-label">Cost each</span><span class="mobile-card-value">${formatCurrency(i.unit_cost)}</span></div>
+                    ${i.notes ? `<div class="mobile-card-row"><span class="mobile-card-label">Notes</span><span class="mobile-card-value">${escapeHtml(i.notes)}</span></div>` : ''}
+                </div>
+                <div class="mobile-card-actions">
+                    <button class="btn btn-small btn-secondary" onclick="openInstallModal(${part.id}, ${i.id})">Edit</button>
+                    ${i.service_id ? '' : `<button class="btn btn-small btn-danger" onclick="deleteInstall(${i.id})">Undo</button>`}
+                </div>
+            </div>`;
+    });
+
+    document.getElementById('detailBody').innerHTML = `
+        <div class="detail-grid">${info}</div>
+        ${part.notes ? `<p style="margin-top: 0.75rem; white-space: pre-wrap;">${escapeHtml(part.notes)}</p>` : ''}
+        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="btn btn-small btn-secondary" onclick="openPartModal(${part.id})">Edit Part</button>
+            <button class="btn btn-small btn-danger" onclick="deletePart(${part.id})">Delete Part</button>
+        </div>
+        <div class="detail-section">
+            <h4>Purchases <button class="btn btn-small btn-primary" onclick="openPurchaseModal(${part.id})">Add Purchase</button></h4>
+            ${purchases || '<p class="hint">Nothing bought yet.</p>'}
+        </div>
+        <div class="detail-section">
+            <h4>Installed <button class="btn btn-small btn-primary" onclick="openInstallModal(${part.id})">Install on Vehicle</button></h4>
+            ${installs || '<p class="hint">Not installed on any vehicle yet. Parts used on a service record show up here too.</p>'}
+        </div>`;
+}
+
+// ── Purchase fields (shared by the part form and the purchase form) ─────────
+
+function purchaseFieldsHtml(prefix, notesName) {
+    return `
+        <div class="form-row">
+            <div class="form-group">
+                <label for="${prefix}Quantity">Quantity${prefix === 'purchase' ? ' *' : ''}</label>
+                <input type="number" id="${prefix}Quantity" name="quantity" min="0" step="any" ${prefix === 'purchase' ? 'required' : ''}>
+            </div>
+            <div class="form-group">
+                <label for="${prefix}UnitCost">Cost per Unit</label>
+                <input type="number" id="${prefix}UnitCost" name="unit_cost" min="0" step="0.01">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="${prefix}Date">Purchase Date</label>
+                <input type="date" id="${prefix}Date" name="purchase_date">
+            </div>
+            <div class="form-group">
+                <label for="${prefix}Supplier">Supplier</label>
+                <input type="text" id="${prefix}Supplier" name="supplier" placeholder="e.g., AutoZone, RockAuto">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="${prefix}Condition">Condition</label>
+            <select id="${prefix}Condition" name="condition">
+                <option>New</option><option>Used</option><option>Refurbished</option><option>Remanufactured</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="check-label">
+                <input type="checkbox" id="${prefix}Lifetime" name="warranty_lifetime" onchange="toggleLifetime('${prefix}')">
+                <span>Lifetime warranty</span>
+            </label>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="${prefix}Months">Warranty Months</label>
+                <input type="number" id="${prefix}Months" name="warranty_months" min="0" step="1" placeholder="e.g., 12, 36">
+            </div>
+            <div class="form-group">
+                <label for="${prefix}Miles">Warranty Miles</label>
+                <input type="number" id="${prefix}Miles" name="warranty_miles" min="0" step="1" placeholder="e.g., 12000">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="${prefix}Starts">Warranty Starts</label>
+            <select id="${prefix}Starts" name="warranty_starts">
+                <option value="install">When the part is installed</option>
+                <option value="purchase">On the purchase date</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="${prefix}Receipt">Receipt</label>
+            <input type="file" id="${prefix}Receipt" name="receipt" accept="image/*,.pdf">
+            <div id="${prefix}ReceiptCurrent" class="file-preview"></div>
+        </div>
+        <div class="form-group">
+            <label for="${prefix}Notes">Purchase Notes</label>
+            <textarea id="${prefix}Notes" name="${notesName}" rows="2"></textarea>
+        </div>`;
+}
+
+function toggleLifetime(prefix) {
+    const lifetime = document.getElementById(`${prefix}Lifetime`).checked;
+    ['Months', 'Miles', 'Starts'].forEach(suffix => {
+        const el = document.getElementById(prefix + suffix);
+        el.disabled = lifetime;
+        if (lifetime && suffix !== 'Starts') el.value = '';
+    });
+}
+
+document.getElementById('firstPurchaseFields').innerHTML = purchaseFieldsHtml('first', 'purchase_notes');
+document.getElementById('purchaseFields').innerHTML = purchaseFieldsHtml('purchase', 'notes');
+
+// ── Parts ───────────────────────────────────────────────────────────────────
+
+function openPartModal(partId = null) {
+    const form = document.getElementById('partForm');
+    form.reset();
+    toggleLifetime('first');
+    const part = partId ? allParts.find(p => p.id === partId) : null;
+    document.getElementById('partId').value = part ? part.id : '';
+    document.getElementById('partModalTitle').textContent = part ? 'Edit Part' : 'Add Part';
+    // Stock and warranty live on purchases, so editing a part doesn't touch them
+    document.getElementById('firstPurchaseFieldset').style.display = part ? 'none' : 'block';
+    document.getElementById('firstPurchaseFieldset').disabled = !!part;
+    if (part) {
+        document.getElementById('partName').value = part.name;
+        document.getElementById('partNumber').value = part.part_number || '';
+        document.getElementById('partBrand').value = part.brand || '';
+        document.getElementById('partCategory').value = part.category || '';
+        document.getElementById('partLocation').value = part.location || '';
+        document.getElementById('partReorder').value = part.reorder_threshold !== null ? part.reorder_threshold : '';
+        document.getElementById('partNotes').value = part.notes || '';
+    } else {
+        document.getElementById('firstDate').value = toISODate(new Date());
+    }
+    openModal('partModal');
+}
+
+async function savePart(event) {
+    event.preventDefault();
+    const partId = document.getElementById('partId').value;
+    const formData = new FormData(document.getElementById('partForm'));
+    try {
+        await fetchAPI(partId ? `/api/parts/${partId}` : '/api/parts',
+                       { method: partId ? 'PUT' : 'POST', body: formData });
+        showAlert(partId ? 'Part updated' : 'Part added', 'success');
+        closeModal('partModal');
+        await loadParts();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+async function deletePart(partId) {
+    const part = allParts.find(p => p.id === partId);
+    if (!confirm(`Delete ${part ? part.name : 'this part'} and its purchase history?`)) return;
+    try {
+        await fetchAPI(`/api/parts/${partId}`, { method: 'DELETE' });
+        showAlert('Part deleted', 'success');
+        closeModal('partDetailModal');
+        await loadParts();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+// ── Purchases ───────────────────────────────────────────────────────────────
+
+function openPurchaseModal(partId, purchaseId = null) {
+    const part = allParts.find(p => p.id === partId);
+    if (!part) return;
+    const purchase = purchaseId ? part.purchases.find(p => p.id === purchaseId) : null;
+    purchaseContext = { partId, purchaseId };
+
+    document.getElementById('purchaseForm').reset();
+    document.getElementById('purchaseModalTitle').textContent =
+        `${purchase ? 'Edit Purchase' : 'Add Purchase'} — ${part.name}`;
+    const current = document.getElementById('purchaseReceiptCurrent');
+    current.innerHTML = '';
+    if (purchase) {
+        document.getElementById('purchaseQuantity').value = purchase.quantity;
+        document.getElementById('purchaseUnitCost').value = purchase.unit_cost;
+        document.getElementById('purchaseDate').value = purchase.purchase_date || '';
+        document.getElementById('purchaseSupplier').value = purchase.supplier || '';
+        document.getElementById('purchaseCondition').value = purchase.condition || 'New';
+        document.getElementById('purchaseLifetime').checked = !!purchase.warranty_lifetime;
+        document.getElementById('purchaseMonths').value = purchase.warranty_months || '';
+        document.getElementById('purchaseMiles').value = purchase.warranty_miles || '';
+        document.getElementById('purchaseStarts').value = purchase.warranty_starts || 'install';
+        document.getElementById('purchaseNotes').value = purchase.notes || '';
+        if (purchase.receipt_path) current.innerHTML = 'Current: ' + receiptLink(purchase.receipt_path, 'View Receipt');
+    } else {
+        // Start from the last purchase: the same part usually comes from the
+        // same place with the same warranty
+        const last = part.purchases[part.purchases.length - 1];
+        document.getElementById('purchaseDate').value = toISODate(new Date());
+        if (last) {
+            document.getElementById('purchaseUnitCost').value = last.unit_cost;
+            document.getElementById('purchaseSupplier').value = last.supplier || '';
+            document.getElementById('purchaseLifetime').checked = !!last.warranty_lifetime;
+            document.getElementById('purchaseMonths').value = last.warranty_months || '';
+            document.getElementById('purchaseMiles').value = last.warranty_miles || '';
+            document.getElementById('purchaseStarts').value = last.warranty_starts || 'install';
+        }
+    }
+    toggleLifetime('purchase');
+    openModal('purchaseModal');
+}
+
+async function savePurchase(event) {
+    event.preventDefault();
+    const { partId, purchaseId } = purchaseContext;
+    const formData = new FormData(document.getElementById('purchaseForm'));
+    try {
+        await fetchAPI(purchaseId ? `/api/part-purchases/${purchaseId}` : `/api/parts/${partId}/purchases`,
+                       { method: purchaseId ? 'PUT' : 'POST', body: formData });
+        showAlert(purchaseId ? 'Purchase updated' : 'Purchase added', 'success');
+        closeModal('purchaseModal');
+        await loadParts();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+async function deletePurchase(purchaseId) {
+    if (!confirm('Delete this purchase?')) return;
+    try {
+        await fetchAPI(`/api/part-purchases/${purchaseId}`, { method: 'DELETE' });
+        showAlert('Purchase deleted', 'success');
+        await loadParts();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+// ── Installs ────────────────────────────────────────────────────────────────
+
+function openInstallModal(partId, installId = null, purchaseId = null) {
+    const part = allParts.find(p => p.id === partId);
+    if (!part) return;
+    const install = installId ? part.installs.find(i => i.id === installId) : null;
+    if (!install && part.in_stock <= 0) {
+        showAlert(`${part.name} is out of stock. Add a purchase first.`, 'warning');
+        return;
+    }
+    if (!install && allVehicles.length === 0) {
+        showAlert('Add a vehicle first.', 'warning');
+        return;
+    }
+    installContext = { partId, installId };
+
+    document.getElementById('installForm').reset();
+    document.getElementById('installModalTitle').textContent =
+        `${install ? 'Edit Install' : 'Install'} — ${part.name}`;
+
+    const vehicleSelect = document.getElementById('installVehicle');
+    vehicleSelect.innerHTML = '';
+    allVehicles.forEach(v => {
+        const option = document.createElement('option');
+        option.value = v.id;
+        option.textContent = v.nickname || `${v.year} ${v.manufacturer} ${v.model}`;
+        vehicleSelect.appendChild(option);
+    });
+
+    // Quantity, date and odometer of a part used on a service follow that service
+    const onService = !!(install && install.service_id);
+    ['installQuantity', 'installDate', 'installOdometer'].forEach(id => {
+        document.getElementById(id).disabled = onService;
+    });
+    vehicleSelect.disabled = !!install;
+    document.getElementById('installHint').textContent = onService
+        ? 'This part was used on a service record, so its quantity, date and odometer are changed by editing that service.'
+        : (install ? '' : 'For a part fitted outside a service. Parts used during a service are added on the service record instead.');
+    document.getElementById('installEditFields').style.display = install ? 'block' : 'none';
+    document.getElementById('installPurchaseGroup').style.display = install ? 'none' : 'block';
+
+    if (install) {
+        if (install.vehicle_id === null) {
+            vehicleSelect.innerHTML = '<option value="">Deleted vehicle</option>';
+        } else {
+            vehicleSelect.value = install.vehicle_id;
+        }
+        document.getElementById('installQuantity').value = install.quantity;
+        document.getElementById('installDate').value = install.install_date || '';
+        document.getElementById('installOdometer').value = install.odometer || '';
+        document.getElementById('installRemoved').value = install.removed_date || '';
+        document.getElementById('installWarrantyStart').value = install.warranty_start_date || '';
+        document.getElementById('installWarrantyMileage').value = install.warranty_start_mileage !== null ? install.warranty_start_mileage : '';
+        document.getElementById('installNotes').value = install.notes || '';
+    } else {
+        if (getCurrentVehicleId()) vehicleSelect.value = getCurrentVehicleId();
+        document.getElementById('installQuantity').value = 1;
+        document.getElementById('installDate').value = toISODate(new Date());
+        const purchaseSelect = document.getElementById('installPurchase');
+        purchaseSelect.innerHTML = '<option value="">Oldest stock first</option>';
+        part.purchases.filter(p => p.remaining > 0).forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.id;
+            option.textContent = `${p.purchase_date ? formatDate(p.purchase_date) : 'Undated'} — ${fmtQty(p.remaining)} left @ ${formatCurrency(p.unit_cost)}, warranty: ${warrantyTerms(p)}`;
+            purchaseSelect.appendChild(option);
+        });
+        purchaseSelect.value = purchaseId || '';
+    }
+    openModal('installModal');
+}
+
+async function saveInstall(event) {
+    event.preventDefault();
+    const { partId, installId } = installContext;
+    const value = id => document.getElementById(id).value;
+    const body = { notes: value('installNotes') };
+    if (!document.getElementById('installQuantity').disabled) {
+        Object.assign(body, {
+            quantity: value('installQuantity'),
+            install_date: value('installDate'),
+            odometer: value('installOdometer')
+        });
+    }
+    if (installId) {
+        Object.assign(body, {
+            removed_date: value('installRemoved'),
+            warranty_start_date: value('installWarrantyStart'),
+            warranty_start_mileage: value('installWarrantyMileage')
+        });
+    } else {
+        Object.assign(body, { vehicle_id: value('installVehicle'), purchase_id: value('installPurchase') });
+    }
+    try {
+        await fetchAPI(installId ? `/api/part-installs/${installId}` : `/api/parts/${partId}/installs`, {
+            method: installId ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        showAlert(installId ? 'Install updated' : 'Part installed', 'success');
+        closeModal('installModal');
+        await loadParts();
+        if (document.getElementById('warrantiesPanel').style.display !== 'none') loadWarranties();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+async function deleteInstall(installId) {
+    if (!confirm('Undo this install and put the part back in stock?')) return;
+    try {
+        await fetchAPI(`/api/part-installs/${installId}`, { method: 'DELETE' });
+        showAlert('Install undone', 'success');
+        await loadParts();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+// ── Row menus ───────────────────────────────────────────────────────────────
+
+function toggleMenu(event, partId) {
+    event.stopPropagation();
+    const menu = document.getElementById(`menu-${partId}`);
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+    });
+    if (!menu.classList.contains('show')) {
+        const rect = event.target.getBoundingClientRect();
+        menu.style.top = `${rect.bottom}px`;
+        menu.style.left = `${rect.right - 160}px`;
+    }
+    menu.classList.toggle('show');
+}
+
+document.addEventListener('click', () => {
+    document.querySelectorAll('.menu-dropdown').forEach(m => m.classList.remove('show'));
+});
+
+appReady.then(async () => {
+    try {
+        allVehicles = await fetchAPI('/api/vehicles');
+    } catch (error) {
+        allVehicles = [];
+    }
+    await loadParts();
+});
+</script>
+{% endblock %}

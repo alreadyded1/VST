@@ -4,6 +4,8 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
+from contextlib import contextmanager
+import calendar
 import posixpath
 import sqlite3
 import os
@@ -705,6 +707,73 @@ def init_db():
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('supply_units_backfilled', '1')")
             db.commit()
 
+        # Parts, purchases and installs: the model that replaces supplies,
+        # supply_units and service_supplies above (see the parts section
+        # further down). The old tables are kept, unused, as a backup.
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS parts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                part_number TEXT,
+                brand TEXT,
+                category TEXT,
+                location TEXT,
+                notes TEXT,
+                reorder_threshold REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS part_purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                part_id INTEGER NOT NULL,
+                purchase_date DATE,
+                supplier TEXT,
+                condition TEXT DEFAULT 'New',
+                quantity REAL NOT NULL,
+                unit_cost REAL NOT NULL DEFAULT 0,
+                receipt_path TEXT,
+                warranty_months INTEGER,
+                warranty_miles INTEGER,
+                warranty_lifetime BOOLEAN DEFAULT 0,
+                warranty_starts TEXT NOT NULL DEFAULT 'install',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (part_id) REFERENCES parts (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS part_installs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchase_id INTEGER NOT NULL,
+                vehicle_id INTEGER,
+                service_id INTEGER,
+                quantity REAL NOT NULL,
+                install_date DATE,
+                odometer INTEGER,
+                removed_date DATE,
+                warranty_start_date DATE,
+                warranty_start_mileage INTEGER,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (purchase_id) REFERENCES part_purchases (id),
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle (id),
+                FOREIGN KEY (service_id) REFERENCES service_records (id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_part_purchases_part_id ON part_purchases(part_id);
+            CREATE INDEX IF NOT EXISTS idx_part_installs_purchase_id ON part_installs(purchase_id);
+            CREATE INDEX IF NOT EXISTS idx_part_installs_service_id ON part_installs(service_id);
+            CREATE INDEX IF NOT EXISTS idx_part_installs_vehicle_id ON part_installs(vehicle_id);
+        ''')
+
+        # One-time copy of the old supplies data into the tables above.
+        # Guarded by the setting and by the tables being empty, so a restart
+        # can never run it twice.
+        if not db.execute("SELECT 1 FROM settings WHERE key = 'parts_migrated'").fetchone():
+            if not db.execute('SELECT 1 FROM parts LIMIT 1').fetchone():
+                migrate_supplies_to_parts(db)
+            db.execute("INSERT INTO settings (key, value) VALUES ('parts_migrated', '1')")
+            db.commit()
+
         # One-time repair: MPG used to be computed only at insert time, so
         # edits, deletions and backdated fill-ups left stale values behind.
         if not db.execute("SELECT 1 FROM settings WHERE key = 'mpg_recalculated'").fetchone():
@@ -910,11 +979,17 @@ def services_page():
     """Service records page"""
     return render_template('services.html')
 
+@app.route('/parts')
+@login_required
+def parts_page():
+    """Parts shelf and warranties page"""
+    return render_template('parts.html')
+
 @app.route('/supplies')
 @login_required
 def supplies_page():
-    """Supplies inventory page"""
-    return render_template('supplies.html')
+    """Old address of the parts page"""
+    return redirect(url_for('parts_page'))
 
 @app.route('/fuel')
 @login_required
@@ -1161,20 +1236,13 @@ def get_vehicles_summary():
         FROM vehicle v
     ''', {'year': year}).fetchall()
 
-    # Service cost = labor/shop cost + supplies used, per service
-    service_costs = db.execute('''
+    # Service cost = labor/shop cost + parts used, per service
+    service_costs = db.execute(f'''
         SELECT s.vehicle_id,
-               SUM(s.cost + COALESCE(sc.supplies_cost, 0)) AS total,
+               SUM(s.cost + {PARTS_COST_SQL}) AS total,
                SUM(CASE WHEN strftime('%Y', s.date) = :year
-                        THEN s.cost + COALESCE(sc.supplies_cost, 0) ELSE 0 END) AS ytd
+                        THEN s.cost + {PARTS_COST_SQL} ELSE 0 END) AS ytd
         FROM service_records s
-        LEFT JOIN (
-            SELECT ss.service_id, SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)) AS supplies_cost
-            FROM service_supplies ss
-            JOIN supplies sup ON sup.id = ss.supply_id
-            LEFT JOIN supply_units su ON su.id = ss.supply_unit_id
-            GROUP BY ss.service_id
-        ) sc ON sc.service_id = s.id
         GROUP BY s.vehicle_id
     ''', {'year': year}).fetchall()
     service_costs = {r['vehicle_id']: r for r in service_costs}
@@ -1273,15 +1341,17 @@ def delete_vehicle(vehicle_id):
     # Collect file paths before the rows go away
     files = [vehicle['picture']]
     for table, column in (('service_records', 'receipt_path'),
-                          ('supplies', 'receipt_path'),
-                          ('supply_units', 'receipt_path'),
                           ('documents', 'file_path')):
         rows = db.execute(f'SELECT {column} FROM {table} WHERE vehicle_id = ? AND {column} IS NOT NULL',
                           (vehicle_id,)).fetchall()
         files.extend(r[column] for r in rows)
 
-    db.execute('DELETE FROM service_supplies WHERE service_id IN (SELECT id FROM service_records WHERE vehicle_id = ?)', (vehicle_id,))
-    for table in ('service_records', 'supply_units', 'supplies', 'fuel_records',
+    # Parts are a shared shelf, so they outlive the vehicle. What it used
+    # stays used (deleting the installs would put it back in stock); the
+    # installs just lose their link to the vehicle and its services.
+    db.execute('UPDATE part_installs SET vehicle_id = NULL, service_id = NULL WHERE vehicle_id = ?',
+               (vehicle_id,))
+    for table in ('service_records', 'fuel_records',
                   'service_reminders', 'documents', 'tire_install_log',
                   'tire_rotations', 'tread_readings', 'tires'):
         db.execute(f'DELETE FROM {table} WHERE vehicle_id = ?', (vehicle_id,))
@@ -1462,6 +1532,17 @@ def create_recall_reminders():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Service records endpoints
+
+# Cost of the parts used on a service: each install is priced at the unit
+# cost of the purchase it was drawn from, so old services keep their real
+# cost when prices change. The API still calls this `supplies_cost`.
+PARTS_COST_SQL = '''(SELECT COALESCE(SUM(pi.quantity * pp.unit_cost), 0)
+                     FROM part_installs pi
+                     JOIN part_purchases pp ON pp.id = pi.purchase_id
+                     WHERE pi.service_id = s.id)'''
+SERVICE_SELECT = f'SELECT s.*, {PARTS_COST_SQL} AS supplies_cost FROM service_records s'
+
+
 @app.route('/api/services', methods=['GET'])
 @api_login_required
 def get_services():
@@ -1471,43 +1552,19 @@ def get_services():
     per_page = request.args.get('per_page', 20, type=int)
 
     db = get_db()
-
-    # Base query
-    base_query = '''
-        SELECT s.*,
-               COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
-        FROM service_records s
-        LEFT JOIN service_supplies ss ON s.id = ss.service_id
-        LEFT JOIN supplies sup ON ss.supply_id = sup.id
-        LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-        {where_clause}
-        GROUP BY s.id
-        ORDER BY s.date DESC
-    '''
-
-    # Count query for total
-    count_query = '''
-        SELECT COUNT(DISTINCT s.id) as total
-        FROM service_records s
-        {where_clause}
-    '''
-
     if vehicle_id:
-        where_clause = 'WHERE s.vehicle_id = ?'
+        where_clause = ' WHERE s.vehicle_id = ?'
         params = (vehicle_id,)
     else:
         where_clause = ''
         params = ()
+    query = SERVICE_SELECT + where_clause + ' ORDER BY s.date DESC'
 
-    # Get total count
-    total_count = db.execute(count_query.format(where_clause=where_clause), params).fetchone()['total']
-
-    # If pagination requested, add LIMIT and OFFSET
     if page is not None:
+        total_count = db.execute('SELECT COUNT(*) AS total FROM service_records s' + where_clause,
+                                 params).fetchone()['total']
         offset = (page - 1) * per_page
-        query = base_query.format(where_clause=where_clause) + ' LIMIT ? OFFSET ?'
-        services = db.execute(query, params + (per_page, offset)).fetchall()
-
+        services = db.execute(query + ' LIMIT ? OFFSET ?', params + (per_page, offset)).fetchall()
         db.close()
         return jsonify({
             'data': [dict(row) for row in services],
@@ -1516,88 +1573,113 @@ def get_services():
             'per_page': per_page,
             'total_pages': (total_count + per_page - 1) // per_page
         })
-    else:
-        # Return all results (backwards compatibility)
-        services = db.execute(base_query.format(where_clause=where_clause), params).fetchall()
-        db.close()
-        return jsonify([dict(row) for row in services])
+
+    # Return all results (backwards compatibility)
+    services = db.execute(query, params).fetchall()
+    db.close()
+    return jsonify([dict(row) for row in services])
 
 @app.route('/api/services/<int:service_id>', methods=['GET'])
 @api_login_required
 def get_service(service_id):
-    """Get a specific service record"""
+    """Get a specific service record with the parts used on it"""
     db = get_db()
-    service = db.execute('''
-        SELECT s.*,
-               COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
-        FROM service_records s
-        LEFT JOIN service_supplies ss ON s.id = ss.service_id
-        LEFT JOIN supplies sup ON ss.supply_id = sup.id
-        LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-        WHERE s.id = ?
-        GROUP BY s.id
-    ''', (service_id,)).fetchone()
-
+    service = db.execute(SERVICE_SELECT + ' WHERE s.id = ?', (service_id,)).fetchone()
     if not service:
         db.close()
         return jsonify(None), 404
 
-    supplies_used = db.execute('''
-        SELECT sup.id, sup.name, COALESCE(su.cost, sup.cost) AS cost,
-               ss.quantity_used as quantity,
-               ss.supply_unit_id as unit_id, sup.tracked_individually
-        FROM service_supplies ss
-        JOIN supplies sup ON ss.supply_id = sup.id
-        LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-        WHERE ss.service_id = ?
-    ''', (service_id,)).fetchall()
+    installs = load_installs(db, 'pi.service_id = ?', (service_id,))
     db.close()
 
     result = dict(service)
-    result['supplies'] = [dict(row) for row in supplies_used]
+    result['parts'] = installs
+    # Older API clients read `supplies` as [{id, name, cost, quantity}]
+    result['supplies'] = [{'id': i['part_id'], 'name': i['part_name'],
+                           'cost': i['unit_cost'], 'quantity': i['quantity']} for i in installs]
     return jsonify(result)
 
 @app.route('/api/services/search', methods=['GET'])
 @api_login_required
 def search_services():
     """Search service records"""
-    query = request.args.get('q', '').lower()
+    like = f"%{request.args.get('q', '').lower()}%"
     vehicle_id = request.args.get('vehicle_id')
-    db = get_db()
-
+    where = ''' WHERE (LOWER(s.service_provider) LIKE ? OR LOWER(s.comments) LIKE ?
+                       OR LOWER(s.repairs_completed) LIKE ?)'''
+    params = (like, like, like)
     if vehicle_id:
-        services = db.execute('''
-            SELECT s.*,
-                   COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
-            FROM service_records s
-            LEFT JOIN service_supplies ss ON s.id = ss.service_id
-            LEFT JOIN supplies sup ON ss.supply_id = sup.id
-            LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-            WHERE s.vehicle_id = ? AND (
-                LOWER(s.service_provider) LIKE ? OR
-                LOWER(s.comments) LIKE ? OR
-                LOWER(s.repairs_completed) LIKE ?
-            )
-            GROUP BY s.id
-            ORDER BY s.date DESC
-        ''', (vehicle_id, f'%{query}%', f'%{query}%', f'%{query}%')).fetchall()
-    else:
-        services = db.execute('''
-            SELECT s.*,
-                   COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost
-            FROM service_records s
-            LEFT JOIN service_supplies ss ON s.id = ss.service_id
-            LEFT JOIN supplies sup ON ss.supply_id = sup.id
-            LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-            WHERE LOWER(s.service_provider) LIKE ?
-               OR LOWER(s.comments) LIKE ?
-               OR LOWER(s.repairs_completed) LIKE ?
-            GROUP BY s.id
-            ORDER BY s.date DESC
-        ''', (f'%{query}%', f'%{query}%', f'%{query}%')).fetchall()
+        where += ' AND s.vehicle_id = ?'
+        params += (vehicle_id,)
 
+    db = get_db()
+    services = db.execute(SERVICE_SELECT + where + ' ORDER BY s.date DESC', params).fetchall()
     db.close()
     return jsonify([dict(row) for row in services])
+
+def _service_parts_payload(data):
+    """The list of parts sent with a service form, or None if the form
+    didn't mention parts at all. `supplies` is the older name for the field."""
+    raw = data.get('parts')
+    if raw is None:
+        raw = data.get('supplies')
+    if raw is None:
+        return None
+    try:
+        entries = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        raise ApiError('Parts list is not valid JSON')
+    if not isinstance(entries, list):
+        raise ApiError('Parts list must be a list')
+    return entries
+
+def sync_service_parts(db, service_id, vehicle_id, service_date, odometer, entries):
+    """Make the installs linked to a service match `entries`.
+
+    Each entry is {install_id, quantity} for a part already on the service,
+    or {part_id, quantity[, purchase_id]} for one being added (older clients
+    send the part as `id`). Installs left out of the list are deleted, which
+    returns their stock to the shelf. Installs that stay keep their warranty
+    overrides and notes; only quantity, date and odometer follow the service."""
+    existing = {row['id']: row for row in db.execute(
+        'SELECT * FROM part_installs WHERE service_id = ?', (service_id,)).fetchall()}
+    keep = {}
+    additions = []
+    for entry in entries:
+        try:
+            quantity = float(entry.get('quantity') or 0)
+        except (TypeError, ValueError, AttributeError):
+            raise ApiError('Part quantity must be a number')
+        if quantity <= 0:
+            raise ApiError('Part quantity must be greater than 0')
+        install_id = entry.get('install_id')
+        if install_id:
+            if int(install_id) not in existing:
+                raise ApiError('A part on this service no longer exists; reload and try again')
+            keep[int(install_id)] = quantity
+        else:
+            part_id = entry.get('part_id') or entry.get('id')
+            if not part_id:
+                raise ApiError('Each part needs a part_id')
+            additions.append((int(part_id), quantity, entry.get('purchase_id')))
+
+    # Free stock first so a reduced or removed line can cover an added one
+    for install_id in existing:
+        if install_id not in keep:
+            db.execute('DELETE FROM part_installs WHERE id = ?', (install_id,))
+    for install_id, quantity in keep.items():
+        old = existing[install_id]
+        if abs(quantity - old['quantity']) > 1e-9:
+            lot = purchase_with_remaining(db, old['purchase_id'])
+            available = lot['remaining'] + old['quantity']
+            if quantity > available + 1e-9:
+                raise ApiError(f'Only {available:g} available from that purchase')
+            db.execute('UPDATE part_installs SET quantity = ? WHERE id = ?', (quantity, install_id))
+    db.execute('UPDATE part_installs SET install_date = ?, odometer = ? WHERE service_id = ?',
+               (service_date, odometer, service_id))
+    for part_id, quantity, purchase_id in additions:
+        allocate_install(db, part_id, quantity, vehicle_id=vehicle_id, service_id=service_id,
+                         install_date=service_date, odometer=odometer, purchase_id=purchase_id)
 
 @app.route('/api/services', methods=['POST'])
 @api_login_required
@@ -1609,116 +1691,68 @@ def add_service():
     if not vehicle_id:
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
+    parts = _service_parts_payload(data)
+    odometer = int(data['odometer']) if data.get('odometer') else None
     receipt_path = save_upload('receipt', 'receipts')
-
-    db = get_db()
-    cursor = db.execute('''INSERT INTO service_records
-                          (vehicle_id, date, cost, service_provider, odometer, comments, repairs_completed, receipt_path)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                       (vehicle_id, data['date'], data['cost'], data['service_provider'],
-                        int(data['odometer']) if data.get('odometer') else None,
-                        data.get('comments', ''), data.get('repairs_completed', ''), receipt_path))
-
-    service_id = cursor.lastrowid
-
-    # Add supplies used
-    if 'supplies' in data:
-        link_service_supplies(db, service_id, data['date'], json.loads(data['supplies']))
-
-    db.commit()
-    db.close()
+    try:
+        with db_session() as db:
+            cursor = db.execute('''INSERT INTO service_records
+                                  (vehicle_id, date, cost, service_provider, odometer, comments, repairs_completed, receipt_path)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                               (vehicle_id, data['date'], data['cost'], data['service_provider'], odometer,
+                                data.get('comments', ''), data.get('repairs_completed', ''), receipt_path))
+            service_id = cursor.lastrowid
+            if parts:
+                sync_service_parts(db, service_id, int(vehicle_id), data['date'], odometer, parts)
+    except Exception:
+        remove_upload(receipt_path)
+        raise
     return jsonify({'success': True, 'id': service_id})
-
-def link_service_supplies(db, service_id, service_date, supplies_data):
-    """Attach supplies to a service. Entries are {id, quantity} for plain
-    consumables, or {id, unit_id} for individually-tracked units (one entry
-    per physical unit, quantity_used is always 1)."""
-    for supply in supplies_data:
-        if supply.get('unit_id'):
-            db.execute('''INSERT INTO service_supplies (service_id, supply_id, quantity_used, supply_unit_id)
-                         VALUES (?, ?, 1, ?)''',
-                      (service_id, supply['id'], supply['unit_id']))
-            # Installing a unit stamps its install date; warranty start
-            # defaults to the install date unless it was already set
-            # explicitly (e.g. backfilled or hand-entered).
-            db.execute('''UPDATE supply_units
-                          SET status = 'installed',
-                              installation_date = ?,
-                              installed_service_id = ?,
-                              warranty_start_date = COALESCE(warranty_start_date, ?)
-                          WHERE id = ?''',
-                      (service_date, service_id, service_date, supply['unit_id']))
-        else:
-            db.execute('''INSERT INTO service_supplies (service_id, supply_id, quantity_used)
-                         VALUES (?, ?, ?)''',
-                      (service_id, supply['id'], supply['quantity']))
-
-            # Update supply quantity
-            db.execute('''UPDATE supplies SET quantity = quantity - ? WHERE id = ?''',
-                      (supply['quantity'], supply['id']))
-
-def unlink_service_supplies(db, service_id):
-    """Detach all supplies from a service. Tracked units revert to in-stock
-    (warranty fields are left alone — never wipe user data); plain
-    consumables are returned to inventory."""
-    rows = db.execute(
-        'SELECT * FROM service_supplies WHERE service_id = ?', (service_id,)).fetchall()
-    for row in rows:
-        if row['supply_unit_id']:
-            db.execute('''UPDATE supply_units
-                          SET status = 'in_stock',
-                              installation_date = NULL,
-                              installed_service_id = NULL
-                          WHERE id = ?''', (row['supply_unit_id'],))
-        else:
-            db.execute('UPDATE supplies SET quantity = quantity + ? WHERE id = ?',
-                      (row['quantity_used'], row['supply_id']))
-    db.execute('DELETE FROM service_supplies WHERE service_id = ?', (service_id,))
 
 @app.route('/api/services/<int:service_id>', methods=['PUT'])
 @api_login_required
 def update_service(service_id):
     """Update existing service record"""
     data = request.form
+    parts = _service_parts_payload(data)
+    odometer = int(data['odometer']) if data.get('odometer') else None
     receipt_path = save_upload('receipt', 'receipts')
+    try:
+        with db_session() as db:
+            old = db.execute('SELECT vehicle_id, receipt_path FROM service_records WHERE id = ?',
+                             (service_id,)).fetchone()
+            if not old:
+                raise ApiError('Service record not found', 404)
 
-    db = get_db()
-    old = db.execute('SELECT receipt_path FROM service_records WHERE id = ?', (service_id,)).fetchone()
+            # A new upload replaces the receipt
+            db.execute('''UPDATE service_records
+                         SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?,
+                             receipt_path=COALESCE(?, receipt_path)
+                         WHERE id=?''',
+                      (data['date'], data['cost'], data['service_provider'], odometer,
+                       data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
 
-    # Return previously used supplies to inventory (and revert tracked units)
-    # before replacing the list, so editing a service doesn't permanently
-    # drain stock that was never removed
-    unlink_service_supplies(db, service_id)
-
-    # Update service record; a new upload replaces the receipt
-    db.execute('''UPDATE service_records
-                 SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?,
-                     receipt_path=COALESCE(?, receipt_path)
-                 WHERE id=?''',
-              (data['date'], data['cost'], data['service_provider'],
-               int(data['odometer']) if data.get('odometer') else None,
-               data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
-
-    # Add new supplies used
-    if 'supplies' in data:
-        link_service_supplies(db, service_id, data['date'], json.loads(data['supplies']))
-
-    db.commit()
-    db.close()
-    if receipt_path and old:
+            if parts is None:
+                # Form didn't mention parts: leave them on the service, but
+                # keep their install date and odometer in step with it
+                db.execute('UPDATE part_installs SET install_date = ?, odometer = ? WHERE service_id = ?',
+                           (data['date'], odometer, service_id))
+            else:
+                sync_service_parts(db, service_id, old['vehicle_id'], data['date'], odometer, parts)
+    except Exception:
+        remove_upload(receipt_path)
+        raise
+    if receipt_path:
         remove_upload(old['receipt_path'])
     return jsonify({'success': True})
 
 @app.route('/api/services/<int:service_id>', methods=['DELETE'])
 @api_login_required
 def delete_service(service_id):
-    """Delete a service record"""
+    """Delete a service record; the parts used on it go back on the shelf"""
     db = get_db()
-
     service = db.execute('SELECT receipt_path FROM service_records WHERE id = ?', (service_id,)).fetchone()
-
-    # Return used supplies to inventory (and revert tracked units) first
-    unlink_service_supplies(db, service_id)
+    db.execute('DELETE FROM part_installs WHERE service_id = ?', (service_id,))
     db.execute('DELETE FROM service_records WHERE id = ?', (service_id,))
     db.commit()
     db.close()
@@ -1731,72 +1765,37 @@ def delete_service(service_id):
 @api_login_required
 def export_services_csv():
     """Export service records to CSV"""
-    try:
-        vehicle_id = request.args.get('vehicle_id')
+    vehicle_id = request.args.get('vehicle_id')
+    query = f'''SELECT s.date, s.service_provider, s.odometer, s.cost,
+                       {PARTS_COST_SQL} AS supplies_cost, s.repairs_completed, s.comments
+                FROM service_records s'''
+    params = ()
+    if vehicle_id:
+        query += ' WHERE s.vehicle_id = ?'
+        params = (vehicle_id,)
+    db = get_db()
+    services = db.execute(query + ' ORDER BY s.date DESC', params).fetchall()
+    db.close()
 
-        db = get_db()
-        if vehicle_id:
-            services = db.execute('''
-                SELECT s.date, s.service_provider, s.odometer, s.cost,
-                       COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost,
-                       s.repairs_completed, s.comments
-                FROM service_records s
-                LEFT JOIN service_supplies ss ON s.id = ss.service_id
-                LEFT JOIN supplies sup ON ss.supply_id = sup.id
-                LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-                WHERE s.vehicle_id = ?
-                GROUP BY s.id
-                ORDER BY s.date DESC
-            ''', (vehicle_id,)).fetchall()
-        else:
-            services = db.execute('''
-                SELECT s.date, s.service_provider, s.odometer, s.cost,
-                       COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0) as supplies_cost,
-                       s.repairs_completed, s.comments
-                FROM service_records s
-                LEFT JOIN service_supplies ss ON s.id = ss.service_id
-                LEFT JOIN supplies sup ON ss.supply_id = sup.id
-                LEFT JOIN supply_units su ON ss.supply_unit_id = su.id
-                GROUP BY s.id
-                ORDER BY s.date DESC
-            ''').fetchall()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['date', 'service_provider', 'odometer', 'cost', 'supplies_cost',
+                     'repairs_completed', 'comments'])
+    for service in services:
+        writer.writerow([
+            service['date'] or '',
+            service['service_provider'] or '',
+            service['odometer'] or '',
+            service['cost'] or 0,
+            service['supplies_cost'] or 0,
+            service['repairs_completed'] or '',
+            service['comments'] or ''
+        ])
 
-        # Convert rows to dictionaries
-        services_list = [dict(row) for row in services]
-        db.close()
-
-        # Create CSV in memory
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        # Write header
-        writer.writerow(['date', 'service_provider', 'odometer', 'cost', 'supplies_cost',
-                         'repairs_completed', 'comments'])
-
-        # Write data
-        for service in services_list:
-            writer.writerow([
-                service.get('date', ''),
-                service.get('service_provider', ''),
-                service.get('odometer', '') or '',
-                service.get('cost', 0),
-                service.get('supplies_cost', 0) or 0,
-                service.get('repairs_completed', '') or '',
-                service.get('comments', '') or ''
-            ])
-
-        # Create response
-        output.seek(0)
-        response = make_response(output.getvalue())
-        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
-        response.headers['Content-Disposition'] = 'attachment; filename=service_records.csv'
-        return response
-
-    except Exception as e:
-        print(f"Export CSV Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename=service_records.csv'
+    return response
 
 @app.route('/api/services/template-csv', methods=['GET'])
 @api_login_required
@@ -1888,7 +1887,6 @@ def import_services_csv():
     except Exception as e:
         return jsonify({'error': f'Failed to import CSV: {str(e)}'}), 400
 
-# Supplies endpoints
 def latest_odometer(db, vehicle_id):
     """Latest known odometer for a vehicle, from service or fuel records"""
     row = db.execute('''
@@ -1900,67 +1898,305 @@ def latest_odometer(db, vehicle_id):
     ''', (vehicle_id, vehicle_id)).fetchone()
     return row['odo'] if row else None
 
-def unit_warranty_status(unit, current_odometer):
-    """Per-unit warranty status: 'lifetime' | 'active' | 'expired' | None.
-    Mirrors the client-side getWarrantyStatus() rules."""
-    if unit['warranty_lifetime']:
-        return 'lifetime'
-    has_time = unit['warranty_start_date'] and unit['warranty_months']
-    has_mileage = unit['warranty_start_mileage'] is not None and unit['warranty_mileage_limit'] is not None
-    if not has_time and not has_mileage:
-        return None
-    expired = False
-    if has_time:
-        start = datetime.strptime(unit['warranty_start_date'], '%Y-%m-%d')
-        months = int(unit['warranty_months'])
-        # Add months without external deps; clamp day to avoid invalid dates
-        year = start.year + (start.month - 1 + months) // 12
-        month = (start.month - 1 + months) % 12 + 1
-        day = min(start.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
-                              31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
-        if datetime.now() > datetime(year, month, day):
-            expired = True
-    if has_mileage and current_odometer is not None:
-        if current_odometer > unit['warranty_start_mileage'] + unit['warranty_mileage_limit']:
-            expired = True
-    return 'expired' if expired else 'active'
 
-@app.route('/api/supplies', methods=['GET'])
-@api_login_required
-def get_supplies():
-    """Get all supplies for a vehicle"""
-    vehicle_id = request.args.get('vehicle_id')
+# ── Parts, purchases and installs ────────────────────────────────────────────
+#
+# Three tables, nothing derived is stored:
+#   parts           what a part is (name, part number, brand, ...). Shared by
+#                   every vehicle: one shelf for the whole garage.
+#   part_purchases  one line on a receipt: how many, what each cost, and the
+#                   warranty terms they were sold with.
+#   part_installs   some quantity from one purchase put on one vehicle,
+#                   usually as part of a service record.
+#
+# Stock is purchased minus installed. A warranty belongs to an install: the
+# terms come from its purchase and the clock starts when it was installed
+# (or at purchase, for purchases sold that way).
+
+class ApiError(Exception):
+    """Raised anywhere inside a request to answer with a JSON error"""
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+
+@app.errorhandler(ApiError)
+def handle_api_error(error):
+    return jsonify({'error': error.message}), error.status
+
+
+@contextmanager
+def db_session():
+    """A connection that commits on success and rolls back on any error"""
     db = get_db()
+    try:
+        yield db
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
-    if vehicle_id:
-        supplies = db.execute('SELECT * FROM supplies WHERE vehicle_id = ? ORDER BY name', (vehicle_id,)).fetchall()
+
+def _payload():
+    """Request fields from either a form post (needed for uploads) or JSON"""
+    if request.form or request.files:
+        return request.form
+    return request.get_json(silent=True) or {}
+
+
+def _text(data, key):
+    value = data.get(key)
+    if value is None or str(value).strip() == '':
+        return None
+    return str(value).strip()
+
+
+def _number(data, key, label, integer=False, minimum=0):
+    """An optional number from the request, or None when blank"""
+    raw = _text(data, key)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ApiError(f'{label} must be a number')
+    if value != value or value in (float('inf'), float('-inf')):
+        raise ApiError(f'{label} must be a number')
+    if minimum is not None and value < minimum:
+        raise ApiError(f'{label} cannot be less than {minimum:g}')
+    return int(value) if integer else value
+
+
+def _flag(data, key):
+    return str(data.get(key, '')).lower() in ('on', '1', 'true', 'yes')
+
+
+def _parse_date(text):
+    try:
+        return datetime.strptime(text, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _date(data, key, label):
+    """An optional YYYY-MM-DD date from the request, or None when blank"""
+    raw = _text(data, key)
+    if raw is None:
+        return None
+    if _parse_date(raw) is None:
+        raise ApiError(f'{label} must be a date (YYYY-MM-DD)')
+    return raw
+
+
+# A warranty is flagged as expiring once it is this close to running out
+WARRANTY_EXPIRING_DAYS = 30
+WARRANTY_EXPIRING_MILES = 1000
+
+
+def add_months(start, months):
+    """`start` moved forward by whole months, clamped to the month's last day"""
+    year = start.year + (start.month - 1 + months) // 12
+    month = (start.month - 1 + months) % 12 + 1
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return start.replace(year=year, month=month, day=day)
+
+
+def warranty_info(terms, install_date=None, odometer=None, start_date_override=None,
+                  start_mileage_override=None, current_odometer=None, today=None):
+    """Work out where a warranty stands, or None if the purchase has none.
+
+    `terms` is a part_purchases row. The clock starts on the install date
+    (and install odometer) unless the purchase says it starts at purchase,
+    or the install carries an explicit override. A warranty with both a time
+    and a mileage limit ends at whichever comes first.
+
+    status is 'lifetime', 'active', 'expiring' or 'expired'."""
+    lifetime = bool(terms['warranty_lifetime'])
+    months = terms['warranty_months']
+    miles = terms['warranty_miles']
+    if not lifetime and not months and not miles:
+        return None
+
+    at_purchase = terms['warranty_starts'] == 'purchase'
+    start_text = (start_date_override
+                  or (terms['purchase_date'] if at_purchase else None)
+                  or install_date)
+    start_mileage = start_mileage_override if start_mileage_override is not None else odometer
+    info = {
+        'status': 'lifetime' if lifetime else 'active',
+        'lifetime': lifetime,
+        'months': None if lifetime else months,
+        'miles': None if lifetime else miles,
+        'starts': 'purchase' if at_purchase else 'install',
+        'start_date': start_text,
+        'expires_on': None,
+        'days_remaining': None,
+        'start_mileage': start_mileage,
+        'expires_at_mileage': None,
+        'miles_remaining': None,
+    }
+    if lifetime:
+        return info
+
+    expired = expiring = False
+    start = _parse_date(start_text)
+    if months and start:
+        expires = add_months(start, int(months))
+        days = (expires - (today or datetime.now().date())).days
+        info['expires_on'] = expires.isoformat()
+        info['days_remaining'] = days
+        expired = expired or days < 0
+        expiring = expiring or days <= WARRANTY_EXPIRING_DAYS
+    if miles and start_mileage is not None:
+        info['expires_at_mileage'] = start_mileage + miles
+        if current_odometer is not None:
+            remaining = start_mileage + miles - current_odometer
+            info['miles_remaining'] = remaining
+            expired = expired or remaining < 0
+            expiring = expiring or remaining <= WARRANTY_EXPIRING_MILES
+    info['status'] = 'expired' if expired else 'expiring' if expiring else 'active'
+    return info
+
+
+PURCHASE_SELECT = '''
+    SELECT pp.*,
+           COALESCE((SELECT SUM(quantity) FROM part_installs WHERE purchase_id = pp.id), 0) AS installed
+    FROM part_purchases pp
+'''
+
+INSTALL_SELECT = '''
+    SELECT pi.*, pp.part_id, pp.unit_cost, pp.purchase_date, pp.supplier, pp.receipt_path,
+           pp.warranty_months, pp.warranty_miles, pp.warranty_lifetime, pp.warranty_starts,
+           p.name AS part_name, p.part_number, p.brand,
+           v.nickname AS vehicle_nickname, v.year AS vehicle_year,
+           v.manufacturer AS vehicle_manufacturer, v.model AS vehicle_model
+    FROM part_installs pi
+    JOIN part_purchases pp ON pp.id = pi.purchase_id
+    JOIN parts p ON p.id = pp.part_id
+    LEFT JOIN vehicle v ON v.id = pi.vehicle_id
+'''
+
+
+def _purchase_dict(row):
+    purchase = dict(row)
+    purchase['remaining'] = round(purchase['quantity'] - purchase['installed'], 4)
+    # Stock still on the shelf only has a running warranty when the clock
+    # started at purchase; otherwise it starts when the part is installed
+    purchase['shelf_warranty'] = (warranty_info(row) if row['warranty_starts'] == 'purchase' else None)
+    return purchase
+
+
+def load_purchases(db, where='', params=()):
+    """Purchases with their remaining stock, oldest first (the order stock is
+    drawn in). Undated purchases count as oldest."""
+    rows = db.execute(f"{PURCHASE_SELECT} {('WHERE ' + where) if where else ''} "
+                      "ORDER BY COALESCE(pp.purchase_date, ''), pp.id", params).fetchall()
+    return [_purchase_dict(row) for row in rows]
+
+
+def purchase_with_remaining(db, purchase_id):
+    purchases = load_purchases(db, 'pp.id = ?', (purchase_id,))
+    if not purchases:
+        raise ApiError('Purchase not found', 404)
+    return purchases[0]
+
+
+def load_installs(db, where='', params=()):
+    """Installs with part, vehicle and warranty details, newest first"""
+    rows = db.execute(f"{INSTALL_SELECT} {('WHERE ' + where) if where else ''} "
+                      "ORDER BY COALESCE(pi.install_date, '') DESC, pi.id DESC", params).fetchall()
+    odometers = {}
+    installs = []
+    for row in rows:
+        vehicle_id = row['vehicle_id']
+        if vehicle_id is not None and vehicle_id not in odometers:
+            odometers[vehicle_id] = latest_odometer(db, vehicle_id)
+        if row['vehicle_manufacturer'] is None:
+            vehicle_name = 'Deleted vehicle'
+        else:
+            vehicle_name = row['vehicle_nickname'] or \
+                f"{row['vehicle_year']} {row['vehicle_manufacturer']} {row['vehicle_model']}"
+        installs.append({
+            'id': row['id'],
+            'install_id': row['id'],
+            'purchase_id': row['purchase_id'],
+            'part_id': row['part_id'],
+            'part_name': row['part_name'],
+            'part_number': row['part_number'],
+            'brand': row['brand'],
+            'vehicle_id': vehicle_id,
+            'vehicle_name': vehicle_name,
+            'service_id': row['service_id'],
+            'quantity': row['quantity'],
+            'unit_cost': row['unit_cost'],
+            'install_date': row['install_date'],
+            'odometer': row['odometer'],
+            'removed_date': row['removed_date'],
+            'notes': row['notes'],
+            'warranty_start_date': row['warranty_start_date'],
+            'warranty_start_mileage': row['warranty_start_mileage'],
+            'purchase_date': row['purchase_date'],
+            'supplier': row['supplier'],
+            'receipt_path': row['receipt_path'],
+            'warranty': warranty_info(row, row['install_date'], row['odometer'],
+                                      row['warranty_start_date'], row['warranty_start_mileage'],
+                                      odometers.get(vehicle_id)),
+        })
+    return installs
+
+
+def build_parts(db, part_id=None):
+    """Every part (or one) with its purchases, installs and derived totals"""
+    if part_id is None:
+        parts = db.execute('SELECT * FROM parts ORDER BY name COLLATE NOCASE, id').fetchall()
+        purchases = load_purchases(db)
+        installs = load_installs(db)
     else:
-        supplies = db.execute('SELECT * FROM supplies ORDER BY name').fetchall()
-
-    # Unit counts for every tracked supply in one query instead of one each
-    unit_counts = {r['supply_id']: r for r in db.execute('''
-        SELECT supply_id, COUNT(*) AS total,
-               SUM(CASE WHEN status = 'in_stock' THEN 1 ELSE 0 END) AS in_stock
-        FROM supply_units GROUP BY supply_id
-    ''').fetchall()}
+        parts = db.execute('SELECT * FROM parts WHERE id = ?', (part_id,)).fetchall()
+        purchases = load_purchases(db, 'pp.part_id = ?', (part_id,))
+        installs = load_installs(db, 'pp.part_id = ?', (part_id,))
 
     result = []
-    for row in supplies:
-        supply = dict(row)
-        if supply.get('tracked_individually'):
-            # Derived quantity: count of in-stock units. The stored
-            # supplies.quantity is not authoritative for tracked supplies.
-            counts = unit_counts.get(supply['id'])
-            supply['quantity'] = (counts['in_stock'] or 0) if counts else 0
-            supply['unit_count'] = counts['total'] if counts else 0
-        result.append(supply)
+    for row in parts:
+        part = dict(row)
+        lots = [p for p in purchases if p['part_id'] == part['id']]
+        fitted = [i for i in installs if i['part_id'] == part['id']]
+        current = [i for i in fitted if not i['removed_date']]
+        in_stock = round(sum(p['remaining'] for p in lots), 4)
+        next_lot = next((p for p in lots if p['remaining'] > 1e-9), None)
 
-    db.close()
-    return jsonify(result)
+        warranty = {'lifetime': 0, 'active': 0, 'expiring': 0, 'expired': 0, 'next_expiry': None}
+        for install in current:
+            w = install['warranty']
+            if not w:
+                continue
+            warranty[w['status']] += 1
+            if w['status'] in ('active', 'expiring') and w['expires_on'] and \
+                    (warranty['next_expiry'] is None or w['expires_on'] < warranty['next_expiry']):
+                warranty['next_expiry'] = w['expires_on']
 
-def add_reorder_reminder(db, vehicle_id, name, part_number):
+        part.update({
+            'purchases': lots,
+            'installs': fitted,
+            'in_stock': in_stock,
+            # `quantity` and `cost` keep the names older API clients read
+            'quantity': in_stock,
+            'cost': (next_lot or (lots[-1] if lots else {})).get('unit_cost', 0),
+            'stock_value': round(sum(p['remaining'] * p['unit_cost'] for p in lots), 2),
+            'installed': round(sum(i['quantity'] for i in current), 4),
+            'low_stock': part['reorder_threshold'] is not None and in_stock <= part['reorder_threshold'],
+            'warranty': warranty,
+        })
+        result.append(part)
+    return result
+
+
+def add_reorder_reminder(db, vehicle_id, name, part_number, in_stock):
     """Add a "Re-order <part>" reminder unless an open one already exists, so
-    re-saving a supply that sits at quantity 1 doesn't pile up duplicates."""
+    repeated use of a part that is already low doesn't pile up duplicates."""
     service_type = f"Re-order {name}" + (f" ({part_number})" if part_number else '')
     exists = db.execute('''SELECT 1 FROM service_reminders
                            WHERE vehicle_id = ? AND service_type = ? AND completed = 0''',
@@ -1968,335 +2204,500 @@ def add_reorder_reminder(db, vehicle_id, name, part_number):
     if not exists:
         db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, notes, completed)
                       VALUES (?, ?, ?, 0)''',
-                   (vehicle_id, service_type, 'Part quantity is at 1. Consider re-ordering soon.'))
+                   (vehicle_id, service_type,
+                    f'Stock is down to {in_stock:g}. Consider re-ordering soon.'))
 
-@app.route('/api/supplies', methods=['POST'])
+
+def allocate_install(db, part_id, quantity, vehicle_id, install_date, service_id=None, odometer=None,
+                     purchase_id=None, notes=None, warranty_start_date=None, warranty_start_mileage=None):
+    """Take `quantity` of a part off the shelf and record it as installed.
+
+    Stock is drawn from the oldest purchase first, so one request can become
+    several installs when it spans purchases (each keeps its own cost and
+    warranty terms). Pass `purchase_id` to draw from one purchase only.
+    Returns the new install ids."""
+    part = db.execute('SELECT * FROM parts WHERE id = ?', (part_id,)).fetchone()
+    if not part:
+        raise ApiError('Part not found', 404)
+    lots = [p for p in load_purchases(db, 'pp.part_id = ?', (part_id,)) if p['remaining'] > 1e-9]
+    in_stock = sum(p['remaining'] for p in lots)
+    if purchase_id:
+        lots = [p for p in lots if p['id'] == int(purchase_id)]
+    available = sum(p['remaining'] for p in lots)
+    if quantity > available + 1e-9:
+        where = ' from that purchase' if purchase_id else ' in stock'
+        raise ApiError(f"Only {available:g} of {part['name']}{where}")
+
+    install_ids = []
+    left = quantity
+    for lot in lots:
+        if left <= 1e-9:
+            break
+        take = min(lot['remaining'], left)
+        cursor = db.execute('''INSERT INTO part_installs
+                               (purchase_id, vehicle_id, service_id, quantity, install_date, odometer,
+                                warranty_start_date, warranty_start_mileage, notes)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            (lot['id'], vehicle_id, service_id, take, install_date, odometer,
+                             warranty_start_date, warranty_start_mileage, notes))
+        install_ids.append(cursor.lastrowid)
+        left -= take
+
+    remaining = round(in_stock - quantity, 4)
+    if part['reorder_threshold'] is not None and remaining <= part['reorder_threshold'] and vehicle_id:
+        add_reorder_reminder(db, vehicle_id, part['name'], part['part_number'], remaining)
+    return install_ids
+
+
+def _part_fields(data):
+    name = _text(data, 'name')
+    if not name:
+        raise ApiError('Part name is required')
+    return (name, _text(data, 'part_number'), _text(data, 'brand'), _text(data, 'category'),
+            _text(data, 'location'), _text(data, 'notes'),
+            _number(data, 'reorder_threshold', 'Re-order level'))
+
+
+def _purchase_fields(data, notes_key='notes'):
+    quantity = _number(data, 'quantity', 'Quantity')
+    if not quantity:
+        raise ApiError('Quantity must be greater than 0')
+    unit_cost = _number(data, 'unit_cost', 'Cost per unit')
+    if unit_cost is None:
+        unit_cost = _number(data, 'cost', 'Cost per unit') or 0
+    lifetime = _flag(data, 'warranty_lifetime')
+    starts = _text(data, 'warranty_starts') or 'install'
+    if starts not in ('install', 'purchase'):
+        raise ApiError('Warranty must start at install or at purchase')
+    return {
+        'purchase_date': _date(data, 'purchase_date', 'Purchase date'),
+        'supplier': _text(data, 'supplier'),
+        'condition': _text(data, 'condition') or 'New',
+        'quantity': quantity,
+        'unit_cost': unit_cost,
+        'warranty_months': None if lifetime else (_number(data, 'warranty_months', 'Warranty months', integer=True) or None),
+        'warranty_miles': None if lifetime else (_number(data, 'warranty_miles', 'Warranty miles', integer=True) or None),
+        'warranty_lifetime': 1 if lifetime else 0,
+        'warranty_starts': starts,
+        'notes': _text(data, notes_key),
+    }
+
+
+def _insert_purchase(db, part_id, fields, receipt_path):
+    cursor = db.execute('''INSERT INTO part_purchases
+                           (part_id, purchase_date, supplier, condition, quantity, unit_cost, receipt_path,
+                            warranty_months, warranty_miles, warranty_lifetime, warranty_starts, notes)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (part_id, fields['purchase_date'], fields['supplier'], fields['condition'],
+                         fields['quantity'], fields['unit_cost'], receipt_path,
+                         fields['warranty_months'], fields['warranty_miles'], fields['warranty_lifetime'],
+                         fields['warranty_starts'], fields['notes']))
+    return cursor.lastrowid
+
+
+def _unreferenced_receipts(db, paths):
+    """Of `paths`, those no purchase points at any more. Purchases migrated
+    from one old supply can share a receipt file, so it is only deleted once
+    the last of them lets go of it."""
+    return [path for path in set(paths) if path and not db.execute(
+        'SELECT 1 FROM part_purchases WHERE receipt_path = ?', (path,)).fetchone()]
+
+
+@app.route('/api/parts', methods=['GET'])
 @api_login_required
-def add_supply():
-    """Add new supply/part"""
-    data = request.form
-    vehicle_id = data.get('vehicle_id')
-
-    if not vehicle_id:
-        return jsonify({'error': 'Vehicle ID is required'}), 400
-
-    receipt_path = save_upload('receipt', 'receipts')
-
-    # Get remind_to_reorder checkbox value (defaults to False if not checked)
-    remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
-
-    # Get warranty_lifetime checkbox value (defaults to False if not checked)
-    warranty_lifetime = 1 if data.get('warranty_lifetime') == 'on' else 0
-
-    # Tracked supplies derive quantity from their units; start at 0
-    tracked_individually = 1 if data.get('tracked_individually') == 'on' else 0
-    quantity = 0 if tracked_individually else data['quantity']
-
+def get_parts():
+    """Every part on the shelf with its purchases, installs and totals"""
     db = get_db()
-    cursor = db.execute('''INSERT INTO supplies
-                          (vehicle_id, name, part_number, brand, cost, quantity,
-                           warranty_start_date, warranty_months, warranty_start_mileage,
-                           warranty_mileage_limit, warranty_lifetime, receipt_path, remind_to_reorder,
-                           category, location, condition, supplier, purchase_date,
-                           installation_date, notes, tracked_individually)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                       (vehicle_id, data['name'], data.get('part_number', ''),
-                        data.get('brand', ''), data['cost'], quantity,
-                        data.get('warranty_start_date', None),
-                        int(data['warranty_months']) if data.get('warranty_months') else None,
-                        int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
-                        int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                        warranty_lifetime, receipt_path, remind_to_reorder,
-                        data.get('category', ''), data.get('location', ''),
-                        data.get('condition', 'New'), data.get('supplier', ''),
-                        data.get('purchase_date', None), data.get('installation_date', None),
-                        data.get('notes', ''), tracked_individually))
-
-    supply_id = cursor.lastrowid
-    if not tracked_individually and int(data['quantity']) == 1 and remind_to_reorder:
-        add_reorder_reminder(db, vehicle_id, data['name'], data.get('part_number'))
-
-    db.commit()
+    parts = build_parts(db)
     db.close()
-    return jsonify({'success': True, 'id': supply_id})
+    return jsonify(parts)
 
-@app.route('/api/supplies/<int:supply_id>', methods=['PUT'])
+@app.route('/api/parts/<int:part_id>', methods=['GET'])
 @api_login_required
-def update_supply(supply_id):
-    """Update supply/part"""
-    data = request.form
-    receipt_path = save_upload('receipt', 'receipts')
-
-    # Get remind_to_reorder checkbox value (defaults to False if not checked)
-    remind_to_reorder = 1 if data.get('remind_to_reorder') == 'on' else 0
-
-    # Get warranty_lifetime checkbox value (defaults to False if not checked)
-    warranty_lifetime = 1 if data.get('warranty_lifetime') == 'on' else 0
-
-    tracked_individually = 1 if data.get('tracked_individually') == 'on' else 0
-
+def get_part(part_id):
     db = get_db()
-
-    current_supply = db.execute('SELECT * FROM supplies WHERE id = ?', (supply_id,)).fetchone()
-    if not current_supply:
-        db.close()
-        return jsonify({'error': 'Supply not found'}), 404
-    vehicle_id = current_supply['vehicle_id']
-
-    # Tracked supplies derive quantity from units — the edit form must not
-    # write it. Keep whatever is stored (it's ignored by GET anyway).
-    quantity = current_supply['quantity'] if tracked_individually else data['quantity']
-
-    # Update supply record; a new upload replaces the receipt
-    db.execute('''UPDATE supplies
-                 SET name=?, part_number=?, brand=?, cost=?, quantity=?,
-                     warranty_start_date=?, warranty_months=?, warranty_start_mileage=?,
-                     warranty_mileage_limit=?, warranty_lifetime=?,
-                     receipt_path=COALESCE(?, receipt_path), remind_to_reorder=?,
-                     category=?, location=?, condition=?, supplier=?, purchase_date=?,
-                     installation_date=?, notes=?, tracked_individually=?
-                 WHERE id=?''',
-              (data['name'], data.get('part_number', ''),
-               data.get('brand', ''), data['cost'], quantity,
-               data.get('warranty_start_date', None),
-               int(data['warranty_months']) if data.get('warranty_months') else None,
-               int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
-               int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-               warranty_lifetime, receipt_path, remind_to_reorder,
-               data.get('category', ''), data.get('location', ''),
-               data.get('condition', 'New'), data.get('supplier', ''),
-               data.get('purchase_date', None), data.get('installation_date', None),
-               data.get('notes', ''), tracked_individually, supply_id))
-
-    if not tracked_individually and int(data['quantity']) == 1 and remind_to_reorder:
-        add_reorder_reminder(db, vehicle_id, data['name'], data.get('part_number'))
-
-    db.commit()
+    parts = build_parts(db, part_id)
     db.close()
-    if receipt_path:
-        remove_upload(current_supply['receipt_path'])
+    if not parts:
+        return jsonify({'error': 'Part not found'}), 404
+    return jsonify(parts[0])
+
+@app.route('/api/parts', methods=['POST'])
+@api_login_required
+def add_part():
+    """Add a part. If the form also carries a quantity, the first purchase is
+    recorded with it (same fields as POST /api/parts/<id>/purchases, except
+    its notes field is `purchase_notes`)."""
+    data = _payload()
+    part = _part_fields(data)
+    purchase = _purchase_fields(data, 'purchase_notes') if _text(data, 'quantity') else None
+    receipt_path = save_upload('receipt', 'receipts') if purchase else None
+    try:
+        with db_session() as db:
+            cursor = db.execute('''INSERT INTO parts (name, part_number, brand, category, location, notes,
+                                                      reorder_threshold)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)''', part)
+            part_id = cursor.lastrowid
+            purchase_id = _insert_purchase(db, part_id, purchase, receipt_path) if purchase else None
+    except Exception:
+        remove_upload(receipt_path)
+        raise
+    return jsonify({'success': True, 'id': part_id, 'purchase_id': purchase_id})
+
+@app.route('/api/parts/<int:part_id>', methods=['PUT'])
+@api_login_required
+def update_part(part_id):
+    """Edit what a part is. Stock and warranty live on its purchases."""
+    part = _part_fields(_payload())
+    with db_session() as db:
+        cursor = db.execute('''UPDATE parts SET name=?, part_number=?, brand=?, category=?, location=?,
+                                                notes=?, reorder_threshold=?
+                               WHERE id=?''', part + (part_id,))
+        if cursor.rowcount == 0:
+            raise ApiError('Part not found', 404)
     return jsonify({'success': True})
 
-@app.route('/api/supplies/<int:supply_id>', methods=['DELETE'])
+@app.route('/api/parts/<int:part_id>', methods=['DELETE'])
 @api_login_required
-def delete_supply(supply_id):
-    """Delete a supply"""
-    db = get_db()
-
-    # Block deletion while any unit is installed on a service record —
-    # the service history would otherwise point at a missing part.
-    installed = db.execute('''SELECT COUNT(*) AS c FROM supply_units
-                              WHERE supply_id = ? AND status = 'installed'
-                                AND installed_service_id IS NOT NULL''',
-                           (supply_id,)).fetchone()
-    if installed['c'] > 0:
-        db.close()
-        return jsonify({'error': 'This part has units installed on service records. '
-                                 'Remove them from those services first.'}), 400
-
-    files = [r['receipt_path'] for r in db.execute(
-        'SELECT receipt_path FROM supply_units WHERE supply_id = ?', (supply_id,)).fetchall()]
-    supply = db.execute('SELECT receipt_path FROM supplies WHERE id = ?', (supply_id,)).fetchone()
-    if supply:
-        files.append(supply['receipt_path'])
-
-    db.execute('DELETE FROM supply_units WHERE supply_id = ?', (supply_id,))
-    db.execute('DELETE FROM supplies WHERE id = ?', (supply_id,))
-    db.commit()
-    db.close()
-    for path in files:
+def delete_part(part_id):
+    """Delete a part and its purchases; blocked while any of it is installed,
+    since service history and warranties would point at a missing part"""
+    with db_session() as db:
+        if not db.execute('SELECT 1 FROM parts WHERE id = ?', (part_id,)).fetchone():
+            raise ApiError('Part not found', 404)
+        used = db.execute('''SELECT COUNT(*) AS c FROM part_installs pi
+                             JOIN part_purchases pp ON pp.id = pi.purchase_id
+                             WHERE pp.part_id = ?''', (part_id,)).fetchone()['c']
+        if used:
+            raise ApiError('This part has been installed on a vehicle. Remove those installs '
+                           '(or take it off the service records) before deleting it.')
+        receipts = [r['receipt_path'] for r in db.execute(
+            'SELECT receipt_path FROM part_purchases WHERE part_id = ?', (part_id,)).fetchall()]
+        db.execute('DELETE FROM part_purchases WHERE part_id = ?', (part_id,))
+        db.execute('DELETE FROM parts WHERE id = ?', (part_id,))
+        orphaned = _unreferenced_receipts(db, receipts)
+    for path in orphaned:
         remove_upload(path)
     return jsonify({'success': True})
 
-# Supply unit endpoints (individually-tracked parts)
-@app.route('/api/supplies/<int:supply_id>/units', methods=['GET'])
+@app.route('/api/parts/<int:part_id>/purchases', methods=['POST'])
 @api_login_required
-def get_supply_units(supply_id):
-    """List units for a tracked supply, newest first.
-
-    Optional query params:
-      status=in_stock            only units in that status
-      available_for_service=<id> in-stock units plus units installed on that
-                                 service (for the edit-service picker)
-    """
-    status = request.args.get('status')
-    available_for_service = request.args.get('available_for_service')
-    db = get_db()
-
-    supply = db.execute('SELECT * FROM supplies WHERE id = ?', (supply_id,)).fetchone()
-    if not supply:
-        db.close()
-        return jsonify({'error': 'Supply not found'}), 404
-
-    query = 'SELECT * FROM supply_units WHERE supply_id = ?'
-    params = [supply_id]
-    if available_for_service:
-        query += " AND (status = 'in_stock' OR installed_service_id = ?)"
-        params.append(available_for_service)
-    elif status:
-        query += ' AND status = ?'
-        params.append(status)
-    query += ' ORDER BY id DESC'
-    units = db.execute(query, params).fetchall()
-
-    odometer = latest_odometer(db, supply['vehicle_id'])
-    db.close()
-
-    result = []
-    for unit in units:
-        u = dict(unit)
-        u['warranty_status'] = unit_warranty_status(unit, odometer)
-        result.append(u)
-    return jsonify(result)
-
-@app.route('/api/supplies/<int:supply_id>/units', methods=['POST'])
-@api_login_required
-def add_supply_units(supply_id):
-    """Add N identical units to a tracked supply. `cost` is per unit; an
-    uploaded receipt covers the whole batch (one purchase, N units)."""
-    data = request.form
-    quantity_to_add = int(data.get('quantity_to_add', 1))
-    if quantity_to_add < 1:
-        return jsonify({'error': 'quantity_to_add must be at least 1'}), 400
-
-    db = get_db()
-    supply = db.execute('SELECT * FROM supplies WHERE id = ?', (supply_id,)).fetchone()
-    if not supply:
-        db.close()
-        return jsonify({'error': 'Supply not found'}), 404
-    if not supply['tracked_individually']:
-        db.close()
-        return jsonify({'error': 'This supply is not tracked individually'}), 400
-
+def add_part_purchase(part_id):
+    """Record buying more of a part. `unit_cost` is per unit; warranty terms
+    are `warranty_months`, `warranty_miles` or `warranty_lifetime`, and
+    `warranty_starts` is 'install' (default) or 'purchase'."""
+    fields = _purchase_fields(_payload())
     receipt_path = save_upload('receipt', 'receipts')
-    warranty_start = data.get('warranty_start_date') or data.get('purchase_date') or None
-    for _ in range(quantity_to_add):
-        db.execute('''INSERT INTO supply_units
-                      (supply_id, vehicle_id, purchase_date, cost, status,
-                       warranty_start_date, warranty_months, warranty_lifetime,
-                       warranty_start_mileage, warranty_mileage_limit,
-                       receipt_path, supplier, notes)
-                      VALUES (?, ?, ?, ?, 'in_stock', ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (supply_id, supply['vehicle_id'], data.get('purchase_date') or None,
-                   data.get('cost') or None, warranty_start,
-                   int(data['warranty_months']) if data.get('warranty_months') else None,
-                   1 if data.get('warranty_lifetime') == 'on' else 0,
-                   int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
-                   int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-                   receipt_path, data.get('supplier', ''), data.get('notes', '')))
-    db.commit()
-    db.close()
-    return jsonify({'success': True, 'added': quantity_to_add, 'cost_basis': 'per_unit'})
-
-@app.route('/api/supply-units/<int:unit_id>', methods=['PUT'])
-@api_login_required
-def update_supply_unit(unit_id):
-    """Edit a single unit (dates, warranty, supplier, receipt, notes, status)"""
-    data = request.form
-    db = get_db()
-    unit = db.execute('SELECT * FROM supply_units WHERE id = ?', (unit_id,)).fetchone()
-    if not unit:
-        db.close()
-        return jsonify({'error': 'Unit not found'}), 404
-
-    status = data.get('status') or unit['status']
-    if status not in ('in_stock', 'installed', 'used', 'returned'):
-        db.close()
-        return jsonify({'error': 'Invalid status'}), 400
-
-    # A newly uploaded receipt replaces the old one; otherwise keep it
-    new_receipt = save_upload('receipt', 'receipts')
-    receipt_path = new_receipt or unit['receipt_path']
-
-    db.execute('''UPDATE supply_units
-                  SET purchase_date=?, cost=?, status=?, installation_date=?,
-                      warranty_start_date=?, warranty_months=?, warranty_lifetime=?,
-                      warranty_start_mileage=?, warranty_mileage_limit=?,
-                      receipt_path=?, supplier=?, notes=?
-                  WHERE id=?''',
-              (data.get('purchase_date') or None,
-               data.get('cost') or None,
-               status,
-               data.get('installation_date') or None,
-               data.get('warranty_start_date') or None,
-               int(data['warranty_months']) if data.get('warranty_months') else None,
-               1 if data.get('warranty_lifetime') == 'on' else 0,
-               int(data['warranty_start_mileage']) if data.get('warranty_start_mileage') else None,
-               int(data['warranty_mileage_limit']) if data.get('warranty_mileage_limit') else None,
-               receipt_path, data.get('supplier', ''), data.get('notes', ''),
-               unit_id))
-    db.commit()
-    db.close()
-    if new_receipt:
-        remove_upload(unit['receipt_path'])
-    return jsonify({'success': True})
-
-@app.route('/api/supply-units/<int:unit_id>', methods=['DELETE'])
-@api_login_required
-def delete_supply_unit(unit_id):
-    """Delete a unit; blocked while it's installed on a service record"""
-    db = get_db()
-    unit = db.execute('SELECT * FROM supply_units WHERE id = ?', (unit_id,)).fetchone()
-    if not unit:
-        db.close()
-        return jsonify({'error': 'Unit not found'}), 404
-    if unit['status'] == 'installed' and unit['installed_service_id']:
-        db.close()
-        return jsonify({'error': 'This unit is installed on a service record. '
-                                 'Remove it from the service first.'}), 400
-
-    db.execute('DELETE FROM supply_units WHERE id = ?', (unit_id,))
-    db.commit()
-    db.close()
-    remove_upload(unit['receipt_path'])
-    return jsonify({'success': True})
-
-@app.route('/api/supplies/export-csv', methods=['GET'])
-@api_login_required
-def export_supplies_csv():
-    """Export supplies to CSV"""
-    vehicle_id = request.args.get('vehicle_id')
-    db = get_db()
     try:
-        if vehicle_id:
-            supplies = db.execute(
-                'SELECT * FROM supplies WHERE vehicle_id = ? ORDER BY name', (vehicle_id,)
-            ).fetchall()
-        else:
-            supplies = db.execute('SELECT * FROM supplies ORDER BY name').fetchall()
+        with db_session() as db:
+            if not db.execute('SELECT 1 FROM parts WHERE id = ?', (part_id,)).fetchone():
+                raise ApiError('Part not found', 404)
+            purchase_id = _insert_purchase(db, part_id, fields, receipt_path)
+    except Exception:
+        remove_upload(receipt_path)
+        raise
+    return jsonify({'success': True, 'id': purchase_id})
 
-        supplies_list = [dict(row) for row in supplies]
-        db.close()
+@app.route('/api/part-purchases/<int:purchase_id>', methods=['PUT'])
+@api_login_required
+def update_part_purchase(purchase_id):
+    fields = _purchase_fields(_payload())
+    receipt_path = save_upload('receipt', 'receipts')
+    try:
+        with db_session() as db:
+            old = purchase_with_remaining(db, purchase_id)
+            if fields['quantity'] < old['installed'] - 1e-9:
+                raise ApiError(f"{old['installed']:g} from this purchase are already installed; "
+                               'the quantity cannot be lower than that')
+            # A new upload replaces the receipt; otherwise keep the current one
+            db.execute('''UPDATE part_purchases
+                          SET purchase_date=?, supplier=?, condition=?, quantity=?, unit_cost=?,
+                              receipt_path=COALESCE(?, receipt_path), warranty_months=?, warranty_miles=?,
+                              warranty_lifetime=?, warranty_starts=?, notes=?
+                          WHERE id=?''',
+                       (fields['purchase_date'], fields['supplier'], fields['condition'], fields['quantity'],
+                        fields['unit_cost'], receipt_path, fields['warranty_months'], fields['warranty_miles'],
+                        fields['warranty_lifetime'], fields['warranty_starts'], fields['notes'], purchase_id))
+            orphaned = _unreferenced_receipts(db, [old['receipt_path']]) if receipt_path else []
+    except Exception:
+        remove_upload(receipt_path)
+        raise
+    for path in orphaned:
+        remove_upload(path)
+    return jsonify({'success': True})
 
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['name', 'part_number', 'brand', 'category', 'cost', 'quantity',
-                         'supplier', 'purchase_date', 'installation_date', 'location',
-                         'condition', 'notes'])
-        for s in supplies_list:
-            writer.writerow([
-                s.get('name', ''),
-                s.get('part_number', '') or '',
-                s.get('brand', '') or '',
-                s.get('category', '') or '',
-                s.get('cost', ''),
-                s.get('quantity', ''),
-                s.get('supplier', '') or '',
-                s.get('purchase_date', '') or '',
-                s.get('installation_date', '') or '',
-                s.get('location', '') or '',
-                s.get('condition', '') or '',
-                s.get('notes', '') or ''
-            ])
+@app.route('/api/part-purchases/<int:purchase_id>', methods=['DELETE'])
+@api_login_required
+def delete_part_purchase(purchase_id):
+    """Delete a purchase; blocked once any of it has been installed"""
+    with db_session() as db:
+        old = purchase_with_remaining(db, purchase_id)
+        if old['installed'] > 1e-9:
+            raise ApiError('Some of this purchase has been installed. Remove those installs first.')
+        db.execute('DELETE FROM part_purchases WHERE id = ?', (purchase_id,))
+        orphaned = _unreferenced_receipts(db, [old['receipt_path']])
+    for path in orphaned:
+        remove_upload(path)
+    return jsonify({'success': True})
 
-        output.seek(0)
-        response = make_response(output.getvalue())
-        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
-        response.headers['Content-Disposition'] = 'attachment; filename=supplies.csv'
-        return response
+@app.route('/api/parts/<int:part_id>/installs', methods=['POST'])
+@api_login_required
+def add_part_install(part_id):
+    """Install a part on a vehicle without a service record (parts used on a
+    service are sent with the service instead)"""
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
+    quantity = _number(data, 'quantity', 'Quantity')
+    install_date = _date(data, 'install_date', 'Install date')
+    if not vehicle_id:
+        raise ApiError('Choose the vehicle this was installed on')
+    if not quantity:
+        raise ApiError('Quantity must be greater than 0')
+    if not install_date:
+        raise ApiError('Install date is required')
+    with db_session() as db:
+        if not db.execute('SELECT 1 FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone():
+            raise ApiError('Vehicle not found', 404)
+        install_ids = allocate_install(
+            db, part_id, quantity, vehicle_id=vehicle_id, install_date=install_date,
+            odometer=_number(data, 'odometer', 'Odometer', integer=True),
+            purchase_id=_number(data, 'purchase_id', 'Purchase', integer=True),
+            notes=_text(data, 'notes'),
+            warranty_start_date=_date(data, 'warranty_start_date', 'Warranty start date'),
+            warranty_start_mileage=_number(data, 'warranty_start_mileage', 'Warranty start mileage', integer=True))
+    return jsonify({'success': True, 'ids': install_ids})
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+@app.route('/api/part-installs/<int:install_id>', methods=['PUT'])
+@api_login_required
+def update_part_install(install_id):
+    """Edit an install: mark it removed, add notes, or override when its
+    warranty started. Quantity, date and odometer can only be changed here
+    for installs that aren't on a service record; otherwise they follow it."""
+    data = _payload()
+    with db_session() as db:
+        old = db.execute('SELECT * FROM part_installs WHERE id = ?', (install_id,)).fetchone()
+        if not old:
+            raise ApiError('Install not found', 404)
+
+        quantity, install_date, odometer = old['quantity'], old['install_date'], old['odometer']
+        if not old['service_id']:
+            if 'quantity' in data:
+                quantity = _number(data, 'quantity', 'Quantity')
+                if not quantity:
+                    raise ApiError('Quantity must be greater than 0')
+                available = purchase_with_remaining(db, old['purchase_id'])['remaining'] + old['quantity']
+                if quantity > available + 1e-9:
+                    raise ApiError(f'Only {available:g} available from that purchase')
+            if 'install_date' in data:
+                install_date = _date(data, 'install_date', 'Install date')
+            if 'odometer' in data:
+                odometer = _number(data, 'odometer', 'Odometer', integer=True)
+
+        db.execute('''UPDATE part_installs
+                      SET quantity=?, install_date=?, odometer=?, removed_date=?, notes=?,
+                          warranty_start_date=?, warranty_start_mileage=?
+                      WHERE id=?''',
+                   (quantity, install_date, odometer,
+                    _date(data, 'removed_date', 'Removed date'), _text(data, 'notes'),
+                    _date(data, 'warranty_start_date', 'Warranty start date'),
+                    _number(data, 'warranty_start_mileage', 'Warranty start mileage', integer=True),
+                    install_id))
+    return jsonify({'success': True})
+
+@app.route('/api/part-installs/<int:install_id>', methods=['DELETE'])
+@api_login_required
+def delete_part_install(install_id):
+    """Undo an install, returning its quantity to the shelf. To record that a
+    part came off the vehicle, set its removed date instead."""
+    with db_session() as db:
+        old = db.execute('SELECT service_id FROM part_installs WHERE id = ?', (install_id,)).fetchone()
+        if not old:
+            raise ApiError('Install not found', 404)
+        if old['service_id']:
+            raise ApiError('This part was used on a service record. Edit that service to remove it.')
+        db.execute('DELETE FROM part_installs WHERE id = ?', (install_id,))
+    return jsonify({'success': True})
+
+WARRANTY_STATUS_ORDER = {'expiring': 0, 'active': 1, 'lifetime': 2, 'expired': 3}
+
+@app.route('/api/warranties', methods=['GET'])
+@api_login_required
+def get_warranties():
+    """Warranties on parts currently installed, soonest to expire first.
+    Optional `vehicle_id` limits the list to one vehicle."""
+    vehicle_id = request.args.get('vehicle_id', type=int)
+    where = 'pi.removed_date IS NULL'
+    params = ()
+    if vehicle_id:
+        where += ' AND pi.vehicle_id = ?'
+        params = (vehicle_id,)
+    db = get_db()
+    installs = [i for i in load_installs(db, where, params) if i['warranty']]
+    db.close()
+    installs.sort(key=lambda i: (WARRANTY_STATUS_ORDER[i['warranty']['status']],
+                                 i['warranty']['expires_on'] or '9999',
+                                 i['warranty']['miles_remaining'] if i['warranty']['miles_remaining'] is not None else float('inf')))
+    return jsonify(installs)
+
+@app.route('/api/parts/export-csv', methods=['GET'])
+@api_login_required
+def export_parts_csv():
+    """Export the parts shelf to CSV"""
+    db = get_db()
+    parts = build_parts(db)
+    db.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['name', 'part_number', 'brand', 'category', 'location', 'in_stock',
+                     'stock_value', 'installed', 'reorder_threshold', 'notes'])
+    for part in parts:
+        writer.writerow([
+            part['name'],
+            part['part_number'] or '',
+            part['brand'] or '',
+            part['category'] or '',
+            part['location'] or '',
+            part['in_stock'],
+            part['stock_value'],
+            part['installed'],
+            part['reorder_threshold'] if part['reorder_threshold'] is not None else '',
+            part['notes'] or ''
+        ])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename=parts.csv'
+    return response
+
+
+def migrate_supplies_to_parts(db):
+    """One-time copy of the old supplies / supply_units / service_supplies
+    data into parts, part_purchases and part_installs. The old tables are
+    left untouched as a backup. Part ids match the old supply ids.
+
+    Plain supplies become one purchase: what is on hand plus what services
+    already used, each use becoming an install. Individually-tracked units
+    are grouped into purchases by matching date, cost, supplier, receipt and
+    warranty terms; installed or used units become installs."""
+    def service(service_id):
+        if not service_id:
+            return None
+        return db.execute('SELECT vehicle_id, date, odometer FROM service_records WHERE id = ?',
+                          (service_id,)).fetchone()
+
+    def insert_install(purchase_id, vehicle_id, service_id, quantity, install_date, odometer,
+                       start_date, start_mileage, notes=None):
+        db.execute('''INSERT INTO part_installs
+                      (purchase_id, vehicle_id, service_id, quantity, install_date, odometer,
+                       warranty_start_date, warranty_start_mileage, notes)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                   (purchase_id, vehicle_id, service_id, quantity, install_date, odometer,
+                    start_date, start_mileage, notes))
+
+    for s in db.execute('SELECT * FROM supplies ORDER BY id').fetchall():
+        tracked = bool(s['tracked_individually'])
+        db.execute('''INSERT INTO parts (id, name, part_number, brand, category, location, notes,
+                                         reorder_threshold, created_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                   (s['id'], s['name'], s['part_number'] or None, s['brand'] or None,
+                    s['category'] or None, s['location'] or None, s['notes'] or None,
+                    1 if s['remind_to_reorder'] else None, s['created_at']))
+
+        # Uses recorded as a plain quantity (not as a specific unit)
+        uses = db.execute('''SELECT ss.service_id, ss.quantity_used, sr.vehicle_id, sr.date, sr.odometer
+                             FROM service_supplies ss
+                             JOIN service_records sr ON sr.id = ss.service_id
+                             WHERE ss.supply_id = ? AND ss.supply_unit_id IS NULL''', (s['id'],)).fetchall()
+        used = sum(u['quantity_used'] or 0 for u in uses)
+        on_hand = 0 if tracked else max(s['quantity'] or 0, 0)
+        has_warranty = bool(s['warranty_months'] or s['warranty_lifetime'] or s['warranty_mileage_limit'])
+
+        if not tracked or uses:
+            at_purchase = bool(s['warranty_start_date'] and s['warranty_start_date'] == s['purchase_date'])
+            start_override = None if at_purchase else s['warranty_start_date']
+            # An install date with nothing linking it to a service: the old
+            # flat row described a part already on the vehicle. Only treated
+            # that way when it carries a warranty; otherwise it stays in
+            # stock and the date is kept as a note.
+            fitted = bool(not tracked and s['installation_date'] and not uses and on_hand)
+            notes = None
+            if s['installation_date'] and not (fitted and has_warranty):
+                notes = f"Installation date recorded before the parts rebuild: {s['installation_date']}"
+            cursor = db.execute('''INSERT INTO part_purchases
+                                   (part_id, purchase_date, supplier, condition, quantity, unit_cost,
+                                    receipt_path, warranty_months, warranty_miles, warranty_lifetime,
+                                    warranty_starts, notes)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                (s['id'], s['purchase_date'] or None, s['supplier'] or None,
+                                 s['condition'] or 'New', on_hand + used, s['cost'] or 0,
+                                 None if tracked else s['receipt_path'],
+                                 s['warranty_months'], s['warranty_mileage_limit'],
+                                 1 if s['warranty_lifetime'] else 0,
+                                 'purchase' if at_purchase else 'install', notes))
+            purchase_id = cursor.lastrowid
+            for u in uses:
+                insert_install(purchase_id, u['vehicle_id'], u['service_id'], u['quantity_used'],
+                               u['date'], u['odometer'], start_override, s['warranty_start_mileage'])
+            if fitted and has_warranty:
+                insert_install(purchase_id, s['vehicle_id'], None, on_hand, s['installation_date'],
+                               None, start_override, s['warranty_start_mileage'])
+
+        if not tracked:
+            continue
+
+        groups = {}
+        for u in db.execute('SELECT * FROM supply_units WHERE supply_id = ? ORDER BY id', (s['id'],)).fetchall():
+            at_purchase = bool(u['warranty_start_date'] and u['warranty_start_date'] == u['purchase_date'])
+            key = (u['purchase_date'], u['cost'] if u['cost'] is not None else (s['cost'] or 0),
+                   u['supplier'] or None, u['receipt_path'] or s['receipt_path'], u['warranty_months'],
+                   u['warranty_mileage_limit'], 1 if u['warranty_lifetime'] else 0, at_purchase)
+            groups.setdefault(key, []).append(u)
+
+        for key, units in groups.items():
+            purchase_date, unit_cost, supplier, receipt, months, miles, lifetime, at_purchase = key
+            kept = [u for u in units if u['status'] != 'returned']
+            notes = []
+            for u in units:
+                if u['notes'] and u['notes'] not in notes:
+                    notes.append(u['notes'])
+            returned = len(units) - len(kept)
+            if returned:
+                notes.append(f"{returned} unit{'s' if returned != 1 else ''} returned to the supplier "
+                             'before the parts rebuild (not counted in the quantity)')
+            for u in kept:
+                if u['status'] == 'in_stock' and u['warranty_start_date'] and not at_purchase:
+                    notes.append(f"Unit #{u['id']} had a warranty start date of {u['warranty_start_date']} "
+                                 'while still in stock')
+            cursor = db.execute('''INSERT INTO part_purchases
+                                   (part_id, purchase_date, supplier, quantity, unit_cost, receipt_path,
+                                    warranty_months, warranty_miles, warranty_lifetime, warranty_starts, notes)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                (s['id'], purchase_date, supplier, len(kept), unit_cost, receipt, months,
+                                 miles, lifetime, 'purchase' if at_purchase else 'install',
+                                 '\n'.join(notes) or None))
+            purchase_id = cursor.lastrowid
+
+            # Units put on the vehicle together become one install
+            installs = {}
+            for u in kept:
+                if u['status'] not in ('installed', 'used'):
+                    continue
+                linked = service(u['installed_service_id'])
+                install_date = u['installation_date'] or (linked['date'] if linked else None)
+                odometer = linked['odometer'] if linked else None
+                default_start = purchase_date if at_purchase else install_date
+                start_date = u['warranty_start_date'] if u['warranty_start_date'] != default_start else None
+                start_mileage = u['warranty_start_mileage'] if u['warranty_start_mileage'] != odometer else None
+                install_key = (linked['vehicle_id'] if linked else u['vehicle_id'],
+                               u['installed_service_id'] if linked else None,
+                               install_date, odometer, start_date, start_mileage,
+                               'Marked as used before the parts rebuild' if u['status'] == 'used' else None)
+                installs[install_key] = installs.get(install_key, 0) + 1
+            for install_key, count in installs.items():
+                vehicle_id, service_id, install_date, odometer, start_date, start_mileage, note = install_key
+                insert_install(purchase_id, vehicle_id, service_id, count, install_date, odometer,
+                               start_date, start_mileage, note)
 
 # Fuel endpoints
 def recalculate_mpg(db, vehicle_id):
@@ -2692,18 +3093,10 @@ def get_stats():
                        (vehicle_id,)).fetchone()
     stats['total_services'] = result['count']
 
-    # Total spent on services, including supplies used (matches the
+    # Total spent on services, including parts used (matches the
     # per-service totals shown on the Services page)
-    result = db.execute('''
-        SELECT
-            (SELECT COALESCE(SUM(cost), 0) FROM service_records WHERE vehicle_id = ?)
-          + (SELECT COALESCE(SUM(ss.quantity_used * COALESCE(su.cost, sup.cost)), 0)
-             FROM service_supplies ss
-             JOIN service_records s ON s.id = ss.service_id
-             JOIN supplies sup ON sup.id = ss.supply_id
-             LEFT JOIN supply_units su ON su.id = ss.supply_unit_id
-             WHERE s.vehicle_id = ?) AS total
-    ''', (vehicle_id, vehicle_id)).fetchone()
+    result = db.execute(f'''SELECT COALESCE(SUM(s.cost + {PARTS_COST_SQL}), 0) AS total
+                            FROM service_records s WHERE s.vehicle_id = ?''', (vehicle_id,)).fetchone()
     stats['total_spent'] = round(result['total'], 2)
 
     stats['avg_mpg'] = weighted_avg_mpg(db, vehicle_id) or 0
@@ -2838,17 +3231,21 @@ def global_search():
         results['fuel'] = [{'id': r['id'], 'date': r['date'], 'label': r['station'],
                              'sub': f"{r['gallons']} gal — ${r['cost']}"} for r in rows]
 
-    # Supplies / parts
-    base = 'FROM supplies WHERE (LOWER(name) LIKE ? OR LOWER(part_number) LIKE ? OR LOWER(brand) LIKE ? OR LOWER(notes) LIKE ? OR LOWER(category) LIKE ?)'
-    params = (like, like, like, like, like)
-    if vehicle_id:
-        base += ' AND vehicle_id = ?'
-        params += (vehicle_id,)
-    rows = db.execute(f'SELECT id, name, brand, part_number, quantity {base} ORDER BY name LIMIT 10', params).fetchall()
+    # Parts (one shared shelf, so not filtered by vehicle)
+    rows = db.execute('''
+        SELECT p.id, p.name, p.brand, p.part_number,
+               COALESCE((SELECT SUM(quantity) FROM part_purchases WHERE part_id = p.id), 0)
+             - COALESCE((SELECT SUM(pi.quantity) FROM part_installs pi
+                         JOIN part_purchases pp ON pp.id = pi.purchase_id
+                         WHERE pp.part_id = p.id), 0) AS in_stock
+        FROM parts p
+        WHERE LOWER(p.name) LIKE ? OR LOWER(p.part_number) LIKE ? OR LOWER(p.brand) LIKE ?
+           OR LOWER(p.notes) LIKE ? OR LOWER(p.category) LIKE ?
+        ORDER BY p.name LIMIT 10''', (like, like, like, like, like)).fetchall()
     if rows:
-        results['supplies'] = [{'id': r['id'], 'label': r['name'],
-                                 'sub': ' '.join(filter(None, [r['brand'], r['part_number']])),
-                                 'qty': r['quantity']} for r in rows]
+        results['parts'] = [{'id': r['id'], 'label': r['name'],
+                             'sub': ' '.join(filter(None, [r['brand'], r['part_number']])),
+                             'qty': round(r['in_stock'], 4)} for r in rows]
 
     # Reminders
     base = 'FROM service_reminders WHERE (LOWER(service_type) LIKE ? OR LOWER(notes) LIKE ?)'
