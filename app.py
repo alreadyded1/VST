@@ -774,6 +774,82 @@ def init_db():
             db.execute("INSERT INTO settings (key, value) VALUES ('parts_migrated', '1')")
             db.commit()
 
+        # Service line items, maintenance schedule and attachments (see the
+        # service records section further down)
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS service_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS service_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_id INTEGER NOT NULL,
+                service_type_id INTEGER NOT NULL,
+                cost REAL,
+                notes TEXT,
+                FOREIGN KEY (service_id) REFERENCES service_records (id),
+                FOREIGN KEY (service_type_id) REFERENCES service_types (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS maintenance_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL,
+                service_type_id INTEGER NOT NULL,
+                interval_miles INTEGER,
+                interval_months INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (vehicle_id, service_type_id),
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle (id),
+                FOREIGN KEY (service_type_id) REFERENCES service_types (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS service_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                original_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (service_id) REFERENCES service_records (id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_service_items_service_id ON service_items(service_id);
+            CREATE INDEX IF NOT EXISTS idx_service_items_type_id ON service_items(service_type_id);
+            CREATE INDEX IF NOT EXISTS idx_service_attachments_service_id ON service_attachments(service_id);
+        ''')
+
+        for migration in (
+                # Done by the owner rather than a shop
+                'ALTER TABLE service_records ADD COLUMN diy INTEGER DEFAULT 0',
+                # Set on reminders kept up to date from a maintenance schedule;
+                # NULL on ones created by hand
+                'ALTER TABLE service_reminders ADD COLUMN schedule_id INTEGER'):
+            try:
+                db.execute(migration)
+                db.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
+        # Starter list of service types, added once. Intervals are left for
+        # the owner to set per vehicle, so nothing nags with guessed numbers.
+        if not db.execute("SELECT 1 FROM settings WHERE key = 'service_types_seeded'").fetchone():
+            for name in DEFAULT_SERVICE_TYPES:
+                db.execute('INSERT OR IGNORE INTO service_types (name) VALUES (?)', (name,))
+            db.execute("INSERT INTO settings (key, value) VALUES ('service_types_seeded', '1')")
+            db.commit()
+
+        # One-time: a service used to hold a single receipt in receipt_path;
+        # each becomes the first attachment
+        if not db.execute("SELECT 1 FROM settings WHERE key = 'service_attachments_migrated'").fetchone():
+            db.execute('''INSERT INTO service_attachments (service_id, file_path)
+                          SELECT id, receipt_path FROM service_records
+                          WHERE receipt_path IS NOT NULL AND receipt_path != ''
+                            AND id NOT IN (SELECT service_id FROM service_attachments)''')
+            db.execute("INSERT INTO settings (key, value) VALUES ('service_attachments_migrated', '1')")
+            db.commit()
+
         # One-time repair: MPG used to be computed only at insert time, so
         # edits, deletions and backdated fill-ups left stale values behind.
         if not db.execute("SELECT 1 FROM settings WHERE key = 'mpg_recalculated'").fetchone():
@@ -783,6 +859,12 @@ def init_db():
             db.commit()
 
         db.close()
+
+DEFAULT_SERVICE_TYPES = [
+    'Oil change', 'Oil filter', 'Tire rotation', 'Wheel alignment', 'Brake pads', 'Brake rotors',
+    'Brake fluid', 'Engine air filter', 'Cabin air filter', 'Coolant', 'Transmission fluid',
+    'Spark plugs', 'Battery', 'Wiper blades', 'Serpentine belt', 'Inspection', 'Diagnostics',
+]
 
 def get_setting(key, default='1'):
     """Get a setting value from the database"""
@@ -808,7 +890,9 @@ def save_upload(field, subdir):
     and return its static-relative path, or None if nothing valid was sent.
     The random suffix keeps two uploads of the same name in the same second
     from overwriting each other."""
-    file = request.files.get(field)
+    return _store_upload(request.files.get(field), subdir)
+
+def _store_upload(file, subdir):
     if not (file and file.filename and allowed_file(file.filename)):
         return None
     filename = (f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}_"
@@ -817,6 +901,16 @@ def save_upload(field, subdir):
     os.makedirs(folder, exist_ok=True)
     file.save(os.path.join(folder, filename))
     return f'uploads/{subdir}/{filename}'
+
+def save_uploads(field, subdir):
+    """Save every valid file sent under request.files[field]. Returns a list
+    of (static-relative path, original file name)."""
+    saved = []
+    for file in request.files.getlist(field):
+        path = _store_upload(file, subdir)
+        if path:
+            saved.append((path, file.filename))
+    return saved
 
 def remove_upload(static_path):
     """Delete an uploaded file given its static-relative path (e.g.
@@ -1345,13 +1439,19 @@ def delete_vehicle(vehicle_id):
         rows = db.execute(f'SELECT {column} FROM {table} WHERE vehicle_id = ? AND {column} IS NOT NULL',
                           (vehicle_id,)).fetchall()
         files.extend(r[column] for r in rows)
+    its_services = '(SELECT id FROM service_records WHERE vehicle_id = ?)'
+    files.extend(r['file_path'] for r in db.execute(
+        f'SELECT file_path FROM service_attachments WHERE service_id IN {its_services}',
+        (vehicle_id,)).fetchall())
+    db.execute(f'DELETE FROM service_attachments WHERE service_id IN {its_services}', (vehicle_id,))
+    db.execute(f'DELETE FROM service_items WHERE service_id IN {its_services}', (vehicle_id,))
 
     # Parts are a shared shelf, so they outlive the vehicle. What it used
     # stays used (deleting the installs would put it back in stock); the
     # installs just lose their link to the vehicle and its services.
     db.execute('UPDATE part_installs SET vehicle_id = NULL, service_id = NULL WHERE vehicle_id = ?',
                (vehicle_id,))
-    for table in ('service_records', 'fuel_records',
+    for table in ('service_records', 'maintenance_schedules', 'fuel_records',
                   'service_reminders', 'documents', 'tire_install_log',
                   'tire_rotations', 'tread_readings', 'tires'):
         db.execute(f'DELETE FROM {table} WHERE vehicle_id = ?', (vehicle_id,))
@@ -1359,7 +1459,7 @@ def delete_vehicle(vehicle_id):
     db.commit()
     db.close()
 
-    for path in files:
+    for path in set(files):
         remove_upload(path)
     return jsonify({'success': True})
 
@@ -1532,6 +1632,17 @@ def create_recall_reminders():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Service records endpoints
+#
+# A service record is one visit or job: a date, the total bill, who did it
+# and the odometer. Hanging off it are
+#   service_items        what was done, one row per service type, each with
+#                        an optional price (the bill total is entered once
+#                        on the record; item prices are a breakdown, not
+#                        added to it)
+#   part_installs        parts from the shelf used on the job
+#   service_attachments  receipts and photos
+# Service types can carry a per-vehicle interval (maintenance_schedules);
+# logging a service then moves that type's reminder to the next due point.
 
 # Cost of the parts used on a service: each install is priced at the unit
 # cost of the purchase it was drawn from, so old services keep their real
@@ -1540,7 +1651,34 @@ PARTS_COST_SQL = '''(SELECT COALESCE(SUM(pi.quantity * pp.unit_cost), 0)
                      FROM part_installs pi
                      JOIN part_purchases pp ON pp.id = pi.purchase_id
                      WHERE pi.service_id = s.id)'''
-SERVICE_SELECT = f'SELECT s.*, {PARTS_COST_SQL} AS supplies_cost FROM service_records s'
+SERVICE_SELECT = f'''
+    SELECT s.*, {PARTS_COST_SQL} AS supplies_cost,
+           (SELECT GROUP_CONCAT(st.name, ', ') FROM service_items si
+            JOIN service_types st ON st.id = si.service_type_id
+            WHERE si.service_id = s.id) AS service_types,
+           (SELECT GROUP_CONCAT(si.service_type_id) FROM service_items si
+            WHERE si.service_id = s.id) AS service_type_ids,
+           (SELECT COUNT(*) FROM service_attachments a WHERE a.service_id = s.id) AS attachment_count
+    FROM service_records s'''
+
+# Matches the free-text fields of a service or the names of its service types
+SERVICE_TEXT_MATCH = '''(LOWER(s.service_provider) LIKE :q OR LOWER(s.comments) LIKE :q
+                         OR LOWER(s.repairs_completed) LIKE :q
+                         OR s.id IN (SELECT si.service_id FROM service_items si
+                                     JOIN service_types st ON st.id = si.service_type_id
+                                     WHERE LOWER(st.name) LIKE :q))'''
+
+# A scheduled service is flagged as due soon once it is this close
+MAINTENANCE_DUE_SOON_DAYS = 30
+MAINTENANCE_DUE_SOON_MILES = 500
+
+
+def _service_dict(row):
+    service = dict(row)
+    ids = service.get('service_type_ids')
+    service['service_type_ids'] = [int(i) for i in ids.split(',')] if ids else []
+    service['diy'] = bool(service.get('diy'))
+    return service
 
 
 @app.route('/api/services', methods=['GET'])
@@ -1558,7 +1696,7 @@ def get_services():
     else:
         where_clause = ''
         params = ()
-    query = SERVICE_SELECT + where_clause + ' ORDER BY s.date DESC'
+    query = SERVICE_SELECT + where_clause + ' ORDER BY s.date DESC, s.id DESC'
 
     if page is not None:
         total_count = db.execute('SELECT COUNT(*) AS total FROM service_records s' + where_clause,
@@ -1567,7 +1705,7 @@ def get_services():
         services = db.execute(query + ' LIMIT ? OFFSET ?', params + (per_page, offset)).fetchall()
         db.close()
         return jsonify({
-            'data': [dict(row) for row in services],
+            'data': [_service_dict(row) for row in services],
             'total': total_count,
             'page': page,
             'per_page': per_page,
@@ -1577,12 +1715,12 @@ def get_services():
     # Return all results (backwards compatibility)
     services = db.execute(query, params).fetchall()
     db.close()
-    return jsonify([dict(row) for row in services])
+    return jsonify([_service_dict(row) for row in services])
 
 @app.route('/api/services/<int:service_id>', methods=['GET'])
 @api_login_required
 def get_service(service_id):
-    """Get a specific service record with the parts used on it"""
+    """Get a specific service record with its line items, parts and attachments"""
     db = get_db()
     service = db.execute(SERVICE_SELECT + ' WHERE s.id = ?', (service_id,)).fetchone()
     if not service:
@@ -1590,9 +1728,17 @@ def get_service(service_id):
         return jsonify(None), 404
 
     installs = load_installs(db, 'pi.service_id = ?', (service_id,))
+    items = db.execute('''SELECT si.id, si.service_type_id AS type_id, st.name, si.cost, si.notes
+                          FROM service_items si
+                          JOIN service_types st ON st.id = si.service_type_id
+                          WHERE si.service_id = ? ORDER BY si.id''', (service_id,)).fetchall()
+    attachments = db.execute('''SELECT id, file_path, original_name FROM service_attachments
+                                WHERE service_id = ? ORDER BY id''', (service_id,)).fetchall()
     db.close()
 
-    result = dict(service)
+    result = _service_dict(service)
+    result['items'] = [dict(row) for row in items]
+    result['attachments'] = [dict(row) for row in attachments]
     result['parts'] = installs
     # Older API clients read `supplies` as [{id, name, cost, quantity}]
     result['supplies'] = [{'id': i['part_id'], 'name': i['part_name'],
@@ -1602,36 +1748,88 @@ def get_service(service_id):
 @app.route('/api/services/search', methods=['GET'])
 @api_login_required
 def search_services():
-    """Search service records"""
-    like = f"%{request.args.get('q', '').lower()}%"
+    """Search service records by provider, notes or type of work"""
+    params = {'q': f"%{request.args.get('q', '').lower()}%"}
+    where = ' WHERE ' + SERVICE_TEXT_MATCH
     vehicle_id = request.args.get('vehicle_id')
-    where = ''' WHERE (LOWER(s.service_provider) LIKE ? OR LOWER(s.comments) LIKE ?
-                       OR LOWER(s.repairs_completed) LIKE ?)'''
-    params = (like, like, like)
     if vehicle_id:
-        where += ' AND s.vehicle_id = ?'
-        params += (vehicle_id,)
+        where += ' AND s.vehicle_id = :vehicle_id'
+        params['vehicle_id'] = vehicle_id
 
     db = get_db()
-    services = db.execute(SERVICE_SELECT + where + ' ORDER BY s.date DESC', params).fetchall()
+    services = db.execute(SERVICE_SELECT + where + ' ORDER BY s.date DESC, s.id DESC', params).fetchall()
     db.close()
-    return jsonify([dict(row) for row in services])
+    return jsonify([_service_dict(row) for row in services])
 
-def _service_parts_payload(data):
-    """The list of parts sent with a service form, or None if the form
-    didn't mention parts at all. `supplies` is the older name for the field."""
-    raw = data.get('parts')
-    if raw is None:
-        raw = data.get('supplies')
+def _json_list(data, *keys):
+    """A JSON list sent as one form field (or as real JSON), looked up under
+    the first of `keys` that is present; None if the request has none of them."""
+    raw = None
+    for key in keys:
+        raw = data.get(key)
+        if raw is not None:
+            break
     if raw is None:
         return None
     try:
         entries = json.loads(raw) if isinstance(raw, str) else raw
     except ValueError:
-        raise ApiError('Parts list is not valid JSON')
+        raise ApiError(f'{keys[0]} is not valid JSON')
     if not isinstance(entries, list):
-        raise ApiError('Parts list must be a list')
+        raise ApiError(f'{keys[0]} must be a list')
     return entries
+
+def _service_fields(data):
+    """Validated core fields of a service record from a form"""
+    service_date = _date(data, 'date', 'Date')
+    if not service_date:
+        raise ApiError('Date is required')
+    cost = _number(data, 'cost', 'Total bill')
+    if cost is None:
+        raise ApiError('Total bill is required (enter 0 if it cost nothing)')
+    diy = _flag(data, 'diy')
+    provider = _text(data, 'service_provider') or ('Self' if diy else None)
+    if not provider:
+        raise ApiError('Service provider is required')
+    return {
+        'date': service_date,
+        'cost': cost,
+        'service_provider': provider,
+        'diy': 1 if diy else 0,
+        'odometer': _number(data, 'odometer', 'Odometer', integer=True),
+        'comments': data.get('comments', ''),
+        'repairs_completed': data.get('repairs_completed', ''),
+    }
+
+def get_or_create_service_type(db, name):
+    name = (name or '').strip()
+    if not name:
+        raise ApiError('Service type name is required')
+    row = db.execute('SELECT id FROM service_types WHERE name = ? COLLATE NOCASE', (name,)).fetchone()
+    if row:
+        return row['id']
+    return db.execute('INSERT INTO service_types (name) VALUES (?)', (name,)).lastrowid
+
+def service_type_ids(db, service_id):
+    return {row['service_type_id'] for row in db.execute(
+        'SELECT service_type_id FROM service_items WHERE service_id = ?', (service_id,)).fetchall()}
+
+def sync_service_items(db, service_id, entries):
+    """Replace a service's line items with `entries`: each is {type_id} or
+    {type_name} (created if new), with an optional `cost` and `notes`."""
+    db.execute('DELETE FROM service_items WHERE service_id = ?', (service_id,))
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ApiError('Each line item must be an object')
+        type_id = entry.get('type_id')
+        if type_id:
+            if not db.execute('SELECT 1 FROM service_types WHERE id = ?', (type_id,)).fetchone():
+                raise ApiError('Unknown service type; reload and try again')
+        else:
+            type_id = get_or_create_service_type(db, entry.get('type_name') or entry.get('name'))
+        cost = _number(entry, 'cost', 'Line item price')
+        db.execute('INSERT INTO service_items (service_id, service_type_id, cost, notes) VALUES (?, ?, ?, ?)',
+                   (service_id, type_id, cost, _text(entry, 'notes')))
 
 def sync_service_parts(db, service_id, vehicle_id, service_date, odometer, entries):
     """Make the installs linked to a service match `entries`.
@@ -1681,115 +1879,448 @@ def sync_service_parts(db, service_id, vehicle_id, service_date, odometer, entri
         allocate_install(db, part_id, quantity, vehicle_id=vehicle_id, service_id=service_id,
                          install_date=service_date, odometer=odometer, purchase_id=purchase_id)
 
+def _add_attachments(db, service_id, uploads):
+    for path, name in uploads:
+        db.execute('INSERT INTO service_attachments (service_id, file_path, original_name) VALUES (?, ?, ?)',
+                   (service_id, path, name))
+
+def _sync_receipt_path(db, service_id):
+    """service_records.receipt_path mirrors the first attachment, for the
+    list views and API clients that only know about one receipt"""
+    db.execute('''UPDATE service_records
+                  SET receipt_path = (SELECT file_path FROM service_attachments
+                                      WHERE service_id = ? ORDER BY id LIMIT 1)
+                  WHERE id = ?''', (service_id, service_id))
+
+def odometer_warning(db, vehicle_id, service_id, service_date, odometer):
+    """A message if this reading is out of step with the vehicle's other
+    service and fuel records, else None. Readings feed mileage warranties
+    and maintenance intervals, so a typo here matters."""
+    if odometer is None:
+        return None
+    readings = '''SELECT date, odometer FROM service_records
+                  WHERE vehicle_id = :v AND id != :s AND odometer IS NOT NULL
+                  UNION ALL
+                  SELECT date, odometer FROM fuel_records WHERE vehicle_id = :v'''
+    params = {'v': vehicle_id, 's': service_id, 'd': service_date}
+    earlier = db.execute(f'SELECT MAX(odometer) AS o FROM ({readings}) WHERE date < :d', params).fetchone()['o']
+    later = db.execute(f'SELECT MIN(odometer) AS o FROM ({readings}) WHERE date > :d', params).fetchone()['o']
+    if earlier is not None and odometer < earlier:
+        return (f'Saved, but check the odometer: {odometer:,} is lower than an earlier '
+                f'reading of {earlier:,}.')
+    if later is not None and odometer > later:
+        return (f'Saved, but check the odometer: {odometer:,} is higher than a later '
+                f'reading of {later:,}.')
+    return None
+
 @app.route('/api/services', methods=['POST'])
 @api_login_required
 def add_service():
-    """Add new service record"""
+    """Add new service record.
+
+    Form fields: vehicle_id, date, cost (the total bill), service_provider
+    (optional when diy is set), odometer, repairs_completed, comments, and
+    JSON lists `items` (line items) and `parts`. Files: any number under
+    `attachments` (the older single `receipt` field also works)."""
     data = request.form
-    vehicle_id = data.get('vehicle_id')
-
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
     if not vehicle_id:
-        return jsonify({'error': 'Vehicle ID is required'}), 400
+        raise ApiError('Vehicle ID is required')
+    fields = _service_fields(data)
+    items = _json_list(data, 'items')
+    parts = _json_list(data, 'parts', 'supplies')
 
-    parts = _service_parts_payload(data)
-    odometer = int(data['odometer']) if data.get('odometer') else None
-    receipt_path = save_upload('receipt', 'receipts')
+    uploads = save_uploads('receipt', 'receipts') + save_uploads('attachments', 'receipts')
     try:
         with db_session() as db:
             cursor = db.execute('''INSERT INTO service_records
-                                  (vehicle_id, date, cost, service_provider, odometer, comments, repairs_completed, receipt_path)
+                                  (vehicle_id, date, cost, service_provider, diy, odometer, comments,
+                                   repairs_completed)
                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                               (vehicle_id, data['date'], data['cost'], data['service_provider'], odometer,
-                                data.get('comments', ''), data.get('repairs_completed', ''), receipt_path))
+                               (vehicle_id, fields['date'], fields['cost'], fields['service_provider'],
+                                fields['diy'], fields['odometer'], fields['comments'],
+                                fields['repairs_completed']))
             service_id = cursor.lastrowid
+            if items:
+                sync_service_items(db, service_id, items)
             if parts:
-                sync_service_parts(db, service_id, int(vehicle_id), data['date'], odometer, parts)
+                sync_service_parts(db, service_id, vehicle_id, fields['date'], fields['odometer'], parts)
+            _add_attachments(db, service_id, uploads)
+            _sync_receipt_path(db, service_id)
+            for type_id in service_type_ids(db, service_id):
+                refresh_schedule_reminder(db, vehicle_id, type_id)
+            warning = odometer_warning(db, vehicle_id, service_id, fields['date'], fields['odometer'])
     except Exception:
-        remove_upload(receipt_path)
+        for path, _ in uploads:
+            remove_upload(path)
         raise
-    return jsonify({'success': True, 'id': service_id})
+    return jsonify({'success': True, 'id': service_id, 'warning': warning})
 
 @app.route('/api/services/<int:service_id>', methods=['PUT'])
 @api_login_required
 def update_service(service_id):
-    """Update existing service record"""
+    """Update existing service record. `items` and `parts` are left alone
+    when the form doesn't send them. A file under `receipt` replaces the
+    first attachment (the old single-receipt behaviour); files under
+    `attachments` are added; `remove_attachments` is a JSON list of
+    attachment ids to delete."""
     data = request.form
-    parts = _service_parts_payload(data)
-    odometer = int(data['odometer']) if data.get('odometer') else None
-    receipt_path = save_upload('receipt', 'receipts')
+    fields = _service_fields(data)
+    items = _json_list(data, 'items')
+    parts = _json_list(data, 'parts', 'supplies')
+    remove_ids = _json_list(data, 'remove_attachments') or []
+
+    replacement = save_uploads('receipt', 'receipts')
+    uploads = replacement + save_uploads('attachments', 'receipts')
+    removed_files = []
     try:
         with db_session() as db:
-            old = db.execute('SELECT vehicle_id, receipt_path FROM service_records WHERE id = ?',
-                             (service_id,)).fetchone()
+            old = db.execute('SELECT vehicle_id FROM service_records WHERE id = ?', (service_id,)).fetchone()
             if not old:
                 raise ApiError('Service record not found', 404)
+            vehicle_id = old['vehicle_id']
+            affected_types = service_type_ids(db, service_id)
 
-            # A new upload replaces the receipt
             db.execute('''UPDATE service_records
-                         SET date=?, cost=?, service_provider=?, odometer=?, comments=?, repairs_completed=?,
-                             receipt_path=COALESCE(?, receipt_path)
+                         SET date=?, cost=?, service_provider=?, diy=?, odometer=?, comments=?,
+                             repairs_completed=?
                          WHERE id=?''',
-                      (data['date'], data['cost'], data['service_provider'], odometer,
-                       data.get('comments', ''), data.get('repairs_completed', ''), receipt_path, service_id))
+                      (fields['date'], fields['cost'], fields['service_provider'], fields['diy'],
+                       fields['odometer'], fields['comments'], fields['repairs_completed'], service_id))
 
+            if items is not None:
+                sync_service_items(db, service_id, items)
             if parts is None:
                 # Form didn't mention parts: leave them on the service, but
                 # keep their install date and odometer in step with it
                 db.execute('UPDATE part_installs SET install_date = ?, odometer = ? WHERE service_id = ?',
-                           (data['date'], odometer, service_id))
+                           (fields['date'], fields['odometer'], service_id))
             else:
-                sync_service_parts(db, service_id, old['vehicle_id'], data['date'], odometer, parts)
+                sync_service_parts(db, service_id, vehicle_id, fields['date'], fields['odometer'], parts)
+
+            doomed = [int(i) for i in remove_ids]
+            if replacement:
+                first = db.execute('SELECT id FROM service_attachments WHERE service_id = ? ORDER BY id LIMIT 1',
+                                   (service_id,)).fetchone()
+                if first:
+                    doomed.append(first['id'])
+            for attachment_id in doomed:
+                row = db.execute('SELECT file_path FROM service_attachments WHERE id = ? AND service_id = ?',
+                                 (attachment_id, service_id)).fetchone()
+                if row:
+                    removed_files.append(row['file_path'])
+                    db.execute('DELETE FROM service_attachments WHERE id = ?', (attachment_id,))
+            _add_attachments(db, service_id, uploads)
+            _sync_receipt_path(db, service_id)
+
+            for type_id in affected_types | service_type_ids(db, service_id):
+                refresh_schedule_reminder(db, vehicle_id, type_id)
+            warning = odometer_warning(db, vehicle_id, service_id, fields['date'], fields['odometer'])
     except Exception:
-        remove_upload(receipt_path)
+        for path, _ in uploads:
+            remove_upload(path)
         raise
-    if receipt_path:
-        remove_upload(old['receipt_path'])
-    return jsonify({'success': True})
+    for path in removed_files:
+        remove_upload(path)
+    return jsonify({'success': True, 'warning': warning})
 
 @app.route('/api/services/<int:service_id>', methods=['DELETE'])
 @api_login_required
 def delete_service(service_id):
-    """Delete a service record; the parts used on it go back on the shelf"""
+    """Delete a service record; the parts used on it go back on the shelf
+    and any scheduled reminders fall back to the previous time it was done"""
+    with db_session() as db:
+        service = db.execute('SELECT vehicle_id FROM service_records WHERE id = ?', (service_id,)).fetchone()
+        files = [r['file_path'] for r in db.execute(
+            'SELECT file_path FROM service_attachments WHERE service_id = ?', (service_id,)).fetchall()]
+        affected_types = service_type_ids(db, service_id)
+        db.execute('DELETE FROM service_items WHERE service_id = ?', (service_id,))
+        db.execute('DELETE FROM service_attachments WHERE service_id = ?', (service_id,))
+        db.execute('DELETE FROM part_installs WHERE service_id = ?', (service_id,))
+        db.execute('DELETE FROM service_records WHERE id = ?', (service_id,))
+        if service:
+            for type_id in affected_types:
+                refresh_schedule_reminder(db, service['vehicle_id'], type_id)
+    for path in files:
+        remove_upload(path)
+    return jsonify({'success': True})
+
+# ── Service types and maintenance schedule ──────────────────────────────────
+
+def _interval_text(miles, months):
+    parts = []
+    if miles:
+        parts.append(f'{miles:,} miles')
+    if months:
+        parts.append(f"{months} month{'s' if months != 1 else ''}")
+    return ' or '.join(parts)
+
+def last_service_of_type(db, vehicle_id, type_id):
+    """The most recent service on a vehicle that included a service type"""
+    return db.execute('''SELECT s.id, s.date, s.odometer
+                         FROM service_items si
+                         JOIN service_records s ON s.id = si.service_id
+                         WHERE s.vehicle_id = ? AND si.service_type_id = ?
+                         ORDER BY s.date DESC, COALESCE(s.odometer, 0) DESC, s.id DESC
+                         LIMIT 1''', (vehicle_id, type_id)).fetchone()
+
+def next_due(last_date, last_odometer, interval_miles, interval_months):
+    """(due_date, due_mileage) counted from the last time a service was done"""
+    start = _parse_date(last_date)
+    due_date = add_months(start, int(interval_months)).isoformat() if interval_months and start else None
+    due_mileage = last_odometer + interval_miles if interval_miles and last_odometer is not None else None
+    return due_date, due_mileage
+
+def refresh_schedule_reminder(db, vehicle_id, type_id):
+    """Bring the automatic reminder for one vehicle's scheduled service type
+    in line with the service history: due one interval after the last time
+    it was done. Safe to call any number of times. Called whenever a service
+    with that type is added, changed or deleted, or the schedule changes.
+
+    Reminders people create by hand have no schedule_id and are never touched."""
+    schedule = db.execute('''SELECT ms.*, st.name FROM maintenance_schedules ms
+                             JOIN service_types st ON st.id = ms.service_type_id
+                             WHERE ms.vehicle_id = ? AND ms.service_type_id = ?''',
+                          (vehicle_id, type_id)).fetchone()
+    if not schedule:
+        return
+    open_ids = [r['id'] for r in db.execute(
+        'SELECT id FROM service_reminders WHERE schedule_id = ? AND completed = 0 ORDER BY id',
+        (schedule['id'],)).fetchall()]
+
+    last = last_service_of_type(db, vehicle_id, type_id)
+    due_date, due_mileage = (None, None)
+    if last:
+        due_date, due_mileage = next_due(last['date'], last['odometer'],
+                                         schedule['interval_miles'], schedule['interval_months'])
+    if due_date is None and due_mileage is None:
+        # Never logged (or nothing to count from): no baseline, no reminder
+        for reminder_id in open_ids:
+            db.execute('DELETE FROM service_reminders WHERE id = ?', (reminder_id,))
+        return
+
+    notes = (f"Scheduled every {_interval_text(schedule['interval_miles'], schedule['interval_months'])}. "
+             f"Last done {last['date']}"
+             + (f" at {last['odometer']:,} miles." if last['odometer'] is not None else '.'))
+    if open_ids:
+        db.execute('''UPDATE service_reminders SET service_type = ?, due_date = ?, due_mileage = ?, notes = ?
+                      WHERE id = ?''', (schedule['name'], due_date, due_mileage, notes, open_ids[0]))
+        for reminder_id in open_ids[1:]:
+            db.execute('DELETE FROM service_reminders WHERE id = ?', (reminder_id,))
+        return
+    # Don't bring back one the user already ticked off for this same due point
+    done = db.execute('''SELECT 1 FROM service_reminders
+                         WHERE schedule_id = ? AND completed = 1 AND due_date IS ? AND due_mileage IS ?''',
+                      (schedule['id'], due_date, due_mileage)).fetchone()
+    if not done:
+        db.execute('''INSERT INTO service_reminders
+                      (vehicle_id, service_type, due_date, due_mileage, notes, completed, schedule_id)
+                      VALUES (?, ?, ?, ?, ?, 0, ?)''',
+                   (vehicle_id, schedule['name'], due_date, due_mileage, notes, schedule['id']))
+
+@app.route('/api/service-types', methods=['GET'])
+@api_login_required
+def get_service_types():
+    """The list of service types, with how many service records use each"""
     db = get_db()
-    service = db.execute('SELECT receipt_path FROM service_records WHERE id = ?', (service_id,)).fetchone()
-    db.execute('DELETE FROM part_installs WHERE service_id = ?', (service_id,))
-    db.execute('DELETE FROM service_records WHERE id = ?', (service_id,))
-    db.commit()
+    rows = db.execute('''SELECT st.id, st.name,
+                                (SELECT COUNT(*) FROM service_items si WHERE si.service_type_id = st.id) AS uses
+                         FROM service_types st ORDER BY st.name COLLATE NOCASE''').fetchall()
     db.close()
-    if service:
-        remove_upload(service['receipt_path'])
+    return jsonify([dict(row) for row in rows])
+
+@app.route('/api/service-types', methods=['POST'])
+@api_login_required
+def add_service_type():
+    data = _payload()
+    with db_session() as db:
+        type_id = get_or_create_service_type(db, data.get('name'))
+    return jsonify({'success': True, 'id': type_id})
+
+@app.route('/api/service-types/<int:type_id>', methods=['PUT'])
+@api_login_required
+def rename_service_type(type_id):
+    name = _text(_payload(), 'name')
+    if not name:
+        raise ApiError('Service type name is required')
+    with db_session() as db:
+        if not db.execute('SELECT 1 FROM service_types WHERE id = ?', (type_id,)).fetchone():
+            raise ApiError('Service type not found', 404)
+        clash = db.execute('SELECT 1 FROM service_types WHERE name = ? COLLATE NOCASE AND id != ?',
+                           (name, type_id)).fetchone()
+        if clash:
+            raise ApiError(f'There is already a service type called {name}')
+        db.execute('UPDATE service_types SET name = ? WHERE id = ?', (name, type_id))
+        # Scheduled reminders carry the name
+        for row in db.execute('SELECT vehicle_id FROM maintenance_schedules WHERE service_type_id = ?',
+                              (type_id,)).fetchall():
+            refresh_schedule_reminder(db, row['vehicle_id'], type_id)
+    return jsonify({'success': True})
+
+@app.route('/api/service-types/<int:type_id>', methods=['DELETE'])
+@api_login_required
+def delete_service_type(type_id):
+    """Delete a service type that no service record uses"""
+    with db_session() as db:
+        uses = db.execute('SELECT COUNT(*) AS c FROM service_items WHERE service_type_id = ?',
+                          (type_id,)).fetchone()['c']
+        if uses:
+            raise ApiError(f"This type is on {uses} service record{'s' if uses != 1 else ''}. "
+                           'Rename it instead, or remove it from those records first.')
+        db.execute('''DELETE FROM service_reminders WHERE completed = 0 AND schedule_id IN
+                      (SELECT id FROM maintenance_schedules WHERE service_type_id = ?)''', (type_id,))
+        db.execute('DELETE FROM maintenance_schedules WHERE service_type_id = ?', (type_id,))
+        db.execute('DELETE FROM service_types WHERE id = ?', (type_id,))
+    return jsonify({'success': True})
+
+@app.route('/api/maintenance', methods=['GET'])
+@api_login_required
+def get_maintenance():
+    """One row per service type for a vehicle: its interval (if scheduled),
+    when it was last done, when it is next due and what it has cost."""
+    vehicle_id = request.args.get('vehicle_id', type=int)
+    if not vehicle_id:
+        raise ApiError('vehicle_id is required')
+    db = get_db()
+    types = db.execute('''SELECT st.id, st.name, ms.id AS schedule_id, ms.interval_miles, ms.interval_months,
+                                 (SELECT COUNT(*) FROM service_items si WHERE si.service_type_id = st.id) AS uses
+                          FROM service_types st
+                          LEFT JOIN maintenance_schedules ms
+                                 ON ms.service_type_id = st.id AND ms.vehicle_id = ?
+                          ORDER BY st.name COLLATE NOCASE''', (vehicle_id,)).fetchall()
+    items = db.execute(f'''SELECT si.service_type_id, si.cost AS item_cost, s.id AS service_id, s.date,
+                                  s.odometer, s.cost AS service_cost, {PARTS_COST_SQL} AS parts_cost,
+                                  (SELECT COUNT(*) FROM service_items x WHERE x.service_id = s.id) AS item_count
+                           FROM service_items si
+                           JOIN service_records s ON s.id = si.service_id
+                           WHERE s.vehicle_id = ?''', (vehicle_id,)).fetchall()
+    odometer = latest_odometer(db, vehicle_id)
+    db.close()
+
+    today = datetime.now().date()
+    result = []
+    for t in types:
+        mine = [i for i in items if i['service_type_id'] == t['id']]
+        services = {i['service_id']: i for i in mine}.values()
+        last = max(services, key=lambda i: (i['date'] or '', i['odometer'] or 0, i['service_id']), default=None)
+
+        # What this type has cost: the line item's own price where one was
+        # entered; the whole bill (plus parts) when it was the only thing
+        # done; otherwise unknown, and the total is flagged as partial
+        spent = 0
+        partial = False
+        for i in mine:
+            if i['item_cost'] is not None:
+                spent += i['item_cost']
+            elif i['item_count'] == 1:
+                spent += (i['service_cost'] or 0) + (i['parts_cost'] or 0)
+            else:
+                partial = True
+
+        row = {
+            'type_id': t['id'], 'name': t['name'], 'uses': t['uses'],
+            'schedule_id': t['schedule_id'],
+            'interval_miles': t['interval_miles'], 'interval_months': t['interval_months'],
+            'times_done': len(services),
+            'spent': round(spent, 2), 'spent_partial': partial,
+            'last_date': last['date'] if last else None,
+            'last_odometer': last['odometer'] if last else None,
+            'days_since': None, 'miles_since': None,
+            'next_due_date': None, 'next_due_mileage': None,
+            'days_remaining': None, 'miles_remaining': None, 'status': None,
+        }
+        if last:
+            last_date = _parse_date(last['date'])
+            if last_date:
+                row['days_since'] = (today - last_date).days
+            if last['odometer'] is not None and odometer is not None:
+                row['miles_since'] = odometer - last['odometer']
+            if t['schedule_id']:
+                due_date, due_mileage = next_due(last['date'], last['odometer'],
+                                                 t['interval_miles'], t['interval_months'])
+                row['next_due_date'], row['next_due_mileage'] = due_date, due_mileage
+                overdue = soon = False
+                if due_date:
+                    row['days_remaining'] = (_parse_date(due_date) - today).days
+                    overdue = overdue or row['days_remaining'] < 0
+                    soon = soon or row['days_remaining'] <= MAINTENANCE_DUE_SOON_DAYS
+                if due_mileage is not None and odometer is not None:
+                    row['miles_remaining'] = due_mileage - odometer
+                    overdue = overdue or row['miles_remaining'] < 0
+                    soon = soon or row['miles_remaining'] <= MAINTENANCE_DUE_SOON_MILES
+                if due_date or due_mileage is not None:
+                    row['status'] = 'overdue' if overdue else 'due_soon' if soon else 'ok'
+        result.append(row)
+    return jsonify({'current_odometer': odometer, 'types': result})
+
+@app.route('/api/maintenance/<int:type_id>', methods=['PUT'])
+@api_login_required
+def set_maintenance_interval(type_id):
+    """Set how often a service type is due on one vehicle: `interval_miles`
+    and/or `interval_months`. Leaving both blank removes the schedule (and
+    its automatic reminder)."""
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
+    if not vehicle_id:
+        raise ApiError('vehicle_id is required')
+    miles = _number(data, 'interval_miles', 'Miles', integer=True) or None
+    months = _number(data, 'interval_months', 'Months', integer=True) or None
+    with db_session() as db:
+        if not db.execute('SELECT 1 FROM service_types WHERE id = ?', (type_id,)).fetchone():
+            raise ApiError('Service type not found', 404)
+        if not db.execute('SELECT 1 FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone():
+            raise ApiError('Vehicle not found', 404)
+        existing = db.execute('SELECT id FROM maintenance_schedules WHERE vehicle_id = ? AND service_type_id = ?',
+                              (vehicle_id, type_id)).fetchone()
+        if not miles and not months:
+            if existing:
+                db.execute('DELETE FROM service_reminders WHERE schedule_id = ? AND completed = 0',
+                           (existing['id'],))
+                db.execute('DELETE FROM maintenance_schedules WHERE id = ?', (existing['id'],))
+        else:
+            if existing:
+                db.execute('UPDATE maintenance_schedules SET interval_miles = ?, interval_months = ? WHERE id = ?',
+                           (miles, months, existing['id']))
+            else:
+                db.execute('''INSERT INTO maintenance_schedules
+                              (vehicle_id, service_type_id, interval_miles, interval_months)
+                              VALUES (?, ?, ?, ?)''', (vehicle_id, type_id, miles, months))
+            refresh_schedule_reminder(db, vehicle_id, type_id)
     return jsonify({'success': True})
 
 # CSV Export/Import endpoints for services
+SERVICE_CSV_COLUMNS = ['date', 'service_provider', 'odometer', 'cost', 'service_types', 'diy',
+                       'repairs_completed', 'comments']
+
 @app.route('/api/services/export-csv', methods=['GET'])
 @api_login_required
 def export_services_csv():
-    """Export service records to CSV"""
+    """Export service records to CSV. The file can be imported back in;
+    `supplies_cost` is informational and ignored on import."""
     vehicle_id = request.args.get('vehicle_id')
-    query = f'''SELECT s.date, s.service_provider, s.odometer, s.cost,
-                       {PARTS_COST_SQL} AS supplies_cost, s.repairs_completed, s.comments
-                FROM service_records s'''
+    query = SERVICE_SELECT
     params = ()
     if vehicle_id:
         query += ' WHERE s.vehicle_id = ?'
         params = (vehicle_id,)
     db = get_db()
-    services = db.execute(query + ' ORDER BY s.date DESC', params).fetchall()
+    services = db.execute(query + ' ORDER BY s.date DESC, s.id DESC', params).fetchall()
     db.close()
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['date', 'service_provider', 'odometer', 'cost', 'supplies_cost',
-                     'repairs_completed', 'comments'])
+    writer.writerow(SERVICE_CSV_COLUMNS + ['supplies_cost'])
     for service in services:
         writer.writerow([
             service['date'] or '',
             service['service_provider'] or '',
             service['odometer'] or '',
             service['cost'] or 0,
-            service['supplies_cost'] or 0,
+            (service['service_types'] or '').replace(', ', '; '),
+            'yes' if service['diy'] else '',
             service['repairs_completed'] or '',
-            service['comments'] or ''
+            service['comments'] or '',
+            service['supplies_cost'] or 0
         ])
 
     response = make_response(output.getvalue())
@@ -1803,12 +2334,11 @@ def download_services_template():
     """Download a CSV template for importing service records"""
     output = io.StringIO()
     writer = csv.writer(output)
-
-    # Write header
-    writer.writerow(['date', 'service_provider', 'odometer', 'cost', 'repairs_completed', 'comments'])
-
-    # Write example row
-    writer.writerow(['2024-01-15', 'Auto Shop', '50000', '150.00', 'Oil change, tire rotation', 'Regular maintenance'])
+    writer.writerow(SERVICE_CSV_COLUMNS)
+    # service_types: separate several with semicolons; new names are added
+    writer.writerow(['2024-01-15', 'Auto Shop', '50000', '150.00', 'Oil change; Tire rotation', '',
+                     'Synthetic 5W-30', 'Regular maintenance'])
+    writer.writerow(['2024-03-02', '', '52100', '0', 'Wiper blades', 'yes', '', 'Did it myself'])
 
     output.seek(0)
     response = make_response(output.getvalue())
@@ -1819,7 +2349,9 @@ def download_services_template():
 @app.route('/api/services/import-csv', methods=['POST'])
 @api_login_required
 def import_services_csv():
-    """Import service records from CSV"""
+    """Import service records from CSV. Rows that match a record already
+    there (same date, provider, cost and odometer) are skipped, so importing
+    the same file twice doesn't duplicate anything."""
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
 
@@ -1832,61 +2364,70 @@ def import_services_csv():
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
     try:
-        # Read CSV file
-        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        # utf-8-sig drops the byte-order mark Excel puts at the start
+        stream = io.StringIO(file.stream.read().decode('utf-8-sig'), newline=None)
         csv_reader = csv.DictReader(stream)
 
         db = get_db()
         imported_count = 0
+        skipped_count = 0
         errors = []
+        affected_types = set()
 
         for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 because of header
             try:
-                # Validate required fields
-                if not row.get('date') or not row.get('service_provider'):
+                row = {(k or '').strip(): (v or '').strip() for k, v in row.items()}
+                diy = row.get('diy', '').lower() in ('yes', 'y', 'true', '1')
+                provider = row.get('service_provider') or ('Self' if diy else '')
+                if not row.get('date') or not provider:
                     errors.append(f"Row {row_num}: Missing required fields (date or service_provider)")
                     continue
-
-                # Parse and validate date
-                try:
-                    datetime.strptime(row['date'], '%Y-%m-%d')
-                except ValueError:
+                if _parse_date(row['date']) is None:
                     errors.append(f"Row {row_num}: Invalid date format (use YYYY-MM-DD)")
                     continue
+                odometer = int(float(row['odometer'])) if row.get('odometer') else None
+                cost = float(row.get('cost') or 0)
 
-                # Insert service record
+                duplicate = db.execute('''SELECT 1 FROM service_records
+                                          WHERE vehicle_id = ? AND date = ? AND service_provider = ?
+                                            AND ABS(cost - ?) < 0.005 AND odometer IS ?''',
+                                       (vehicle_id, row['date'], provider, cost, odometer)).fetchone()
+                if duplicate:
+                    skipped_count += 1
+                    continue
+
                 cursor = db.execute('''
                     INSERT INTO service_records
-                    (vehicle_id, date, service_provider, odometer, cost, repairs_completed, comments)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    vehicle_id,
-                    row['date'],
-                    row['service_provider'],
-                    int(row['odometer']) if row.get('odometer') and row['odometer'].strip() else None,
-                    float(row.get('cost', 0) or 0),
-                    row.get('repairs_completed', ''),
-                    row.get('comments', '')
-                ))
+                    (vehicle_id, date, service_provider, diy, odometer, cost, repairs_completed, comments)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (vehicle_id, row['date'], provider, 1 if diy else 0, odometer, cost,
+                      row.get('repairs_completed', ''), row.get('comments', '')))
+                for name in filter(None, (n.strip() for n in row.get('service_types', '').split(';'))):
+                    type_id = get_or_create_service_type(db, name)
+                    db.execute('INSERT INTO service_items (service_id, service_type_id) VALUES (?, ?)',
+                               (cursor.lastrowid, type_id))
+                    affected_types.add(type_id)
                 imported_count += 1
 
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
 
+        for type_id in affected_types:
+            refresh_schedule_reminder(db, int(vehicle_id), type_id)
         db.commit()
         db.close()
 
-        response = {
+        return jsonify({
             'success': True,
             'imported': imported_count,
+            'skipped': skipped_count,
             'errors': errors
-        }
-
-        return jsonify(response)
+        })
 
     except Exception as e:
         return jsonify({'error': f'Failed to import CSV: {str(e)}'}), 400
 
+# Parts endpoints
 def latest_odometer(db, vehicle_id):
     """Latest known odometer for a vehicle, from service or fuel records"""
     row = db.execute('''
@@ -3210,15 +3751,16 @@ def global_search():
     results = {}
 
     # Service records
-    base = 'FROM service_records WHERE (LOWER(service_provider) LIKE ? OR LOWER(repairs_completed) LIKE ? OR LOWER(comments) LIKE ?)'
-    params = (like, like, like)
+    where = 'WHERE ' + SERVICE_TEXT_MATCH
+    service_params = {'q': like.lower()}
     if vehicle_id:
-        base += ' AND vehicle_id = ?'
-        params += (vehicle_id,)
-    rows = db.execute(f'SELECT id, date, service_provider, repairs_completed, cost {base} ORDER BY date DESC LIMIT 10', params).fetchall()
+        where += ' AND s.vehicle_id = :vehicle_id'
+        service_params['vehicle_id'] = vehicle_id
+    rows = db.execute(f'{SERVICE_SELECT} {where} ORDER BY s.date DESC LIMIT 10', service_params).fetchall()
     if rows:
         results['services'] = [{'id': r['id'], 'date': r['date'], 'label': r['service_provider'],
-                                 'sub': r['repairs_completed'] or '', 'cost': r['cost']} for r in rows]
+                                 'sub': r['service_types'] or r['repairs_completed'] or '',
+                                 'cost': r['cost']} for r in rows]
 
     # Fuel records
     base = 'FROM fuel_records WHERE LOWER(station) LIKE ?'

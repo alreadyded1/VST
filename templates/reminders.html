@@ -115,7 +115,7 @@ function displayActiveReminders(reminders) {
         html += `
             <div class="${className}">
                 <div class="reminder-header">
-                    <span class="reminder-title">${escapeHtml(reminder.service_type)}</span>
+                    <span class="reminder-title">${escapeHtml(reminder.service_type)}${scheduledTag(reminder)}</span>
                     <div class="flex gap-1">
                         ${isOverdue ? '<span style="color: var(--danger-color); font-weight: bold; margin-right: 10px;">OVERDUE</span>' : ''}
                         <button class="btn btn-small btn-success" onclick="markComplete(${reminder.id})">Mark Complete</button>
@@ -132,6 +132,14 @@ function displayActiveReminders(reminders) {
     container.innerHTML = html;
 }
 
+// Reminders kept up to date from the maintenance schedule (Service Records
+// page) are marked, so it's clear why they move on their own
+function scheduledTag(reminder) {
+    return reminder.schedule_id
+        ? ' <span title="Kept up to date from the maintenance schedule; moves forward each time this work is logged" style="font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--accent-light); color: var(--accent); vertical-align: middle;">Scheduled</span>'
+        : '';
+}
+
 function displayCompletedReminders(reminders) {
     const container = document.getElementById('completedReminders');
 
@@ -146,7 +154,7 @@ function displayCompletedReminders(reminders) {
         html += `
             <div class="reminder-item completed">
                 <div class="reminder-header">
-                    <span class="reminder-title">${escapeHtml(reminder.service_type)}</span>
+                    <span class="reminder-title">${escapeHtml(reminder.service_type)}${scheduledTag(reminder)}</span>
                     <div class="flex gap-1">
                         <button class="btn btn-small btn-secondary" onclick="markIncomplete(${reminder.id})">Mark Incomplete</button>
                         <button class="btn btn-small btn-danger" onclick="deleteReminder(${reminder.id})">Delete</button>
