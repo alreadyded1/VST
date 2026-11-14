@@ -24,11 +24,13 @@ A comprehensive web-based vehicle maintenance tracking application designed for 
 - Sortable table columns
 - Search functionality
 
-✅ **Supplies Inventory**
-- Track inventory items with cost and quantity
-- Support for various unit types (quarts, gallons, liters, etc.)
-- Automatic inventory deduction when used in services
-- Edit and update supply quantities
+✅ **Parts & Warranties**
+- One parts shelf shared by every vehicle
+- Each purchase records quantity, cost per unit, supplier, receipt and warranty terms (months, miles or lifetime)
+- Stock is worked out for you: what you bought minus what you installed, oldest stock used first
+- Using a part on a service record installs it on that vehicle and starts its warranty (or the warranty can start at purchase)
+- Warranties page lists what is covered, expiring soon or expired, per vehicle or across all of them
+- Optional re-order reminder when stock falls to a level you choose
 
 ✅ **Fuel Tracking**
 - Record fill-ups with location
@@ -424,6 +426,12 @@ For issues, questions, or feature requests:
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 3.0.0
+- **Parts & Warranties rebuilt** around three records: parts, purchases and installs. The "track individual units" switch is gone; stock, service cost and warranty status are all calculated
+- Parts are now one shelf shared by all vehicles
+- Existing supplies are converted automatically the first time the new version starts. The old `supplies`, `supply_units` and `service_supplies` tables are left in the database, unused, as a backup
+- API: `/api/supplies` and `/api/supply-units` are replaced by `/api/parts`, `/api/part-purchases`, `/api/part-installs` and `/api/warranties`. Service records accept a `parts` list (the old `supplies` list of `{id, quantity}` still works)
 
 ### Version 2.0.0 (Latest)
 - **Multiple vehicle support** - Manage unlimited vehicles in one application

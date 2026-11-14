@@ -333,7 +333,7 @@
         </button>
         <button class="btn-csv" onclick="exportCSV('supplies')">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Supplies CSV
+            Parts CSV
         </button>
         <button class="btn-print" onclick="window.print()">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
@@ -385,7 +385,7 @@
         <!-- Supplies -->
         <div class="section">
             <div class="section-title">
-                Parts & Supplies
+                Parts Installed
                 <span class="section-count" id="suppliesCount">0</span>
             </div>
             <div id="suppliesSection"><div class="loading-msg">Loading...</div></div>
@@ -465,7 +465,7 @@ async function loadStats() {
         { label: 'Total Spent', value: '$' + Number(s.total_spent).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) },
         { label: 'Avg Fuel Economy', value: s.avg_mpg ? s.avg_mpg + ' MPG' : '—' },
         { label: 'Fuel Records', value: fuelRows },
-        { label: 'Parts & Supplies', value: suppliesRows },
+        { label: 'Parts Installed', value: suppliesRows },
         { label: 'Pending Reminders', value: s.pending_reminders }
     ];
 
@@ -545,34 +545,49 @@ async function loadFuel() {
 }
 
 async function loadSupplies() {
-    const res = await fetch(`/api/supplies?vehicle_id=${currentVehicleId}`);
-    const supplies = await res.json();
-    document.getElementById('suppliesCount').textContent = supplies.length;
+    // Parts fitted to this vehicle, with where each warranty stands
+    const res = await fetch('/api/parts');
+    const installs = (await res.json())
+        .flatMap(part => part.installs)
+        .filter(i => i.vehicle_id === Number(currentVehicleId))
+        .sort((a, b) => (b.install_date || '').localeCompare(a.install_date || ''));
+    document.getElementById('suppliesCount').textContent = installs.length;
 
-    if (!supplies.length) {
-        document.getElementById('suppliesSection').innerHTML = '<div class="empty-msg">No supplies found.</div>';
+    if (!installs.length) {
+        document.getElementById('suppliesSection').innerHTML = '<div class="empty-msg">No parts installed on this vehicle.</div>';
         return;
     }
 
-    const rows = supplies.map(s => `
+    const warrantyText = i => {
+        if (i.removed_date) return `Removed ${i.removed_date}`;
+        const w = i.warranty;
+        if (!w) return '';
+        if (w.status === 'lifetime') return 'Lifetime';
+        const until = [];
+        if (w.expires_on) until.push(w.expires_on);
+        if (w.expires_at_mileage !== null) until.push(`${w.expires_at_mileage.toLocaleString()} mi`);
+        return (w.status === 'expired' ? 'Expired' : 'Covered') + (until.length ? ` (${until.join(' / ')})` : '');
+    };
+
+    const rows = installs.map(i => `
         <tr>
-            <td>${esc(s.name || '')}</td>
-            <td>${esc(s.brand || '')}</td>
-            <td>${esc(s.part_number || '')}</td>
-            <td>${esc(s.category || '')}</td>
-            <td>${s.quantity}</td>
-            <td>$${Number(s.cost || 0).toFixed(2)}</td>
-            <td>${esc(s.condition || '')}</td>
-            <td>${esc(s.location || '')}</td>
+            <td>${esc(i.part_name || '')}</td>
+            <td>${esc(i.brand || '')}</td>
+            <td>${esc(i.part_number || '')}</td>
+            <td>${i.install_date || ''}</td>
+            <td>${i.odometer ? Number(i.odometer).toLocaleString() : '—'}</td>
+            <td>${i.quantity}</td>
+            <td>$${Number(i.unit_cost || 0).toFixed(2)}</td>
+            <td>${esc(warrantyText(i))}</td>
         </tr>
     `).join('');
 
     document.getElementById('suppliesSection').innerHTML = `
         <table>
             <thead><tr>
-                <th>Name</th><th>Brand</th><th>Part #</th>
-                <th>Category</th><th>Qty</th><th>Cost</th>
-                <th>Condition</th><th>Location</th>
+                <th>Part</th><th>Brand</th><th>Part #</th>
+                <th>Installed</th><th>Odometer</th><th>Qty</th>
+                <th>Cost Each</th><th>Warranty</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>
@@ -615,7 +630,7 @@ function exportCSV(type) {
     const urls = {
         services: `/api/services/export-csv?vehicle_id=${currentVehicleId}`,
         fuel: `/api/fuel/export-csv?vehicle_id=${currentVehicleId}`,
-        supplies: `/api/supplies/export-csv?vehicle_id=${currentVehicleId}`
+        supplies: '/api/parts/export-csv'
     };
     window.location.href = urls[type];
 }

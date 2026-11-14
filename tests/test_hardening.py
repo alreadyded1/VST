@@ -110,8 +110,8 @@ def test_avg_mpg_is_weighted_by_gallons(client, vehicle_id):
 
 def test_vehicles_summary(client, vehicle_id):
     other = client.post('/api/vehicle', data={'manufacturer': 'Ford', 'model': 'F150', 'year': 2018}).get_json()['id']
-    supply_id = client.post('/api/supplies', data={'vehicle_id': vehicle_id, 'name': 'Oil', 'cost': '5',
-                                                   'quantity': '10'}).get_json()['id']
+    supply_id = client.post('/api/parts', data={'name': 'Oil', 'unit_cost': '5',
+                                                'quantity': '10'}).get_json()['id']
     client.post('/api/services', data={'vehicle_id': vehicle_id, 'date': '2024-03-01', 'cost': '100',
                                        'service_provider': 'Shop', 'odometer': '1500',
                                        'supplies': '[{"id": %d, "quantity": 2}]' % supply_id})
@@ -128,7 +128,7 @@ def test_vehicles_summary(client, vehicle_id):
     assert s['last_fuel'] == '2024-01-08'
     assert s['current_odometer'] == 1500
     assert s['avg_mpg'] == 30
-    assert s['total_service_cost'] == 160      # 100 + 2*5 supplies + 50
+    assert s['total_service_cost'] == 160      # 100 + 2*5 parts + 50
     assert s['ytd_service_cost'] == 110
     assert s['total_fuel_cost'] == 60
     assert s['ytd_fuel_cost'] == 60
