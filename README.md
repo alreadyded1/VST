@@ -15,14 +15,20 @@ A comprehensive web-based vehicle maintenance tracking application designed for 
 - All data automatically filtered by selected vehicle
 
 ✅ **Service Record Tracking**
-- Track date, cost, service provider
-- Edit existing service records
-- Record repairs completed and comments
-- Upload and store service receipts (PDF/images)
-- Link supplies used to service records
-- Automatic cost calculation including supplies
-- Sortable table columns
-- Search functionality
+- Track date, total bill, service provider (or mark it as done yourself) and odometer
+- List the work done as line items picked from a list of service types you can add to; a price per line is optional
+- Attach several receipts or photos to one record
+- Use parts from the shelf; their cost is added to the bill automatically
+- Filter by type of work, provider and date range, with a running total
+- Duplicate a record to log routine work quickly
+- Warns when an odometer reading is out of step with earlier or later records
+- CSV import (skips rows already imported) and export
+
+✅ **Maintenance Schedule**
+- Give any type of work an interval per vehicle: miles, months or both
+- A reminder is kept up to date automatically and moves forward each time that work is logged
+- See, per type of work: last done, miles and days since, next due, times done and what it has cost
+- Reminders you add by hand work alongside and are never changed
 
 ✅ **Parts & Warranties**
 - One parts shelf shared by every vehicle
@@ -426,6 +432,14 @@ For issues, questions, or feature requests:
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 3.1.0
+- **Service line items**: list the work done on each record from a list of service types (a starter list is included; add your own). Line prices are optional and only break down the total bill
+- **Maintenance schedule**: per-vehicle intervals for any type of work, with automatic reminders that follow the service history. Manual reminders are unchanged
+- **History by type of work**: last done, next due, times done and spend
+- **Do-it-yourself flag**, **multiple attachments** per record, **filters with totals**, **duplicate a record**, **odometer check**
+- CSV import skips rows already there and reads a `service_types` column; missing fields now give a clear message
+- Existing records are untouched: the old free-text "repairs completed" stays as the record's details, and each existing receipt becomes its first attachment
 
 ### Version 3.0.0
 - **Parts & Warranties rebuilt** around three records: parts, purchases and installs. The "track individual units" switch is gone; stock, service cost and warranty status are all calculated

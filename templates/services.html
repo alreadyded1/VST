@@ -7,135 +7,171 @@
 
 <style>
 /* Ensure containers don't clip dropdown menus */
-.card {
-    overflow: visible !important;
-}
+.card { overflow: visible !important; }
+.table-container { overflow-x: auto; overflow-y: visible !important; }
 
-.table-container {
-    overflow-x: auto;
-    overflow-y: visible !important;
+.page-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border-color); margin-bottom: 1rem; }
+.page-tab {
+    background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+    padding: 0.6rem 1rem; font: inherit; font-weight: 600; color: var(--light-text);
 }
+.page-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* Hamburger menu styles */
-.action-menu {
-    position: static;
+.pill {
+    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 600; white-space: nowrap;
 }
+.pill-ok { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.pill-warn { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.pill-bad { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.pill-muted { background: var(--light-bg); color: var(--light-text); }
+.sub { display: block; font-size: 0.8rem; color: var(--light-text); }
+.hint { color: var(--light-text); font-size: 0.8rem; }
 
-.menu-button {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    color: var(--dark-text);
+.filter-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto; gap: 0.5rem; align-items: end; margin-bottom: 0.5rem; }
+.filter-row label { font-size: 0.75rem; color: var(--light-text); margin-bottom: 0.15rem; display: block; }
+.filter-row input, .filter-row select {
+    width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border-color); border-radius: 8px;
+    font: inherit; font-size: 0.9rem; background: var(--card-bg); color: var(--dark-text); margin: 0;
 }
+.filter-summary { font-size: 0.9rem; color: var(--light-text); margin-bottom: 0.75rem; }
+.filter-summary strong { color: var(--dark-text); }
+@media (max-width: 900px) { .filter-row { grid-template-columns: 1fr 1fr; } }
 
-.menu-button:hover {
-    color: var(--secondary-color);
-}
-
+.action-menu { position: static; }
+.menu-button { background: none; border: none; font-size: 1.5rem; cursor: pointer; padding: 0.25rem 0.5rem; color: var(--dark-text); }
+.menu-button:hover { color: var(--secondary-color); }
 .menu-dropdown {
-    display: none;
-    position: fixed;
-    background-color: white;
-    min-width: 150px;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-    border-radius: 5px;
-    z-index: 9999;
-    overflow: hidden;
+    display: none; position: fixed; background-color: white; min-width: 150px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2); border-radius: 5px; z-index: 9999; overflow: hidden;
 }
-
-.menu-dropdown.show {
-    display: block;
-}
-
+.menu-dropdown.show { display: block; }
 .menu-dropdown button {
-    display: block;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    border: none;
-    background: none;
-    text-align: left;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: background-color 0.2s;
-    color: var(--dark-text);
+    display: block; width: 100%; padding: 0.75rem 1rem; border: none; background: none;
+    text-align: left; cursor: pointer; font-size: 0.9rem; color: var(--dark-text);
 }
+.menu-dropdown button:hover { background-color: var(--light-bg); }
+.menu-dropdown button.danger { color: var(--danger-color); }
+.menu-dropdown button.danger:hover { background-color: #fee; }
 
-.menu-dropdown button:hover {
-    background-color: var(--light-bg);
-}
+#servicesTable th:first-child, #servicesTable td:first-child { min-width: 120px; }
+#viewServiceModal .form-group label { font-weight: bold; }
 
-.menu-dropdown button.danger {
-    color: var(--danger-color);
-}
-
-.menu-dropdown button.danger:hover {
-    background-color: #fee;
-}
-
-/* Date column width */
-#servicesTable th:first-child,
-#servicesTable td:first-child {
-    min-width: 130px;
-}
-
-/* View modal label styling */
-#viewServiceModal .form-group label {
-    font-weight: bold;
-}
+.picker-row { display: grid; gap: 10px; align-items: end; }
+.picker-row label { font-size: 0.9rem; margin-bottom: 0.25rem; }
+.picked-list { background: #f8f9fa; padding: 0.5rem 1rem; border-radius: 5px; border: 1px solid var(--border-color); margin-top: 0.75rem; }
+.picked-line { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color); }
+.picked-line:last-child { border-bottom: none; }
+.check-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+.check-label input { width: auto; margin: 0; }
 </style>
 
 <div class="card">
-    <div class="flex-between mb-2">
-        <h2>Service History</h2>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <div class="hide-mobile" style="display: flex; gap: 0.5rem;">
-                <button class="btn btn-secondary" onclick="downloadTemplate()">Download CSV Template</button>
-                <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
-                <input type="file" id="csvFileInput" accept=".csv" style="display: none;" onchange="importCSV(event)">
-                <button class="btn btn-secondary" onclick="exportCSV()">Export CSV</button>
+    <div class="page-tabs" role="tablist">
+        <button class="page-tab active" id="tabHistory" role="tab" onclick="showTab('history')">Service History</button>
+        <button class="page-tab" id="tabSchedule" role="tab" onclick="showTab('schedule')">Maintenance Schedule</button>
+    </div>
+
+    <!-- History -->
+    <div id="historyPanel">
+        <div class="flex-between mb-2">
+            <h2>Service History</h2>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <div class="hide-mobile" style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-secondary" onclick="downloadTemplate()">Download CSV Template</button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
+                    <input type="file" id="csvFileInput" accept=".csv" style="display: none;" onchange="importCSV(event)">
+                    <button class="btn btn-secondary" onclick="exportCSV()">Export CSV</button>
+                </div>
+                <button class="btn btn-primary" onclick="openAddServiceModal()">Add Service Record</button>
             </div>
-            <button class="btn btn-primary" onclick="openAddServiceModal()">Add Service Record</button>
+        </div>
+
+        <div class="filter-row">
+            <div>
+                <label for="searchInput">Search</label>
+                <input type="text" id="searchInput" class="search-input" placeholder="Work done, provider, notes..." oninput="applyFiltersDebounced()">
+            </div>
+            <div>
+                <label for="filterType">Type of work</label>
+                <select id="filterType" onchange="applyFilters()"><option value="">All</option></select>
+            </div>
+            <div>
+                <label for="filterProvider">Provider</label>
+                <select id="filterProvider" onchange="applyFilters()"><option value="">All</option></select>
+            </div>
+            <div>
+                <label for="filterFrom">From</label>
+                <input type="date" id="filterFrom" onchange="applyFilters()">
+            </div>
+            <div>
+                <label for="filterTo">To</label>
+                <input type="date" id="filterTo" onchange="applyFilters()">
+            </div>
+            <button class="btn btn-secondary" onclick="clearFilters()">Clear</button>
+        </div>
+        <div class="filter-summary" id="filterSummary"></div>
+
+        <!-- Mobile Cards View -->
+        <div class="mobile-cards" id="servicesMobileCards">
+            <p class="text-center">Loading...</p>
+        </div>
+
+        <!-- Desktop Table View -->
+        <div class="table-container has-mobile-cards">
+            <table id="servicesTable">
+                <thead>
+                    <tr>
+                        <th class="sortable">Date</th>
+                        <th>Work Done</th>
+                        <th class="sortable">Provider</th>
+                        <th class="sortable">Odometer</th>
+                        <th class="sortable">Total Cost</th>
+                        <th>Files</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="servicesTableBody">
+                    <tr>
+                        <td colspan="7" class="text-center">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div id="paginationControls"></div>
+    </div>
+
+    <!-- Maintenance schedule -->
+    <div id="schedulePanel" style="display: none;">
+        <div class="flex-between mb-2">
+            <h2>Maintenance Schedule</h2>
+            <button class="btn btn-primary" onclick="addServiceType()">Add Service Type</button>
+        </div>
+        <p class="hint mb-2">Give a type of work an interval and a reminder is kept up to date for you: each time you log that work, the reminder moves to the next due date or mileage. Intervals are set per vehicle. <span id="scheduleOdometer"></span></p>
+
+        <div class="mobile-cards" id="scheduleMobileCards"></div>
+        <div class="table-container has-mobile-cards">
+            <table id="scheduleTable">
+                <thead>
+                    <tr>
+                        <th>Type of Work</th>
+                        <th>Interval</th>
+                        <th>Last Done</th>
+                        <th>Next Due</th>
+                        <th>Times</th>
+                        <th>Spent</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="scheduleTableBody"></tbody>
+            </table>
         </div>
     </div>
-
-    <div class="search-container">
-        <input type="text" id="searchInput" class="search-input" placeholder="Search services by provider, comments, or repairs..." onkeyup="searchServicesDebounced()">
-    </div>
-
-    <!-- Mobile Cards View -->
-    <div class="mobile-cards" id="servicesMobileCards">
-        <p class="text-center">Loading...</p>
-    </div>
-
-    <!-- Desktop Table View -->
-    <div class="table-container has-mobile-cards">
-        <table id="servicesTable">
-            <thead>
-                <tr>
-                    <th class="sortable">Date</th>
-                    <th class="sortable">Service Provider</th>
-                    <th class="sortable">Odometer</th>
-                    <th class="sortable">Total Cost</th>
-                    <th>Repairs Completed</th>
-                    <th>Receipt</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody id="servicesTableBody">
-                <tr>
-                    <td colspan="7" class="text-center">Loading...</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Pagination Controls -->
-    <div id="paginationControls"></div>
 </div>
 
-<!-- Add Service Modal -->
+<!-- Add / edit service -->
 <div id="addServiceModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
@@ -149,58 +185,86 @@
                     <input type="date" id="serviceDate" name="date" required>
                 </div>
                 <div class="form-group">
-                    <label for="serviceCost">Cost *</label>
-                    <input type="number" id="serviceCost" name="cost" step="0.01" min="0" required>
+                    <label for="serviceCost">Total Bill *</label>
+                    <input type="number" id="serviceCost" name="cost" step="0.01" min="0" required oninput="updateItemsList()">
                 </div>
                 <div class="form-group">
                     <label for="serviceOdometer">Odometer</label>
                     <input type="number" id="serviceOdometer" name="odometer" min="0" step="1" placeholder="Miles">
                 </div>
             </div>
+            <p class="hint" style="margin: -0.5rem 0 1rem;">The total bill is what you paid. Parts taken from your own shelf (below) are added on top automatically.</p>
 
             <div class="form-group">
-                <label for="serviceProvider">Service Provider *</label>
-                <input type="text" id="serviceProvider" name="service_provider" required>
+                <label class="check-label">
+                    <input type="checkbox" id="serviceDiy" name="diy" onchange="toggleDiy()">
+                    <span>I did this myself</span>
+                </label>
             </div>
 
             <div class="form-group">
-                <label for="repairsCompleted">Repairs Completed</label>
-                <textarea id="repairsCompleted" name="repairs_completed" rows="3"></textarea>
+                <label for="serviceProvider" id="serviceProviderLabel">Service Provider *</label>
+                <input type="text" id="serviceProvider" name="service_provider" list="providerOptions" required>
+                <datalist id="providerOptions"></datalist>
+            </div>
+
+            <div class="form-group">
+                <label>Work Done</label>
+                <div class="picker-row" style="grid-template-columns: 1fr 130px auto;">
+                    <div>
+                        <label for="itemType">Type of work</label>
+                        <select id="itemType" onchange="handleItemTypeChange()"></select>
+                    </div>
+                    <div>
+                        <label for="itemCost">Price (optional)</label>
+                        <input type="number" id="itemCost" step="0.01" min="0" placeholder="—">
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="addItemToList()" style="padding: 0.5rem 1rem;">Add</button>
+                </div>
+                <small class="hint">List everything that was done. Prices are optional and only break down the bill; they aren't added to it.</small>
+                <div id="itemsListContainer" style="display: none;">
+                    <div id="itemsList" class="picked-list"></div>
+                    <div class="hint" id="itemsSummary" style="text-align: right; margin-top: 0.25rem;"></div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="repairsCompleted">Details</label>
+                <textarea id="repairsCompleted" name="repairs_completed" rows="2" placeholder="Anything worth noting about the work, e.g. oil grade, pad brand"></textarea>
             </div>
 
             <div class="form-group">
                 <label for="serviceComments">Comments</label>
-                <textarea id="serviceComments" name="comments" rows="3"></textarea>
+                <textarea id="serviceComments" name="comments" rows="2"></textarea>
             </div>
 
             <div class="form-group">
-                <label for="serviceReceipt">Receipt</label>
-                <input type="file" id="serviceReceipt" name="receipt" accept="image/*,.pdf" onchange="handleFilePreview(this, 'receiptPreview')">
-                <div id="receiptPreview" class="file-preview"></div>
+                <label for="serviceAttachments">Receipts &amp; Photos</label>
+                <input type="file" id="serviceAttachments" name="attachments" accept="image/*,.pdf" multiple>
+                <small class="hint">You can pick several files at once.</small>
+                <div id="existingAttachments"></div>
             </div>
 
             <div class="form-group">
                 <label>Parts Used</label>
-                <div style="margin-bottom: 1rem;">
-                    <div style="display: grid; grid-template-columns: 1fr 110px auto; gap: 10px; align-items: end;">
-                        <div>
-                            <label for="partSelect" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Part</label>
-                            <select id="partSelect" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
-                                <option value="">-- Select a part --</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="partQuantity" style="font-size: 0.9rem; margin-bottom: 0.25rem;">Quantity</label>
-                            <input type="number" id="partQuantity" min="0" step="any" value="1" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 5px; font-family: var(--font-family);">
-                        </div>
-                        <button type="button" class="btn btn-secondary" onclick="addPartToList()" style="padding: 0.5rem 1rem;">Add</button>
+                <div class="picker-row" style="grid-template-columns: 1fr 110px auto;">
+                    <div>
+                        <label for="partSelect">Part</label>
+                        <select id="partSelect">
+                            <option value="">-- Select a part --</option>
+                        </select>
                     </div>
-                    <small style="color: var(--light-text);">Taken from the oldest stock first. Any warranty starts on this service's date and odometer.</small>
+                    <div>
+                        <label for="partQuantity">Quantity</label>
+                        <input type="number" id="partQuantity" min="0" step="any" value="1">
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="addPartToList()" style="padding: 0.5rem 1rem;">Add</button>
                 </div>
+                <small class="hint">Taken from the oldest stock first. Any warranty starts on this service's date and odometer.</small>
 
-                <div id="partsListContainer" style="display: none; margin-top: 1rem;">
-                    <div id="partsList" style="background: #f8f9fa; padding: 1rem; border-radius: 5px; border: 1px solid var(--border-color);"></div>
-                    <div style="margin-top: 0.5rem; text-align: right; font-weight: bold; font-size: 1.1rem;">
+                <div id="partsListContainer" style="display: none;">
+                    <div id="partsList" class="picked-list"></div>
+                    <div style="margin-top: 0.5rem; text-align: right; font-weight: bold;">
                         Total Parts Cost: <span id="totalPartsCost">$0.00</span>
                     </div>
                 </div>
@@ -211,7 +275,7 @@
     </div>
 </div>
 
-<!-- View Service Modal -->
+<!-- View service -->
 <div id="viewServiceModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
@@ -225,23 +289,22 @@
                     <p id="viewDate" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
                 </div>
                 <div class="form-group">
-                    <label>Cost</label>
-                    <p id="viewCost" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
-                </div>
-                <div class="form-group">
                     <label>Odometer</label>
                     <p id="viewOdometer" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
                 </div>
-            </div>
-
-            <div class="form-group">
-                <label>Service Provider</label>
-                <p id="viewProvider" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                <div class="form-group">
+                    <label>Service Provider</label>
+                    <p id="viewProvider" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                </div>
             </div>
 
             <div class="form-row">
                 <div class="form-group">
-                    <label>Parts Cost</label>
+                    <label>Bill</label>
+                    <p id="viewCost" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
+                </div>
+                <div class="form-group">
+                    <label>Parts From Shelf</label>
                     <p id="viewSuppliesCost" style="font-size: 1.1rem; margin: 0.5rem 0;"></p>
                 </div>
                 <div class="form-group">
@@ -251,12 +314,17 @@
             </div>
 
             <div class="form-group">
+                <label>Work Done</label>
+                <div id="viewItems" style="margin: 0.5rem 0;"></div>
+            </div>
+
+            <div class="form-group">
                 <label>Parts Used</label>
                 <div id="viewParts" style="margin: 0.5rem 0;"></div>
             </div>
 
             <div class="form-group">
-                <label>Repairs Completed</label>
+                <label>Details</label>
                 <p id="viewRepairs" style="margin: 0.5rem 0; white-space: pre-wrap;"></p>
             </div>
 
@@ -266,10 +334,37 @@
             </div>
 
             <div class="form-group">
-                <label>Receipt</label>
+                <label>Receipts &amp; Photos</label>
                 <div id="viewReceipt" style="margin: 0.5rem 0;"></div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Set interval -->
+<div id="intervalModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="intervalModalTitle">Set Interval</h3>
+            <button class="close" onclick="closeModal('intervalModal')">&times;</button>
+        </div>
+        <form id="intervalForm" onsubmit="saveInterval(event)">
+            <p class="hint" style="margin-bottom: 1rem;">Fill in miles, months or both. With both, it is due at whichever comes first. The reminder is counted from the last time this was logged, so nothing appears until it has been logged once.</p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="intervalMiles">Every (miles)</label>
+                    <input type="number" id="intervalMiles" min="0" step="1" placeholder="e.g., 5000">
+                </div>
+                <div class="form-group">
+                    <label for="intervalMonths">Every (months)</label>
+                    <input type="number" id="intervalMonths" min="0" step="1" placeholder="e.g., 6">
+                </div>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="submit" class="btn btn-success">Save</button>
+                <button type="button" class="btn btn-secondary" id="intervalRemove" onclick="removeInterval()">Remove Schedule</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
@@ -278,8 +373,17 @@
 <script>
 let allServices = [];
 let filteredServices = [];
+let serviceTypes = [];
+let maintenance = [];
 let availableParts = [];
 let currentEditServiceId = null;
+let intervalTypeId = null;
+
+// Line items on the service being added or edited: {type_id, name, cost}
+let selectedItems = [];
+// Attachments already on the service being edited, and ids marked to remove
+let existingAttachments = [];
+let removedAttachmentIds = [];
 // Parts on the service being added or edited. Entries loaded from an existing
 // service carry install_id; ones added in this session only have part_id.
 let selectedParts = [];
@@ -288,27 +392,67 @@ let selectedParts = [];
 let originalPartQuantities = {};
 let currentPage = 1;
 const itemsPerPage = 15;
+const NEW_TYPE = '__new__';
+
+function totalCost(service) {
+    return parseFloat(service.cost || 0) + parseFloat(service.supplies_cost || 0);
+}
+
+// ── Loading ─────────────────────────────────────────────────────────────────
 
 async function loadServices() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
         document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('servicesMobileCards').innerHTML = '<p class="text-center">Please select a vehicle first</p>';
         document.getElementById('paginationControls').innerHTML = '';
+        document.getElementById('filterSummary').textContent = '';
         return;
     }
 
     try {
-        const services = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
-        allServices = services;
-        filteredServices = services;
-        currentPage = 1;
-        displayServices();
+        allServices = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
+        populateProviders();
+        applyFilters(false);
         makeSortable(document.getElementById('servicesTable'));
     } catch (error) {
         console.error('Error loading services:', error);
         document.getElementById('servicesTableBody').innerHTML = '<tr><td colspan="7" class="text-center">Error loading services</td></tr>';
         document.getElementById('paginationControls').innerHTML = '';
     }
+}
+
+async function loadServiceTypes() {
+    try {
+        serviceTypes = await fetchAPI('/api/service-types');
+    } catch (error) {
+        serviceTypes = [];
+    }
+    const picker = document.getElementById('itemType');
+    picker.innerHTML = '<option value="">-- Select --</option>';
+    const filter = document.getElementById('filterType');
+    const chosen = filter.value;
+    filter.innerHTML = '<option value="">All</option>';
+    serviceTypes.forEach(type => {
+        picker.appendChild(new Option(type.name, type.id));
+        if (type.uses > 0) filter.appendChild(new Option(type.name, type.id));
+    });
+    picker.appendChild(new Option('+ New type…', NEW_TYPE));
+    filter.value = chosen;
+}
+
+function populateProviders() {
+    const providers = [...new Set(allServices.map(s => s.service_provider).filter(Boolean))].sort();
+    const filter = document.getElementById('filterProvider');
+    const chosen = filter.value;
+    filter.innerHTML = '<option value="">All</option>';
+    const datalist = document.getElementById('providerOptions');
+    datalist.innerHTML = '';
+    providers.forEach(name => {
+        filter.appendChild(new Option(name, name));
+        datalist.appendChild(new Option(name, name));
+    });
+    filter.value = providers.includes(chosen) ? chosen : '';
 }
 
 async function loadParts() {
@@ -320,6 +464,220 @@ async function loadParts() {
     }
 }
 
+function showTab(tab) {
+    const history = tab === 'history';
+    document.getElementById('historyPanel').style.display = history ? 'block' : 'none';
+    document.getElementById('schedulePanel').style.display = history ? 'none' : 'block';
+    document.getElementById('tabHistory').classList.toggle('active', history);
+    document.getElementById('tabSchedule').classList.toggle('active', !history);
+    if (!history) loadMaintenance();
+}
+
+// ── Filters ─────────────────────────────────────────────────────────────────
+
+const applyFiltersDebounced = debounce(() => applyFilters(), 250);
+
+function applyFilters(resetPage = true) {
+    const query = document.getElementById('searchInput').value.trim().toLowerCase();
+    const typeId = parseInt(document.getElementById('filterType').value) || null;
+    const provider = document.getElementById('filterProvider').value;
+    const from = document.getElementById('filterFrom').value;
+    const to = document.getElementById('filterTo').value;
+
+    filteredServices = allServices.filter(s => {
+        if (typeId && !s.service_type_ids.includes(typeId)) return false;
+        if (provider && s.service_provider !== provider) return false;
+        if (from && s.date < from) return false;
+        if (to && s.date > to) return false;
+        if (query && ![s.service_provider, s.service_types, s.repairs_completed, s.comments]
+                .some(v => v && v.toLowerCase().includes(query))) return false;
+        return true;
+    });
+
+    const total = filteredServices.reduce((sum, s) => sum + totalCost(s), 0);
+    const filtered = filteredServices.length !== allServices.length;
+    document.getElementById('filterSummary').innerHTML = allServices.length
+        ? `<strong>${filteredServices.length}</strong> ${filtered ? `of ${allServices.length} ` : ''}record${filteredServices.length === 1 && !filtered ? '' : 's'} · <strong>${formatCurrency(total)}</strong> total`
+        : '';
+
+    if (resetPage) currentPage = 1;
+    displayServices();
+}
+
+function clearFilters() {
+    ['searchInput', 'filterType', 'filterProvider', 'filterFrom', 'filterTo'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+    applyFilters();
+}
+
+// ── History list ────────────────────────────────────────────────────────────
+
+function workDone(service) {
+    if (service.service_types) return escapeHtml(service.service_types);
+    if (service.repairs_completed) return `<span style="color: var(--light-text);">${escapeHtml(service.repairs_completed)}</span>`;
+    return '—';
+}
+
+function providerCell(service) {
+    return escapeHtml(service.service_provider) + (service.diy ? ' <span class="pill pill-muted">DIY</span>' : '');
+}
+
+function filesCell(service) {
+    if (!service.attachment_count) return '—';
+    if (service.attachment_count === 1) {
+        return `<a href="/static/${escapeHtml(service.receipt_path)}" target="_blank" class="btn btn-small btn-secondary">View</a>`;
+    }
+    return `<button class="btn btn-small btn-secondary" onclick="viewService(${service.id})">${service.attachment_count} files</button>`;
+}
+
+function displayServices() {
+    const tbody = document.getElementById('servicesTableBody');
+    const mobileCards = document.getElementById('servicesMobileCards');
+    const paginationDiv = document.getElementById('paginationControls');
+
+    if (filteredServices.length === 0) {
+        const message = allServices.length
+            ? 'No service records match these filters.'
+            : 'No service records found. Click "Add Service Record" to get started.';
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center">${message}</td></tr>`;
+        mobileCards.innerHTML = `<p class="text-center">${message}</p>`;
+        paginationDiv.innerHTML = '';
+        return;
+    }
+
+    const page = paginateArray(filteredServices, currentPage, itemsPerPage);
+    let tableHtml = '';
+    let cardsHtml = '';
+    page.forEach(service => {
+        tableHtml += `
+            <tr>
+                <td>${formatDate(service.date)}</td>
+                <td>${workDone(service)}</td>
+                <td>${providerCell(service)}</td>
+                <td>${service.odometer ? service.odometer.toLocaleString() + ' mi' : '—'}</td>
+                <td>${formatCurrency(totalCost(service))}</td>
+                <td>${filesCell(service)}</td>
+                <td>
+                    <div class="action-menu">
+                        <button class="menu-button" onclick="toggleMenu(event, ${service.id})" aria-label="Actions">&#8942;</button>
+                        <div class="menu-dropdown" id="menu-${service.id}">
+                            <button onclick="viewService(${service.id})">View</button>
+                            <button onclick="editService(${service.id})">Edit</button>
+                            <button onclick="duplicateService(${service.id})">Duplicate</button>
+                            <button class="danger" onclick="deleteService(${service.id})">Delete</button>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        `;
+
+        const fields = [
+            { label: 'Date', value: formatDate(service.date) },
+            { label: 'Provider', value: providerCell(service) },
+            { label: 'Odometer', value: service.odometer ? service.odometer.toLocaleString() + ' mi' : '—' },
+            { label: 'Total Cost', value: formatCurrency(totalCost(service)) }
+        ];
+        if (service.service_types && service.repairs_completed) {
+            fields.push({ label: 'Details', value: escapeHtml(service.repairs_completed) });
+        }
+        const title = service.service_types || service.repairs_completed || service.service_provider;
+        cardsHtml += createMobileCard(escapeHtml(title), fields, [
+            { label: 'View', class: 'btn-secondary', onclick: `viewService(${service.id})` },
+            { label: 'Edit', class: 'btn-secondary', onclick: `editService(${service.id})` },
+            { label: 'Duplicate', class: 'btn-secondary', onclick: `duplicateService(${service.id})` },
+            { label: 'Delete', class: 'btn-danger', onclick: `deleteService(${service.id})` }
+        ]);
+    });
+    tbody.innerHTML = tableHtml;
+    mobileCards.innerHTML = cardsHtml;
+    paginationDiv.innerHTML = createPagination(filteredServices.length, currentPage, itemsPerPage, 'goToPage');
+}
+
+function goToPage(page) {
+    currentPage = page;
+    displayServices();
+    document.getElementById('servicesTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Line items ──────────────────────────────────────────────────────────────
+
+async function handleItemTypeChange() {
+    const select = document.getElementById('itemType');
+    if (select.value !== NEW_TYPE) return;
+    select.value = '';
+    const name = (prompt('Name of the new type of work:') || '').trim();
+    if (!name) return;
+    try {
+        const result = await fetchAPI('/api/service-types', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        await loadServiceTypes();
+        document.getElementById('itemType').value = result.id;
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+function addItemToList() {
+    const select = document.getElementById('itemType');
+    const costInput = document.getElementById('itemCost');
+    const type = serviceTypes.find(t => t.id === parseInt(select.value));
+    if (!type) {
+        showAlert('Please select a type of work', 'warning');
+        return;
+    }
+    const cost = costInput.value === '' ? null : parseFloat(costInput.value);
+    const existing = selectedItems.find(i => i.type_id === type.id);
+    if (existing) {
+        existing.cost = cost;
+    } else {
+        selectedItems.push({ type_id: type.id, name: type.name, cost: cost });
+    }
+    updateItemsList();
+    select.value = '';
+    costInput.value = '';
+}
+
+function removeItemFromList(index) {
+    selectedItems.splice(index, 1);
+    updateItemsList();
+}
+
+function updateItemsList() {
+    const container = document.getElementById('itemsListContainer');
+    if (selectedItems.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+
+    document.getElementById('itemsList').innerHTML = selectedItems.map((item, index) => `
+        <div class="picked-line">
+            <div><strong>${escapeHtml(item.name)}</strong></div>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span>${item.cost !== null ? formatCurrency(item.cost) : '<span class="hint">no price</span>'}</span>
+                <button type="button" class="btn btn-small btn-danger" onclick="removeItemFromList(${index})">Remove</button>
+            </div>
+        </div>
+    `).join('');
+
+    const priced = selectedItems.filter(i => i.cost !== null);
+    const summary = document.getElementById('itemsSummary');
+    if (priced.length === 0) {
+        summary.textContent = '';
+    } else {
+        const itemised = priced.reduce((sum, i) => sum + i.cost, 0);
+        const bill = parseFloat(document.getElementById('serviceCost').value);
+        summary.textContent = `Itemised ${formatCurrency(itemised)}` + (isNaN(bill) ? '' : ` of the ${formatCurrency(bill)} bill`);
+        summary.style.color = !isNaN(bill) && itemised > bill + 0.005 ? 'var(--danger-color)' : '';
+    }
+}
+
+// ── Parts picker ────────────────────────────────────────────────────────────
+
 function populatePartsDropdown() {
     const select = document.getElementById('partSelect');
     if (availableParts.length === 0) {
@@ -330,10 +688,7 @@ function populatePartsDropdown() {
     select.disabled = false;
     select.innerHTML = '<option value="">-- Select a part --</option>';
     availableParts.forEach(part => {
-        const option = document.createElement('option');
-        option.value = part.id;
-        option.textContent = `${part.name} (${part.in_stock} in stock @ ${formatCurrency(part.cost)} each)`;
-        select.appendChild(option);
+        select.appendChild(new Option(`${part.name} (${part.in_stock} in stock @ ${formatCurrency(part.cost)} each)`, part.id));
     });
 }
 
@@ -375,13 +730,6 @@ function removePartFromList(index) {
     updatePartsList();
 }
 
-function clearPartsList() {
-    selectedParts = [];
-    updatePartsList();
-    document.getElementById('partSelect').value = '';
-    document.getElementById('partQuantity').value = 1;
-}
-
 function updatePartsList() {
     const container = document.getElementById('partsListContainer');
     if (selectedParts.length === 0) {
@@ -390,13 +738,12 @@ function updatePartsList() {
     }
     container.style.display = 'block';
 
-    let html = '';
-    let totalCost = 0;
-    selectedParts.forEach((part, index) => {
+    let total = 0;
+    document.getElementById('partsList').innerHTML = selectedParts.map((part, index) => {
         const itemCost = part.unit_cost * part.quantity;
-        totalCost += itemCost;
-        html += `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); margin-bottom: 0.5rem;">
+        total += itemCost;
+        return `
+            <div class="picked-line">
                 <div>
                     <strong>${escapeHtml(part.name)}</strong><br>
                     <small>${part.quantity} × ${formatCurrency(part.unit_cost)} = ${formatCurrency(itemCost)}</small>
@@ -404,122 +751,85 @@ function updatePartsList() {
                 <button type="button" class="btn btn-small btn-danger" onclick="removePartFromList(${index})">Remove</button>
             </div>
         `;
-    });
-    document.getElementById('partsList').innerHTML = html;
-    document.getElementById('totalPartsCost').textContent = formatCurrency(totalCost);
+    }).join('');
+    document.getElementById('totalPartsCost').textContent = formatCurrency(total);
 }
 
-function displayServices() {
-    const tbody = document.getElementById('servicesTableBody');
-    const mobileCards = document.getElementById('servicesMobileCards');
-    const paginationDiv = document.getElementById('paginationControls');
+// ── Attachments ─────────────────────────────────────────────────────────────
 
-    if (filteredServices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No service records found. Click "Add Service Record" to get started.</td></tr>';
-        mobileCards.innerHTML = '<p class="text-center">No service records found. Click "Add Service Record" to get started.</p>';
-        paginationDiv.innerHTML = '';
-        return;
-    }
-
-    // Get paginated data
-    const paginatedServices = paginateArray(filteredServices, currentPage, itemsPerPage);
-
-    // Desktop table view
-    let tableHtml = '';
-    paginatedServices.forEach(service => {
-        const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
-        tableHtml += `
-            <tr>
-                <td>${formatDate(service.date)}</td>
-                <td>${escapeHtml(service.service_provider)}</td>
-                <td>${service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A'}</td>
-                <td>${formatCurrency(totalCost)}</td>
-                <td>${escapeHtml(service.repairs_completed || 'N/A')}</td>
-                <td>
-                    ${service.receipt_path ? `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-small btn-secondary">View</a>` : 'N/A'}
-                </td>
-                <td>
-                    <div class="action-menu">
-                        <button class="menu-button" onclick="toggleMenu(event, ${service.id})">&#8942;</button>
-                        <div class="menu-dropdown" id="menu-${service.id}">
-                            <button onclick="viewService(${service.id})">View</button>
-                            <button onclick="editService(${service.id})">Edit</button>
-                            <button class="danger" onclick="deleteService(${service.id})">Delete</button>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-        `;
-    });
-    tbody.innerHTML = tableHtml;
-
-    // Mobile cards view
-    let cardsHtml = '';
-    paginatedServices.forEach(service => {
-        const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
-        const fields = [
-            { label: 'Date', value: formatDate(service.date) },
-            { label: 'Provider', value: escapeHtml(service.service_provider) },
-            { label: 'Odometer', value: service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A' },
-            { label: 'Total Cost', value: formatCurrency(totalCost) }
-        ];
-
-        if (service.repairs_completed) {
-            fields.push({ label: 'Repairs', value: escapeHtml(service.repairs_completed) });
-        }
-
-        const actions = [
-            { label: 'View', class: 'btn-secondary', onclick: `viewService(${service.id})` },
-            { label: 'Edit', class: 'btn-secondary', onclick: `editService(${service.id})` },
-            { label: 'Delete', class: 'btn-danger', onclick: `deleteService(${service.id})` }
-        ];
-
-        cardsHtml += createMobileCard(escapeHtml(service.service_provider), fields, actions);
-    });
-    mobileCards.innerHTML = cardsHtml;
-
-    // Display pagination controls
-    paginationDiv.innerHTML = createPagination(filteredServices.length, currentPage, itemsPerPage, 'goToPage');
+function attachmentName(attachment) {
+    return attachment.original_name || attachment.file_path.split('/').pop();
 }
 
-function goToPage(page) {
-    currentPage = page;
-    displayServices();
-    // Scroll to top of table
-    document.getElementById('servicesTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+function renderExistingAttachments() {
+    const kept = existingAttachments.filter(a => !removedAttachmentIds.includes(a.id));
+    document.getElementById('existingAttachments').innerHTML = kept.map(a => `
+        <div class="picked-line">
+            <a href="/static/${escapeHtml(a.file_path)}" target="_blank">${escapeHtml(attachmentName(a))}</a>
+            <button type="button" class="btn btn-small btn-danger" onclick="removeAttachment(${a.id})">Remove</button>
+        </div>
+    `).join('');
 }
 
-const searchServicesDebounced = debounce(searchServices, 300);
+function removeAttachment(attachmentId) {
+    removedAttachmentIds.push(attachmentId);
+    renderExistingAttachments();
+}
 
-function searchServices() {
-    const query = document.getElementById('searchInput').value.toLowerCase();
+// ── Service form ────────────────────────────────────────────────────────────
 
-    if (!query) {
-        filteredServices = allServices;
-        currentPage = 1;
-        displayServices();
-        return;
-    }
+function toggleDiy() {
+    const diy = document.getElementById('serviceDiy').checked;
+    const provider = document.getElementById('serviceProvider');
+    provider.required = !diy;
+    provider.placeholder = diy ? 'Optional — saved as "Self" if left blank' : '';
+    document.getElementById('serviceProviderLabel').textContent = diy ? 'Service Provider' : 'Service Provider *';
+}
 
-    filteredServices = allServices.filter(service => {
-        return (service.service_provider && service.service_provider.toLowerCase().includes(query)) ||
-               (service.comments && service.comments.toLowerCase().includes(query)) ||
-               (service.repairs_completed && service.repairs_completed.toLowerCase().includes(query));
-    });
+// Reset the form to empty, ready for a new record
+function resetServiceForm() {
+    document.getElementById('serviceForm').reset();
+    currentEditServiceId = null;
+    selectedItems = [];
+    selectedParts = [];
+    originalPartQuantities = {};
+    existingAttachments = [];
+    removedAttachmentIds = [];
+    updateItemsList();
+    updatePartsList();
+    renderExistingAttachments();
+    toggleDiy();
+    document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
+}
 
-    currentPage = 1;
-    displayServices();
+function openAddServiceModal() {
+    resetServiceForm();
+    document.getElementById('serviceDate').value = toISODate(new Date());
+    openModal('addServiceModal');
+}
+
+function fillServiceForm(service) {
+    document.getElementById('serviceCost').value = service.cost;
+    document.getElementById('serviceProvider').value = service.service_provider;
+    document.getElementById('serviceDiy').checked = !!service.diy;
+    toggleDiy();
+    document.getElementById('repairsCompleted').value = service.repairs_completed || '';
+    document.getElementById('serviceComments').value = service.comments || '';
+    selectedItems = (service.items || []).map(i => ({ type_id: i.type_id, name: i.name, cost: i.cost }));
+    updateItemsList();
 }
 
 async function editService(serviceId) {
     try {
         const service = await fetchAPI(`/api/services/${serviceId}`);
-        if (!service) return;
-
+        resetServiceForm();
         currentEditServiceId = serviceId;
+        fillServiceForm(service);
+        document.getElementById('serviceDate').value = service.date;
+        document.getElementById('serviceOdometer').value = service.odometer || '';
 
-        // Pre-populate the list with the parts already on this service, so
-        // saving without touching them keeps them (and their warranty) as is
+        // Parts and attachments already on this service, so saving without
+        // touching them keeps them (and any warranty) as they are
         selectedParts = (service.parts || []).map(p => ({
             install_id: p.id,
             part_id: p.part_id,
@@ -527,38 +837,33 @@ async function editService(serviceId) {
             quantity: p.quantity,
             unit_cost: p.unit_cost
         }));
-        originalPartQuantities = {};
         selectedParts.forEach(p => {
             originalPartQuantities[p.part_id] = (originalPartQuantities[p.part_id] || 0) + p.quantity;
         });
         updatePartsList();
+        existingAttachments = service.attachments || [];
+        renderExistingAttachments();
 
-        // Populate form
-        document.getElementById('serviceDate').value = service.date;
-        document.getElementById('serviceCost').value = service.cost;
-        document.getElementById('serviceOdometer').value = service.odometer || '';
-        document.getElementById('serviceProvider').value = service.service_provider;
-        document.getElementById('repairsCompleted').value = service.repairs_completed || '';
-        document.getElementById('serviceComments').value = service.comments || '';
-
-        // Update modal title
         document.querySelector('#addServiceModal h3').textContent = 'Edit Service Record';
-
         openModal('addServiceModal');
     } catch (error) {
-        console.error('Error loading service:', error);
+        showAlert(error.message, 'danger');
     }
 }
 
-function openAddServiceModal() {
-    clearPartsList();
-    originalPartQuantities = {};
-    document.getElementById('serviceForm').reset();
-    document.getElementById('receiptPreview').textContent = '';
-    document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
-    currentEditServiceId = null;
-    document.getElementById('serviceDate').value = toISODate(new Date());
-    openModal('addServiceModal');
+// Start a new record from an old one: same work, provider and bill, dated
+// today. Parts and attachments belong to the original and aren't copied.
+async function duplicateService(serviceId) {
+    try {
+        const service = await fetchAPI(`/api/services/${serviceId}`);
+        resetServiceForm();
+        fillServiceForm(service);
+        document.getElementById('serviceDate').value = toISODate(new Date());
+        document.querySelector('#addServiceModal h3').textContent = 'Add Service Record (copy)';
+        openModal('addServiceModal');
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
 }
 
 async function addService(event) {
@@ -570,101 +875,29 @@ async function addService(event) {
         return;
     }
 
-    const form = document.getElementById('serviceForm');
-    const formData = new FormData(form);
+    const formData = new FormData(document.getElementById('serviceForm'));
     formData.append('vehicle_id', vehicleId);
-
+    formData.append('items', JSON.stringify(selectedItems.map(i => ({ type_id: i.type_id, cost: i.cost }))));
     // Parts already on the service are sent by install; new ones by part
     formData.append('parts', JSON.stringify(selectedParts.map(p => p.install_id
         ? { install_id: p.install_id, quantity: p.quantity }
         : { part_id: p.part_id, quantity: p.quantity })));
+    formData.append('remove_attachments', JSON.stringify(removedAttachmentIds));
 
     try {
         const editing = currentEditServiceId;
-        await fetchAPI(editing ? `/api/services/${editing}` : '/api/services',
-                       { method: editing ? 'PUT' : 'POST', body: formData });
-        showAlert(editing ? 'Service record updated successfully!' : 'Service record added successfully!', 'success');
+        const result = await fetchAPI(editing ? `/api/services/${editing}` : '/api/services',
+                                      { method: editing ? 'PUT' : 'POST', body: formData });
+        showAlert(editing ? 'Service record updated' : 'Service record added', 'success');
+        if (result.warning) showAlert(result.warning, 'warning');
 
-        form.reset();
-        document.getElementById('receiptPreview').textContent = '';
-        document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
-        currentEditServiceId = null;
-        originalPartQuantities = {};
-        clearPartsList();
+        resetServiceForm();
         closeModal('addServiceModal');
-        await loadServices();
-        await loadParts(); // stock has changed
+        await Promise.all([loadServices(), loadParts(), loadServiceTypes()]);
+        if (document.getElementById('schedulePanel').style.display !== 'none') loadMaintenance();
     } catch (error) {
         // e.g. "Only 2 of Oil in stock"
         showAlert(error.message, 'danger');
-    }
-}
-
-function toggleMenu(event, serviceId) {
-    event.stopPropagation();
-    const button = event.target;
-    const menu = document.getElementById(`menu-${serviceId}`);
-
-    // Close all other menus
-    document.querySelectorAll('.menu-dropdown').forEach(m => {
-        if (m !== menu) m.classList.remove('show');
-    });
-
-    // If menu is being shown, position it
-    if (!menu.classList.contains('show')) {
-        const rect = button.getBoundingClientRect();
-        menu.style.top = `${rect.bottom}px`;
-        menu.style.left = `${rect.right - 150}px`; // 150px is the menu width
-    }
-
-    menu.classList.toggle('show');
-}
-
-// Close menus when clicking outside
-document.addEventListener('click', () => {
-    document.querySelectorAll('.menu-dropdown').forEach(m => {
-        m.classList.remove('show');
-    });
-});
-
-async function viewService(serviceId) {
-    try {
-        const service = await fetchAPI(`/api/services/${serviceId}`);
-        if (!service) return;
-
-        // Populate view modal
-        document.getElementById('viewDate').textContent = formatDate(service.date);
-        document.getElementById('viewCost').textContent = formatCurrency(service.cost);
-        document.getElementById('viewOdometer').textContent = service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A';
-        document.getElementById('viewProvider').textContent = service.service_provider;
-        document.getElementById('viewSuppliesCost').textContent = formatCurrency(service.supplies_cost || 0);
-
-        const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
-        document.getElementById('viewTotalCost').textContent = formatCurrency(totalCost);
-
-        const warrantyLabels = { lifetime: 'lifetime warranty', active: 'under warranty',
-                                 expiring: 'warranty expiring soon', expired: 'warranty expired' };
-        document.getElementById('viewParts').innerHTML = (service.parts || []).length
-            ? service.parts.map(p => `<div>${escapeHtml(p.part_name)} — ${p.quantity} × ${formatCurrency(p.unit_cost)}`
-                + (p.warranty ? ` <small style="color: var(--light-text);">(${warrantyLabels[p.warranty.status]}`
-                    + (p.warranty.expires_on ? `, ${p.warranty.status === 'expired' ? 'ended' : 'until'} ${formatDate(p.warranty.expires_on)}` : '')
-                    + ')</small>' : '') + '</div>').join('')
-            : '<p>None</p>';
-
-        document.getElementById('viewRepairs').textContent = service.repairs_completed || 'N/A';
-        document.getElementById('viewComments').textContent = service.comments || 'N/A';
-
-        // Handle receipt
-        const receiptDiv = document.getElementById('viewReceipt');
-        if (service.receipt_path) {
-            receiptDiv.innerHTML = `<a href="/static/${service.receipt_path}" target="_blank" class="btn btn-secondary">View Receipt</a>`;
-        } else {
-            receiptDiv.innerHTML = '<p>No receipt attached</p>';
-        }
-
-        openModal('viewServiceModal');
-    } catch (error) {
-        console.error('Error loading service:', error);
     }
 }
 
@@ -672,19 +905,262 @@ async function deleteService(serviceId) {
     if (!confirm('Are you sure you want to delete this service record?')) {
         return;
     }
-
     try {
-        await deleteAPI(`/api/services/${serviceId}`);
-        showAlert('Service record deleted successfully!', 'success');
-        await loadServices();
+        await fetchAPI(`/api/services/${serviceId}`, { method: 'DELETE' });
+        showAlert('Service record deleted', 'success');
+        await Promise.all([loadServices(), loadParts(), loadServiceTypes()]);
     } catch (error) {
-        console.error('Error deleting service:', error);
+        showAlert(error.message, 'danger');
     }
 }
 
-// CSV Import/Export Functions
-function downloadTemplate() {
+async function viewService(serviceId) {
+    try {
+        const service = await fetchAPI(`/api/services/${serviceId}`);
+
+        document.getElementById('viewDate').textContent = formatDate(service.date);
+        document.getElementById('viewCost').textContent = formatCurrency(service.cost);
+        document.getElementById('viewOdometer').textContent = service.odometer ? service.odometer.toLocaleString() + ' mi' : 'N/A';
+        document.getElementById('viewProvider').innerHTML = providerCell(service);
+        document.getElementById('viewSuppliesCost').textContent = formatCurrency(service.supplies_cost || 0);
+        document.getElementById('viewTotalCost').textContent = formatCurrency(totalCost(service));
+
+        document.getElementById('viewItems').innerHTML = (service.items || []).length
+            ? service.items.map(i => `<div>${escapeHtml(i.name)}`
+                + (i.cost !== null ? ` — ${formatCurrency(i.cost)}` : '')
+                + (i.notes ? ` <small class="hint">${escapeHtml(i.notes)}</small>` : '') + '</div>').join('')
+            : '<p>Not itemised</p>';
+
+        const warrantyLabels = { lifetime: 'lifetime warranty', active: 'under warranty',
+                                 expiring: 'warranty expiring soon', expired: 'warranty expired' };
+        document.getElementById('viewParts').innerHTML = (service.parts || []).length
+            ? service.parts.map(p => `<div>${escapeHtml(p.part_name)} — ${p.quantity} × ${formatCurrency(p.unit_cost)}`
+                + (p.warranty ? ` <small class="hint">(${warrantyLabels[p.warranty.status]}`
+                    + (p.warranty.expires_on ? `, ${p.warranty.status === 'expired' ? 'ended' : 'until'} ${formatDate(p.warranty.expires_on)}` : '')
+                    + ')</small>' : '') + '</div>').join('')
+            : '<p>None</p>';
+
+        document.getElementById('viewRepairs').textContent = service.repairs_completed || 'N/A';
+        document.getElementById('viewComments').textContent = service.comments || 'N/A';
+
+        document.getElementById('viewReceipt').innerHTML = (service.attachments || []).length
+            ? service.attachments.map(a => `<div><a href="/static/${escapeHtml(a.file_path)}" target="_blank">${escapeHtml(attachmentName(a))}</a></div>`).join('')
+            : '<p>Nothing attached</p>';
+
+        openModal('viewServiceModal');
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+// ── Maintenance schedule ────────────────────────────────────────────────────
+
+function intervalText(row) {
+    const parts = [];
+    if (row.interval_miles) parts.push(`${row.interval_miles.toLocaleString()} mi`);
+    if (row.interval_months) parts.push(`${row.interval_months} mo`);
+    return parts.length ? 'Every ' + parts.join(' or ') : '<span class="hint">Not scheduled</span>';
+}
+
+function lastDoneText(row) {
+    if (!row.last_date) return '<span class="hint">Not logged yet</span>';
+    const since = [];
+    if (row.miles_since !== null) since.push(`${row.miles_since.toLocaleString()} mi`);
+    if (row.days_since !== null) since.push(`${row.days_since.toLocaleString()} day${row.days_since === 1 ? '' : 's'}`);
+    return formatDate(row.last_date)
+        + (row.last_odometer !== null ? ` at ${row.last_odometer.toLocaleString()} mi` : '')
+        + (since.length ? `<span class="sub">${since.join(' · ')} ago</span>` : '');
+}
+
+function nextDueText(row) {
+    if (!row.schedule_id) return '—';
+    if (!row.status) return '<span class="hint">Log it once to start the clock</span>';
+    const pill = { overdue: ['pill-bad', 'Overdue'], due_soon: ['pill-warn', 'Due soon'], ok: ['pill-ok', 'On track'] }[row.status];
+    const due = [];
+    if (row.next_due_date) due.push(formatDate(row.next_due_date));
+    if (row.next_due_mileage !== null) due.push(`${row.next_due_mileage.toLocaleString()} mi`);
+    const left = [];
+    if (row.miles_remaining !== null) {
+        left.push(row.miles_remaining < 0 ? `${Math.abs(row.miles_remaining).toLocaleString()} mi over` : `${row.miles_remaining.toLocaleString()} mi left`);
+    }
+    if (row.days_remaining !== null) {
+        left.push(row.days_remaining < 0 ? `${Math.abs(row.days_remaining)} days over` : `${row.days_remaining} days left`);
+    }
+    return `<span class="pill ${pill[0]}">${pill[1]}</span><span class="sub">${due.join(' or ')}</span><span class="sub">${left.join(' · ')}</span>`;
+}
+
+function spentText(row) {
+    if (!row.times_done) return '—';
+    if (row.spent_partial && !row.spent) {
+        return '<span class="hint" title="Add a price to this line on the service record to track what it costs">Not priced</span>';
+    }
+    if (row.spent_partial) {
+        return `${formatCurrency(row.spent)}+ <span class="sub" title="Some bills covered several jobs with no price on this line">part of other bills not counted</span>`;
+    }
+    return formatCurrency(row.spent);
+}
+
+async function loadMaintenance() {
+    const tbody = document.getElementById('scheduleTableBody');
+    const cards = document.getElementById('scheduleMobileCards');
     const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Please select a vehicle first</td></tr>';
+        cards.innerHTML = '<p class="text-center">Please select a vehicle first</p>';
+        return;
+    }
+    try {
+        const data = await fetchAPI(`/api/maintenance?vehicle_id=${vehicleId}`);
+        maintenance = data.types;
+        document.getElementById('scheduleOdometer').textContent = data.current_odometer !== null
+            ? `Current odometer: ${data.current_odometer.toLocaleString()} mi (latest service or fuel record).`
+            : '';
+
+        // What needs attention first, then what has history, then the rest
+        const rank = row => row.status ? { overdue: 0, due_soon: 1, ok: 2 }[row.status] : (row.schedule_id ? 3 : (row.times_done ? 4 : 5));
+        const rows = maintenance.slice().sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+
+        let tableHtml = '';
+        let cardsHtml = '';
+        rows.forEach(row => {
+            const remove = row.uses === 0
+                ? `<button class="btn btn-small btn-danger" onclick="deleteServiceType(${row.type_id})">Delete</button>` : '';
+            tableHtml += `
+                <tr>
+                    <td><strong>${escapeHtml(row.name)}</strong></td>
+                    <td>${intervalText(row)}</td>
+                    <td>${lastDoneText(row)}</td>
+                    <td>${nextDueText(row)}</td>
+                    <td>${row.times_done || '—'}</td>
+                    <td>${spentText(row)}</td>
+                    <td style="white-space: nowrap;">
+                        <button class="btn btn-small btn-secondary" onclick="openIntervalModal(${row.type_id})">Set Interval</button>
+                        <button class="btn btn-small btn-secondary" onclick="renameServiceType(${row.type_id})">Rename</button>
+                        ${remove}
+                    </td>
+                </tr>`;
+            const actions = [
+                { label: 'Set Interval', class: 'btn-secondary', onclick: `openIntervalModal(${row.type_id})` },
+                { label: 'Rename', class: 'btn-secondary', onclick: `renameServiceType(${row.type_id})` }
+            ];
+            if (row.uses === 0) actions.push({ label: 'Delete', class: 'btn-danger', onclick: `deleteServiceType(${row.type_id})` });
+            cardsHtml += createMobileCard(escapeHtml(row.name), [
+                { label: 'Interval', value: intervalText(row) },
+                { label: 'Last Done', value: lastDoneText(row) },
+                { label: 'Next Due', value: nextDueText(row) },
+                { label: 'Times / Spent', value: row.times_done ? `${row.times_done} · ${spentText(row)}` : '—' }
+            ], actions);
+        });
+        tbody.innerHTML = tableHtml;
+        cards.innerHTML = cardsHtml;
+    } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Error loading the schedule</td></tr>';
+    }
+}
+
+function openIntervalModal(typeId) {
+    const row = maintenance.find(r => r.type_id === typeId);
+    if (!row) return;
+    intervalTypeId = typeId;
+    document.getElementById('intervalModalTitle').textContent = `Interval — ${row.name}`;
+    document.getElementById('intervalMiles').value = row.interval_miles || '';
+    document.getElementById('intervalMonths').value = row.interval_months || '';
+    document.getElementById('intervalRemove').style.display = row.schedule_id ? 'inline-block' : 'none';
+    openModal('intervalModal');
+}
+
+async function putInterval(miles, months) {
+    await fetchAPI(`/api/maintenance/${intervalTypeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicle_id: getCurrentVehicleId(), interval_miles: miles, interval_months: months })
+    });
+    closeModal('intervalModal');
+    await loadMaintenance();
+}
+
+async function saveInterval(event) {
+    event.preventDefault();
+    const miles = document.getElementById('intervalMiles').value;
+    const months = document.getElementById('intervalMonths').value;
+    if (!Number(miles) && !Number(months)) {
+        showAlert('Enter miles, months or both', 'warning');
+        return;
+    }
+    try {
+        await putInterval(miles, months);
+        showAlert('Interval saved. Its reminder is on the Reminders page.', 'success');
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+async function removeInterval() {
+    try {
+        await putInterval('', '');
+        showAlert('Schedule removed', 'success');
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+async function saveServiceType(method, url, name, done) {
+    try {
+        await fetchAPI(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: name === null ? undefined : JSON.stringify({ name })
+        });
+        showAlert(done, 'success');
+        await Promise.all([loadServiceTypes(), loadMaintenance(), loadServices()]);
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+function addServiceType() {
+    const name = (prompt('Name of the new type of work:') || '').trim();
+    if (name) saveServiceType('POST', '/api/service-types', name, 'Service type added');
+}
+
+function renameServiceType(typeId) {
+    const row = maintenance.find(r => r.type_id === typeId);
+    const name = (prompt('Rename this type of work:', row ? row.name : '') || '').trim();
+    if (name && (!row || name !== row.name)) {
+        saveServiceType('PUT', `/api/service-types/${typeId}`, name, 'Service type renamed');
+    }
+}
+
+function deleteServiceType(typeId) {
+    const row = maintenance.find(r => r.type_id === typeId);
+    if (confirm(`Delete "${row ? row.name : 'this type'}" from the list?`)) {
+        saveServiceType('DELETE', `/api/service-types/${typeId}`, null, 'Service type deleted');
+    }
+}
+
+// ── Row menus ───────────────────────────────────────────────────────────────
+
+function toggleMenu(event, serviceId) {
+    event.stopPropagation();
+    const menu = document.getElementById(`menu-${serviceId}`);
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+    });
+    if (!menu.classList.contains('show')) {
+        const rect = event.target.getBoundingClientRect();
+        menu.style.top = `${rect.bottom}px`;
+        menu.style.left = `${rect.right - 150}px`; // 150px is the menu width
+    }
+    menu.classList.toggle('show');
+}
+
+document.addEventListener('click', () => {
+    document.querySelectorAll('.menu-dropdown').forEach(m => m.classList.remove('show'));
+});
+
+// ── CSV ─────────────────────────────────────────────────────────────────────
+
+function downloadTemplate() {
     window.location.href = '/api/services/template-csv';
 }
 
@@ -704,7 +1180,7 @@ async function importCSV(event) {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
         showAlert('Please select a vehicle first', 'warning');
-        event.target.value = ''; // Reset file input
+        event.target.value = '';
         return;
     }
 
@@ -712,43 +1188,26 @@ async function importCSV(event) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('vehicle_id', vehicleId);
+        const result = await fetchAPI('/api/services/import-csv', { method: 'POST', body: formData });
 
-        const response = await fetch('/api/services/import-csv', {
-            method: 'POST',
-            body: formData
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-            throw new Error(result.error || 'Import failed');
-        }
-
-        let message = `Successfully imported ${result.imported} service record(s)`;
+        let message = `Imported ${result.imported} service record(s)`;
+        if (result.skipped) message += `, skipped ${result.skipped} already there`;
         if (result.errors && result.errors.length > 0) {
-            message += `\n\nWarnings/Errors:\n${result.errors.join('\n')}`;
+            message += `. Problems: ${result.errors.join('; ')}`;
         }
-
         showAlert(message, result.errors.length > 0 ? 'warning' : 'success');
-        await loadServices();
-
+        await Promise.all([loadServices(), loadServiceTypes()]);
     } catch (error) {
-        console.error('Error importing CSV:', error);
         showAlert(`Import failed: ${error.message}`, 'danger');
     } finally {
-        // Reset file input
         event.target.value = '';
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    appReady.then(() => {
-        loadServices();
-        loadParts();
-    });
-
-    // Set default date to today
-    document.getElementById('serviceDate').value = toISODate(new Date());
+appReady.then(() => {
+    loadServiceTypes();
+    loadServices();
+    loadParts();
 });
 </script>
 {% endblock %}
