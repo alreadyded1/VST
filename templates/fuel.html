@@ -121,6 +121,30 @@
     min-width: 130px;
 }
 
+/* Statistics: two rows of three, centred in the card, every tile the same
+   size with its contents centred */
+.fuel-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-width: 780px;
+    margin: 1rem auto 0.5rem;
+}
+.fuel-stats .stat-card {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 150px;
+}
+/* The gauge's label sits above it, so leave room at the top */
+.fuel-stats .gauge-card { padding: 2.5rem 0 1rem; }
+@media (max-width: 768px) {
+    .fuel-stats { gap: 0.5rem; }
+    .fuel-stats .stat-card { padding: 0.75rem 0.4rem; min-height: 120px; }
+    /* Three across on a phone: shrink the gauges to fit their tiles */
+    .fuel-stats .gauge-card { padding: 1.75rem 0 0.75rem; }
+    .fuel-stats .fuel-gauge { zoom: 0.6; }
+    .fuel-stats .stat-card .stat-value { font-size: 1.15rem; }
+    .fuel-stats .stat-card h3 { font-size: 0.6rem; }
+    .fuel-stats .stat-note { font-size: 0.65rem; }
+}
+
 .period-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
 .period-buttons { display: inline-flex; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--card-bg); }
 .period-buttons button {
@@ -159,11 +183,11 @@
         <svg class="chevron collapsed" id="chevron-statistics" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
     <div class="collapsible-body collapsed" id="section-statistics">
-        <div class="stats-grid" style="margin-top: 1rem;">
-            <div class="stat-card" style="padding: 3rem 0 1rem 0;">
+        <div class="stats-grid fuel-stats">
+            <div class="stat-card gauge-card">
                 <div id="avgMpgGauge"></div>
             </div>
-            <div class="stat-card" style="padding: 3rem 0 1rem 0;">
+            <div class="stat-card gauge-card">
                 <div id="bestMpgGauge"></div>
             </div>
             <div class="stat-card">
@@ -912,23 +936,43 @@ function updateStationComparison() {
         avgMpg: weightedAvgMpg(station.mpgRecords),
         totalGallons: station.totalGallons,
         visits: station.visits
-    })).sort((a, b) => b.visits - a.visits);
+    }));
+
+    // The table is redrawn whenever the period or grade changes, so the
+    // chosen sort is kept here rather than on the table itself. Stations
+    // with no MPG yet always go last.
+    const { key, ascending } = stationSort;
+    stations.sort((a, b) => {
+        if (key === 'name') {
+            const cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+            return ascending ? cmp : -cmp;
+        }
+        if (key === 'avgMpg' && (!a.avgMpg || !b.avgMpg)) {
+            return (!a.avgMpg) - (!b.avgMpg) || a.name.localeCompare(b.name);
+        }
+        return (ascending ? a[key] - b[key] : b[key] - a[key]) || a.name.localeCompare(b.name);
+    });
 
     if (stations.length === 0) {
         container.innerHTML = '<p class="text-center" style="padding: 2rem;">No station data for this period</p>';
         return;
     }
 
+    const header = (label, column) => {
+        const state = key === column ? (ascending ? ' sort-asc' : ' sort-desc') : '';
+        const aria = key === column ? (ascending ? 'ascending' : 'descending') : 'none';
+        return `<th class="sortable${state}" aria-sort="${aria}" onclick="sortStations('${column}')">${label}</th>`;
+    };
     const cheapest = Math.min(...stations.map(s => s.avgPricePerGal));
     container.innerHTML = `
         <table>
             <thead>
                 <tr>
-                    <th>Station</th>
-                    <th>Visits</th>
-                    <th>Total Gallons</th>
-                    <th>Avg Price/Gal</th>
-                    <th>Avg MPG</th>
+                    ${header('Station', 'name')}
+                    ${header('Visits', 'visits')}
+                    ${header('Total Gallons', 'totalGallons')}
+                    ${header('Avg Price/Gal', 'avgPricePerGal')}
+                    ${header('Avg MPG', 'avgMpg')}
                 </tr>
             </thead>
             <tbody>
@@ -944,6 +988,18 @@ function updateStationComparison() {
             </tbody>
         </table>
     `;
+}
+
+// Most-used stations first until a header is clicked
+let stationSort = { key: 'visits', ascending: false };
+
+// Clicking a header sorts by it; clicking it again reverses. Names start
+// A to Z, numbers start highest first.
+function sortStations(column) {
+    stationSort = stationSort.key === column
+        ? { key: column, ascending: !stationSort.ascending }
+        : { key: column, ascending: column === 'name' };
+    updateStationComparison();
 }
 
 // ── Collapsible sections ────────────────────────────────────────────────────
