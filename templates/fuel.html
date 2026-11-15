@@ -120,7 +120,38 @@
 #fuelTable td:first-child {
     min-width: 130px;
 }
+
+.period-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.period-buttons { display: inline-flex; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--card-bg); }
+.period-buttons button {
+    border: none; background: none; padding: 0.45rem 0.9rem; font: inherit; font-size: 0.85rem;
+    font-weight: 600; color: var(--light-text); cursor: pointer; border-right: 1px solid var(--border-color);
+}
+.period-buttons button:last-child { border-right: none; }
+.period-buttons button.active { background: var(--accent); color: #fff; }
+.tag {
+    display: inline-block; padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.7rem;
+    font-weight: 600; white-space: nowrap; vertical-align: middle;
+}
+.tag-warn { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.tag-bad { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.tag-muted { background: var(--light-bg); color: var(--light-text); }
+.sub { display: block; font-size: 0.8rem; color: var(--light-text); }
+.hint { color: var(--light-text); font-size: 0.8rem; }
+.check-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: normal; }
+.check-label input { width: auto; margin: 0; }
+.stat-note { font-size: 0.75rem; color: var(--light-text); margin-top: 0.25rem; }
 </style>
+
+<div class="period-bar">
+    <div class="period-buttons" role="group" aria-label="Period">
+        <button type="button" data-period="30d" onclick="setPeriod('30d')">30 days</button>
+        <button type="button" data-period="ytd" onclick="setPeriod('ytd')">This year</button>
+        <button type="button" data-period="12m" onclick="setPeriod('12m')">12 months</button>
+        <button type="button" data-period="all" onclick="setPeriod('all')">All time</button>
+    </div>
+    <span class="hint" id="paceNote"></span>
+</div>
 
 <div class="card">
     <button class="collapsible-header" onclick="toggleSection('statistics')" aria-expanded="false">
@@ -132,16 +163,28 @@
             <div class="stat-card" style="padding: 3rem 0 1rem 0;">
                 <div id="avgMpgGauge"></div>
             </div>
+            <div class="stat-card" style="padding: 3rem 0 1rem 0;">
+                <div id="bestMpgGauge"></div>
+            </div>
             <div class="stat-card">
-                <h3>Total Fuel Purchased</h3>
-                <div class="stat-value" id="totalGallons">0 gal</div>
+                <h3>Cost per Mile</h3>
+                <div class="stat-value" id="costPerMile">—</div>
+                <div class="stat-note" id="costPerMileNote"></div>
+            </div>
+            <div class="stat-card">
+                <h3>Miles Driven</h3>
+                <div class="stat-value" id="milesDriven">—</div>
+                <div class="stat-note" id="fillUpCount"></div>
             </div>
             <div class="stat-card">
                 <h3>Total Spent</h3>
                 <div class="stat-value" id="totalSpent">$0.00</div>
+                <div class="stat-note" id="avgPrice"></div>
             </div>
-            <div class="stat-card" style="padding: 3rem 0 1rem 0;">
-                <div id="bestMpgGauge"></div>
+            <div class="stat-card">
+                <h3>Total Fuel Purchased</h3>
+                <div class="stat-value" id="totalGallons">0 gal</div>
+                <div class="stat-note" id="lowTanks"></div>
             </div>
         </div>
     </div>
@@ -155,12 +198,16 @@
     <div class="collapsible-body collapsed" id="section-trends">
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; margin-top: 1rem;">
             <div>
-                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">MPG Over Time</h3>
+                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">MPG per Full Tank</h3>
                 <canvas id="mpgChart"></canvas>
             </div>
             <div>
-                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">Cost per Gallon Trend</h3>
+                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">Price per Gallon</h3>
                 <canvas id="costChart"></canvas>
+            </div>
+            <div>
+                <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.875rem; color: var(--light-text);">Spend and Miles per Month</h3>
+                <canvas id="monthlyChart"></canvas>
             </div>
         </div>
     </div>
@@ -172,6 +219,10 @@
         <svg class="chevron collapsed" id="chevron-stations" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
     <div class="collapsible-body collapsed" id="section-stations">
+        <div id="stationGradeFilter" style="margin-top: 1rem; display: none;">
+            <label for="stationGrade" class="hint">Compare one grade at a time:</label>
+            <select id="stationGrade" onchange="updateStationComparison()" style="width: auto; display: inline-block; margin-left: 0.5rem;"></select>
+        </div>
         <div id="stationComparison" class="table-container" style="margin-top: 1rem;">
             <p class="text-center" style="padding: 2rem;">No station data available</p>
         </div>
@@ -239,42 +290,71 @@
                 </div>
                 <div class="form-group">
                     <label for="odometer">Odometer *</label>
-                    <input type="number" id="odometer" name="odometer" min="0" required>
+                    <input type="number" id="odometer" name="odometer" min="0" step="1" required>
                 </div>
             </div>
 
             <div class="form-row">
                 <div class="form-group">
                     <label for="gallons">Gallons *</label>
-                    <input type="number" id="gallons" name="gallons" step="0.001" min="0" required>
+                    <input type="number" id="gallons" name="gallons" step="0.001" min="0" required oninput="fuelNumberEdited('gallons')">
+                </div>
+                <div class="form-group">
+                    <label for="pricePerGallon">Price per Gallon</label>
+                    <input type="number" id="pricePerGallon" step="0.001" min="0" oninput="fuelNumberEdited('pricePerGallon')">
                 </div>
                 <div class="form-group">
                     <label for="fuelCost">Total Cost *</label>
-                    <input type="number" id="fuelCost" name="cost" step="0.01" min="0" required>
+                    <input type="number" id="fuelCost" name="cost" step="0.01" min="0" required oninput="fuelNumberEdited('fuelCost')">
+                </div>
+            </div>
+            <p class="hint" style="margin: -0.5rem 0 1rem;">Enter any two of these and the third is filled in for you.</p>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="station">Station *</label>
+                    <input type="text" id="station" name="station" placeholder="e.g., Shell, BP Main St" list="stationList" required>
+                    <datalist id="stationList"></datalist>
+                </div>
+                <div class="form-group">
+                    <label for="fuelGrade">Grade</label>
+                    <select id="fuelGrade" name="grade">
+                        <option value="">Not recorded</option>
+                        <option>Regular</option>
+                        <option>Mid-grade</option>
+                        <option>Premium</option>
+                        <option>Diesel</option>
+                        <option>E85</option>
+                    </select>
                 </div>
             </div>
 
-            <div class="form-group">
-                <label for="station">Station *</label>
-                <input type="text" id="station" name="station" placeholder="e.g., Shell, BP Main St, Exxon Downtown" list="stationList" required>
-                <datalist id="stationList"></datalist>
-            </div>
-
             <div class="form-group" style="margin-top: 0.5rem;">
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: normal;">
-                    <input type="checkbox" id="missedFillup" name="missed_fillup" style="width: auto; margin: 0;">
-                    Missed a fill-up before this one
+                <label class="check-label">
+                    <input type="checkbox" id="fullTank" checked>
+                    Filled the tank
                 </label>
-                <small class="text-muted" id="missedFillupHint" style="display: none; color: var(--warning-color);">
-                    MPG will not be calculated since an intermediate fill-up was missed.
+                <small class="hint" id="fullTankHint" style="display: none;">
+                    A partial fill gets no MPG of its own; its gallons count toward the next full tank.
                 </small>
             </div>
 
-            <div class="alert alert-info">
-                <strong>Note:</strong> MPG will be automatically calculated based on the previous fill-up record.
+            <div class="form-group">
+                <label class="check-label">
+                    <input type="checkbox" id="missedFillup">
+                    Missed logging a fill-up before this one
+                </label>
+                <small class="hint" id="missedFillupHint" style="display: none; color: var(--warning-color);">
+                    MPG will not be calculated for this one, since some fuel was never logged.
+                </small>
             </div>
 
-            <button type="submit" class="btn btn-success">Add Fuel Record</button>
+            <div class="form-group">
+                <label for="fuelNotes">Notes</label>
+                <textarea id="fuelNotes" name="notes" rows="2" placeholder="Optional, e.g. towing, road trip, winter blend"></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-success" id="fuelSubmit">Add Fuel Record</button>
         </form>
     </div>
 </div>
@@ -290,26 +370,21 @@ function createFuelGauge(containerId, value, label, bestMpg = null) {
     // Use best MPG as max value (right side of gauge = best MPG)
     // If no best MPG, use 50 as default
     const maxValue = bestMpg && bestMpg > 0 ? bestMpg : 50;
-
-    // Clamp value between 0 and maxValue
     const clampedValue = Math.max(0, Math.min(value, maxValue));
 
-    // Calculate needle rotation (-90deg to 90deg, total 180deg)
-    // When value = maxValue (best MPG), needle points all the way right
+    // Needle rotation (-90deg to 90deg); pointing all the way right = best MPG
     const percentage = clampedValue / maxValue;
     const rotation = -90 + (percentage * 180);
 
-    // Determine color based on best MPG if available
     let color = '#27ae60'; // Green default
     if (bestMpg && bestMpg > 0 && value > 0) {
         const lossPercentage = ((bestMpg - value) / bestMpg) * 100;
-
         if (lossPercentage <= 3) {
-            color = '#27ae60'; // Green - within 3% of best
+            color = '#27ae60'; // within 3% of best
         } else if (lossPercentage <= 11) {
-            color = '#f39c12'; // Orange - 3-11% loss
+            color = '#f39c12'; // 3-11% loss
         } else {
-            color = '#e74c3c'; // Red - more than 11% loss
+            color = '#e74c3c'; // more than 11% loss
         }
     }
 
@@ -328,31 +403,33 @@ function createFuelGauge(containerId, value, label, bestMpg = null) {
 }
 
 let allFuelRecords = [];
-let filteredFuelRecords = [];
+let periodRecords = [];      // the records inside the chosen period
+let insights = null;
+let currentPeriod = localStorage.getItem('fuel-period') || 'all';
 let mpgChart = null;
 let costChart = null;
+let monthlyChart = null;
 let currentFuelPage = 1;
+let currentEditFuelId = null;
 const fuelItemsPerPage = 15;
+
+// ── Loading ─────────────────────────────────────────────────────────────────
 
 async function loadFuelRecords() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
         document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Please select a vehicle first</td></tr>';
+        document.getElementById('fuelMobileCards').innerHTML = '<p class="text-center">Please select a vehicle first</p>';
         document.getElementById('fuelPaginationControls').innerHTML = '';
         return;
     }
 
     try {
-        const records = await fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`);
-        allFuelRecords = records;
-        filteredFuelRecords = records;
-        currentFuelPage = 1;
+        allFuelRecords = await fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`);
         displayFuelRecords();
-        calculateStats(records);
-        updateCharts(records);
-        updateStationComparison(records);
-        updateStationDatalist(records);
+        updateStationDatalist(allFuelRecords);
         makeSortable(document.getElementById('fuelTable'));
+        await loadInsights();
     } catch (error) {
         console.error('Error loading fuel records:', error);
         document.getElementById('fuelTableBody').innerHTML = '<tr><td colspan="8" class="text-center">Error loading fuel records</td></tr>';
@@ -360,38 +437,101 @@ async function loadFuelRecords() {
     }
 }
 
+// Everything above the records list follows the chosen period
+async function loadInsights() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) return;
+    document.querySelectorAll('.period-buttons button').forEach(b => {
+        b.classList.toggle('active', b.dataset.period === currentPeriod);
+    });
+    try {
+        insights = await fetchAPI(`/api/fuel/insights?vehicle_id=${vehicleId}&period=${currentPeriod}`);
+    } catch (error) {
+        return;
+    }
+    periodRecords = allFuelRecords.filter(r => !insights.start_date || r.date >= insights.start_date);
+    displayStats();
+    updateCharts();
+    updateGradeFilter();
+    updateStationComparison();
+}
+
+function setPeriod(period) {
+    currentPeriod = period;
+    localStorage.setItem('fuel-period', period);
+    loadInsights();
+}
+
+function displayStats() {
+    const i = insights;
+    createFuelGauge('avgMpgGauge', i.avg_mpg || 0, 'Average MPG', i.best_mpg);
+    createFuelGauge('bestMpgGauge', i.best_mpg || 0, 'Best MPG', i.best_mpg);
+
+    document.getElementById('costPerMile').textContent = i.cost_per_mile !== null ? '$' + i.cost_per_mile.toFixed(3) : '—';
+    document.getElementById('costPerMileNote').textContent = i.cost_per_mile !== null
+        ? `${formatCurrency(i.cost_per_mile * 100)} per 100 miles` : 'Needs two fill-ups';
+    document.getElementById('milesDriven').textContent = i.miles ? i.miles.toLocaleString() + ' mi' : '—';
+    document.getElementById('fillUpCount').textContent = `${i.fill_ups} fill-up${i.fill_ups === 1 ? '' : 's'}`;
+    document.getElementById('totalSpent').textContent = formatCurrency(i.spent);
+    document.getElementById('avgPrice').textContent = i.avg_price_per_gallon !== null
+        ? `$${i.avg_price_per_gallon.toFixed(3)} per gallon on average` : '';
+    document.getElementById('totalGallons').textContent = i.gallons.toFixed(1) + ' gal';
+    document.getElementById('lowTanks').textContent = i.low_economy_tanks
+        ? `${i.low_economy_tanks} tank${i.low_economy_tanks === 1 ? '' : 's'} well below your usual MPG` : '';
+
+    const pace = i.pace;
+    document.getElementById('paceNote').innerHTML = pace.effective_miles_per_year
+        ? `Driving pace: about ${pace.effective_miles_per_year.toLocaleString()} miles a year (${pace.source === 'set' ? 'set by you' : 'estimated from your records'}). <a href="/services">Change it on the Maintenance Schedule</a>.`
+        : '';
+}
+
+// ── Records list ────────────────────────────────────────────────────────────
+
+function recordTags(record) {
+    let tags = '';
+    if (!record.full_tank) tags += ' <span class="tag tag-muted" title="Did not fill the tank; counted toward the next full tank">partial</span>';
+    if (record.missed_fillup) tags += ' <span class="tag tag-warn" title="A fill-up before this one was not logged">missed</span>';
+    return tags;
+}
+
+function mpgCell(record) {
+    if (!record.mpg) return '<span class="hint">—</span>';
+    const low = record.low_economy
+        ? ` <span class="tag tag-bad" title="Your recent tanks averaged ${record.recent_avg_mpg} MPG">low</span>` : '';
+    return record.mpg.toFixed(2) + low;
+}
+
 function displayFuelRecords() {
     const tbody = document.getElementById('fuelTableBody');
     const mobileCards = document.getElementById('fuelMobileCards');
     const paginationDiv = document.getElementById('fuelPaginationControls');
 
-    if (filteredFuelRecords.length === 0) {
+    if (allFuelRecords.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</td></tr>';
         mobileCards.innerHTML = '<p class="text-center">No fuel records found. Click "Add Fuel Record" to get started.</p>';
         paginationDiv.innerHTML = '';
         return;
     }
 
-    // Get paginated data
-    const paginatedRecords = paginateArray(filteredFuelRecords, currentFuelPage, fuelItemsPerPage);
-
-    // Desktop table view
+    const page = paginateArray(allFuelRecords, currentFuelPage, fuelItemsPerPage);
     let tableHtml = '';
-    paginatedRecords.forEach(record => {
+    let cardsHtml = '';
+    page.forEach(record => {
         const pricePerGal = record.cost / record.gallons;
-        const missedBadge = record.missed_fillup ? ' <span title="Missed fill-up before this one" style="font-size: 0.7rem; background: var(--warning-color); color: #fff; border-radius: 3px; padding: 1px 4px;">missed</span>' : '';
+        const station = escapeHtml(record.station || 'N/A')
+            + (record.grade ? `<span class="sub">${escapeHtml(record.grade)}</span>` : '');
         tableHtml += `
-            <tr>
-                <td>${formatDate(record.date)}${missedBadge}</td>
+            <tr${record.notes ? ` title="${escapeHtml(record.notes)}"` : ''}>
+                <td>${formatDate(record.date)}${recordTags(record)}</td>
                 <td>${record.odometer.toLocaleString()}</td>
                 <td>${record.gallons.toFixed(3)}</td>
                 <td>${formatCurrency(record.cost)}</td>
-                <td>${formatCurrency(pricePerGal)}</td>
-                <td>${escapeHtml(record.station || 'N/A')}</td>
-                <td>${record.mpg ? record.mpg.toFixed(2) : 'N/A'}</td>
+                <td>$${pricePerGal.toFixed(3)}</td>
+                <td>${station}</td>
+                <td>${mpgCell(record)}</td>
                 <td>
                     <div class="action-menu">
-                        <button class="menu-button" onclick="toggleFuelMenu(event, ${record.id})">&#8942;</button>
+                        <button class="menu-button" onclick="toggleFuelMenu(event, ${record.id})" aria-label="Actions">&#8942;</button>
                         <div class="menu-dropdown" id="fuel-menu-${record.id}">
                             <button onclick="editFuelRecord(${record.id})">Edit</button>
                             <button class="danger" onclick="deleteFuelRecord(${record.id})">Delete</button>
@@ -400,152 +540,125 @@ function displayFuelRecords() {
                 </td>
             </tr>
         `;
-    });
-    tbody.innerHTML = tableHtml;
-
-    // Mobile cards view
-    let cardsHtml = '';
-    paginatedRecords.forEach(record => {
-        const pricePerGal = record.cost / record.gallons;
-        const title = escapeHtml(record.station || 'Fuel Fill-up') + (record.missed_fillup ? ' <span style="font-size: 0.7rem; background: var(--warning-color); color: #fff; border-radius: 3px; padding: 1px 4px;">missed</span>' : '');
 
         const fields = [
             { label: 'Date', value: formatDate(record.date) },
             { label: 'Odometer', value: record.odometer.toLocaleString() + ' mi' },
             { label: 'Gallons', value: record.gallons.toFixed(2) + ' gal' },
             { label: 'Total Cost', value: formatCurrency(record.cost) },
-            { label: 'Price/Gal', value: formatCurrency(pricePerGal) }
+            { label: 'Price/Gal', value: '$' + pricePerGal.toFixed(3) }
         ];
+        if (record.mpg) fields.push({ label: 'MPG', value: mpgCell(record) });
+        if (record.grade) fields.push({ label: 'Grade', value: escapeHtml(record.grade) });
+        if (record.notes) fields.push({ label: 'Notes', value: escapeHtml(record.notes) });
 
-        if (record.mpg) {
-            fields.push({ label: 'MPG', value: `<strong style="color: var(--success-color)">${record.mpg.toFixed(1)}</strong>` });
-        }
-
-        if (record.station) {
-            fields.push({ label: 'Station', value: escapeHtml(record.station) });
-        }
-
-        const actions = [
+        cardsHtml += createMobileCard(escapeHtml(record.station || 'Fuel Fill-up') + recordTags(record), fields, [
             { label: 'Edit', class: 'btn-secondary', onclick: `editFuelRecord(${record.id})` },
             { label: 'Delete', class: 'btn-danger', onclick: `deleteFuelRecord(${record.id})` }
-        ];
-
-        cardsHtml += createMobileCard(title, fields, actions);
+        ]);
     });
+    tbody.innerHTML = tableHtml;
     mobileCards.innerHTML = cardsHtml;
-
-    // Display pagination controls
-    paginationDiv.innerHTML = createPagination(filteredFuelRecords.length, currentFuelPage, fuelItemsPerPage, 'goToFuelPage');
+    paginationDiv.innerHTML = createPagination(allFuelRecords.length, currentFuelPage, fuelItemsPerPage, 'goToFuelPage');
 }
 
 function goToFuelPage(page) {
     currentFuelPage = page;
     displayFuelRecords();
-    // Scroll to top of table
     document.getElementById('fuelTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function calculateStats(records) {
-    if (records.length === 0) {
-        createFuelGauge('avgMpgGauge', 0, 'Average MPG', null);
-        document.getElementById('totalGallons').textContent = '0 gal';
-        document.getElementById('totalSpent').textContent = '$0.00';
-        createFuelGauge('bestMpgGauge', 0, 'Best MPG', null);
-        return;
-    }
-
-    // Calculate total gallons
-    const totalGallons = records.reduce((sum, r) => sum + r.gallons, 0);
-    document.getElementById('totalGallons').textContent = totalGallons.toFixed(1) + ' gal';
-
-    // Calculate total spent
-    const totalSpent = records.reduce((sum, r) => sum + r.cost, 0);
-    document.getElementById('totalSpent').textContent = formatCurrency(totalSpent);
-
-    // Calculate average MPG
-    const recordsWithMpg = records.filter(r => r.mpg !== null && r.mpg > 0);
-    if (recordsWithMpg.length > 0) {
-        const avgMpg = weightedAvgMpg(recordsWithMpg);
-
-        // Find best MPG
-        const bestMpg = Math.max(...recordsWithMpg.map(r => r.mpg));
-
-        // Create gauges with best MPG for color calculation
-        createFuelGauge('avgMpgGauge', avgMpg, 'Average MPG', bestMpg);
-        createFuelGauge('bestMpgGauge', bestMpg, 'Best MPG', bestMpg);
-    } else {
-        createFuelGauge('avgMpgGauge', 0, 'Average MPG', null);
-        createFuelGauge('bestMpgGauge', 0, 'Best MPG', null);
-    }
-}
-
-let currentEditFuelId = null;
-
 function toggleFuelMenu(event, fuelId) {
     event.stopPropagation();
-    const button = event.target;
     const menu = document.getElementById(`fuel-menu-${fuelId}`);
-
-    // Close all other menus
     document.querySelectorAll('.menu-dropdown').forEach(m => {
         if (m !== menu) m.classList.remove('show');
     });
-
-    // If menu is being shown, position it
     if (!menu.classList.contains('show')) {
-        const rect = button.getBoundingClientRect();
+        const rect = event.target.getBoundingClientRect();
         menu.style.top = `${rect.bottom}px`;
         menu.style.left = `${rect.right - 150}px`; // 150px is the menu width
     }
-
     menu.classList.toggle('show');
 }
 
-// Close menus when clicking outside
 document.addEventListener('click', () => {
-    document.querySelectorAll('.menu-dropdown').forEach(m => {
-        m.classList.remove('show');
-    });
+    document.querySelectorAll('.menu-dropdown').forEach(m => m.classList.remove('show'));
 });
+
+// ── Fuel form ───────────────────────────────────────────────────────────────
+
+// Gallons, price per gallon and total cost: whichever two were typed most
+// recently decide the third.
+const FUEL_NUMBER_FIELDS = ['gallons', 'pricePerGallon', 'fuelCost'];
+let fuelEdited = [];
+
+function fuelNumberEdited(id) {
+    fuelEdited = fuelEdited.filter(x => x !== id);
+    fuelEdited.push(id);
+    if (fuelEdited.length < 2) return;
+
+    const [a, b] = fuelEdited.slice(-2);
+    const target = FUEL_NUMBER_FIELDS.find(x => x !== a && x !== b);
+    const value = name => parseFloat(document.getElementById(name).value);
+    const gallons = value('gallons'), price = value('pricePerGallon'), cost = value('fuelCost');
+    const out = document.getElementById(target);
+    if (target === 'fuelCost' && gallons > 0 && price >= 0) out.value = (gallons * price).toFixed(2);
+    if (target === 'pricePerGallon' && gallons > 0 && cost >= 0) out.value = (cost / gallons).toFixed(3);
+    if (target === 'gallons' && price > 0 && cost >= 0) out.value = (cost / price).toFixed(3);
+}
+
+function updateFuelHints() {
+    document.getElementById('fullTankHint').style.display = document.getElementById('fullTank').checked ? 'none' : 'block';
+    document.getElementById('missedFillupHint').style.display = document.getElementById('missedFillup').checked ? 'block' : 'none';
+}
+document.getElementById('fullTank').addEventListener('change', updateFuelHints);
+document.getElementById('missedFillup').addEventListener('change', updateFuelHints);
+
+function resetFuelForm() {
+    document.getElementById('fuelForm').reset();
+    currentEditFuelId = null;
+    fuelEdited = [];
+    updateFuelHints();
+    document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
+    document.getElementById('fuelSubmit').textContent = 'Add Fuel Record';
+}
+
+function openAddFuelModal() {
+    resetFuelForm();
+    document.getElementById('fuelDate').value = toISODate(new Date());
+    openModal('addFuelModal');
+}
 
 async function editFuelRecord(fuelId) {
     try {
         const record = await fetchAPI(`/api/fuel/${fuelId}`);
-        if (!record) return;
-
+        resetFuelForm();
         currentEditFuelId = fuelId;
 
-        // Populate form
         document.getElementById('fuelDate').value = record.date;
         document.getElementById('odometer').value = record.odometer;
         document.getElementById('gallons').value = record.gallons;
         document.getElementById('fuelCost').value = record.cost;
+        if (record.gallons > 0) {
+            document.getElementById('pricePerGallon').value = (record.cost / record.gallons).toFixed(3);
+        }
+        // Changing one of gallons / cost keeps the other and updates the price
+        fuelEdited = ['gallons', 'fuelCost'];
         document.getElementById('station').value = record.station || '';
-        const missedCb = document.getElementById('missedFillup');
-        missedCb.checked = !!record.missed_fillup;
-        document.getElementById('missedFillupHint').style.display = missedCb.checked ? 'block' : 'none';
+        document.getElementById('fuelGrade').value = record.grade || '';
+        document.getElementById('fullTank').checked = record.full_tank;
+        document.getElementById('missedFillup').checked = record.missed_fillup;
+        document.getElementById('fuelNotes').value = record.notes || '';
+        updateFuelHints();
 
-        // Update modal title
         document.querySelector('#addFuelModal h3').textContent = 'Edit Fuel Record';
-
+        document.getElementById('fuelSubmit').textContent = 'Save Fuel Record';
         openModal('addFuelModal');
     } catch (error) {
-        console.error('Error loading fuel record:', error);
+        showAlert(error.message, 'danger');
     }
 }
-
-function openAddFuelModal() {
-    currentEditFuelId = null;
-    document.getElementById('fuelForm').reset();
-    document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
-    document.getElementById('fuelDate').value = toISODate(new Date());
-    document.getElementById('missedFillupHint').style.display = 'none';
-    openModal('addFuelModal');
-}
-
-document.getElementById('missedFillup').addEventListener('change', function() {
-    document.getElementById('missedFillupHint').style.display = this.checked ? 'block' : 'none';
-});
 
 async function addFuelRecord(event) {
     event.preventDefault();
@@ -556,50 +669,49 @@ async function addFuelRecord(event) {
         return;
     }
 
-    const form = document.getElementById('fuelForm');
-    const formData = new FormData(form);
-
+    const value = id => document.getElementById(id).value;
     const data = {
         vehicle_id: vehicleId,
-        date: formData.get('date'),
-        gallons: parseFloat(formData.get('gallons')),
-        cost: parseFloat(formData.get('cost')),
-        odometer: parseInt(formData.get('odometer')),
-        station: formData.get('station') || '',
+        date: value('fuelDate'),
+        odometer: value('odometer'),
+        gallons: value('gallons'),
+        cost: value('fuelCost'),
+        station: value('station'),
+        grade: value('fuelGrade'),
+        notes: value('fuelNotes'),
+        full_tank: document.getElementById('fullTank').checked,
         missed_fillup: document.getElementById('missedFillup').checked
     };
 
     try {
-        let result;
-        if (currentEditFuelId) {
-            // Update existing record
-            result = await putJSON(`/api/fuel/${currentEditFuelId}`, data);
-            showAlert('Fuel record updated successfully!', 'success');
-        } else {
-            // Add new record
-            result = await postJSON('/api/fuel', data);
-            showAlert('Fuel record added successfully!', 'success');
-        }
+        const editing = currentEditFuelId;
+        const result = await fetchAPI(editing ? `/api/fuel/${editing}` : '/api/fuel', {
+            method: editing ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        showAlert(editing ? 'Fuel record updated' : 'Fuel record added', 'success');
+        if (result.warning) showAlert(result.warning, 'warning');
+        if (result.economy_alert) showAlert(result.economy_alert, 'warning');
 
-        if (result.success) {
-            form.reset();
-            currentEditFuelId = null;
-            document.querySelector('#addFuelModal h3').textContent = 'Add Fuel Record';
-            closeModal('addFuelModal');
-            await loadFuelRecords();
+        resetFuelForm();
+        closeModal('addFuelModal');
+        await loadFuelRecords();
 
-            // Show MPG popup if calculated (only for new records)
-            if (result.mpg && !currentEditFuelId) {
-                showMpgPopup(result.mpg, data.gallons, data.cost);
-            }
+        // Celebrate a freshly calculated MPG on new records
+        if (result.mpg && !editing) {
+            showMpgPopup(result.mpg, parseFloat(data.gallons), parseFloat(data.cost));
         }
     } catch (error) {
-        console.error('Error saving fuel record:', error);
+        showAlert(error.message, 'danger');
     }
 }
 
 function showMpgPopup(mpg, gallons, cost) {
-    const pricePerGal = (cost / gallons).toFixed(2);
+    const record = allFuelRecords.find(r => r.mpg === mpg && r.trip_miles);
+    const span = record && record.trip_gallons > gallons + 0.0005
+        ? `<p>${record.trip_miles.toLocaleString()} miles on ${record.trip_gallons.toFixed(2)} gallons since your last full tank</p>`
+        : `<p>You added ${gallons.toFixed(2)} gallons</p>`;
     const popup = document.createElement('div');
     popup.className = 'modal';
     popup.style.display = 'block';
@@ -614,8 +726,8 @@ function showMpgPopup(mpg, gallons, cost) {
                     ${mpg} MPG
                 </div>
                 <div style="font-size: 1.2rem; color: var(--dark-text);">
-                    <p>You added ${gallons.toFixed(2)} gallons</p>
-                    <p>At ${formatCurrency(parseFloat(pricePerGal))} per gallon</p>
+                    ${span}
+                    <p>At $${(cost / gallons).toFixed(3)} per gallon</p>
                     <p style="margin-top: 1rem;">Total Cost: ${formatCurrency(cost)}</p>
                 </div>
             </div>
@@ -629,25 +741,17 @@ async function deleteFuelRecord(fuelId) {
     if (!confirm('Are you sure you want to delete this fuel record?')) {
         return;
     }
-
     try {
-        await deleteAPI(`/api/fuel/${fuelId}`);
-        showAlert('Fuel record deleted successfully!', 'success');
+        await fetchAPI(`/api/fuel/${fuelId}`, { method: 'DELETE' });
+        showAlert('Fuel record deleted', 'success');
         await loadFuelRecords();
     } catch (error) {
-        console.error('Error deleting fuel record:', error);
+        showAlert(error.message, 'danger');
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    initSections();
-    appReady.then(loadFuelRecords);
+// ── CSV ─────────────────────────────────────────────────────────────────────
 
-    // Set default date to today
-    document.getElementById('fuelDate').value = toISODate(new Date());
-});
-
-// CSV Import/Export functions
 function downloadTemplate() {
     window.location.href = '/api/fuel/template-csv';
 }
@@ -655,226 +759,168 @@ function downloadTemplate() {
 function exportCSV() {
     const vehicleId = getCurrentVehicleId();
     if (!vehicleId) {
-        showAlert('Please select a vehicle first', 'error');
+        showAlert('Please select a vehicle first', 'warning');
         return;
     }
     window.location.href = `/api/fuel/export-csv?vehicle_id=${vehicleId}`;
 }
 
 async function importCSV(event) {
-    const vehicleId = getCurrentVehicleId();
-    if (!vehicleId) {
-        showAlert('Please select a vehicle first', 'error');
-        return;
-    }
-
     const file = event.target.files[0];
     if (!file) return;
+
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        showAlert('Please select a vehicle first', 'warning');
+        event.target.value = '';
+        return;
+    }
 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('vehicle_id', vehicleId);
-
     try {
-        const response = await fetch('/api/fuel/import-csv', {
-            method: 'POST',
-            body: formData
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            let message = `Successfully imported ${result.imported} fuel records.`;
-            if (result.errors && result.errors.length > 0) {
-                message += `\n\nErrors:\n${result.errors.join('\n')}`;
-            }
-            showAlert(message, result.errors.length > 0 ? 'warning' : 'success');
-            await loadFuelRecords();
-        } else {
-            showAlert(result.error || 'Failed to import CSV', 'error');
+        const result = await fetchAPI('/api/fuel/import-csv', { method: 'POST', body: formData });
+        let message = `Imported ${result.imported} fuel record(s)`;
+        if (result.skipped) message += `, skipped ${result.skipped} already there`;
+        if (result.errors && result.errors.length > 0) {
+            message += `. Problems: ${result.errors.join('; ')}`;
         }
+        showAlert(message, result.errors.length > 0 ? 'warning' : 'success');
+        await loadFuelRecords();
     } catch (error) {
-        console.error('Error importing CSV:', error);
-        showAlert('Failed to import CSV file', 'error');
+        showAlert(`Import failed: ${error.message}`, 'danger');
+    } finally {
+        event.target.value = '';
     }
-
-    // Reset file input
-    event.target.value = '';
 }
 
-function updateCharts(records) {
+// ── Charts ──────────────────────────────────────────────────────────────────
+
+function lineChart(canvasId, labels, datasets, yTitle, yTick) {
+    return new Chart(document.getElementById(canvasId).getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { display: datasets.length > 1, position: 'bottom' } },
+            scales: {
+                y: { beginAtZero: false, title: { display: true, text: yTitle }, ticks: yTick ? { callback: yTick } : {} },
+                x: { title: { display: true, text: 'Date' } }
+            }
+        }
+    });
+}
+
+function updateCharts() {
     // Charts are optional: if Chart.js failed to load, still show the records
     if (typeof Chart === 'undefined') return;
+    [mpgChart, costChart, monthlyChart].forEach(chart => { if (chart) chart.destroy(); });
+    mpgChart = costChart = monthlyChart = null;
 
-    // Filter records with MPG data and sort by date
-    const recordsWithMpg = records.filter(r => r.mpg !== null && r.mpg > 0)
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const byDate = periodRecords.slice().sort((a, b) => a.date.localeCompare(b.date) || a.odometer - b.odometer);
 
-    if (recordsWithMpg.length === 0) {
-        // Destroy existing charts if no data
-        if (mpgChart) {
-            mpgChart.destroy();
-            mpgChart = null;
-        }
-        if (costChart) {
-            costChart.destroy();
-            costChart = null;
-        }
-        return;
+    // Only full tanks have an MPG. The rolling line is miles over gallons
+    // for the last five tanks, so one odd tank doesn't dominate.
+    const tanks = byDate.filter(r => r.mpg > 0);
+    if (tanks.length > 0) {
+        const rolling = tanks.map((_, index) => {
+            const window = tanks.slice(Math.max(0, index - 4), index + 1);
+            const miles = window.reduce((sum, r) => sum + r.trip_miles, 0);
+            const gallons = window.reduce((sum, r) => sum + r.trip_gallons, 0);
+            return gallons > 0 ? +(miles / gallons).toFixed(2) : null;
+        });
+        mpgChart = lineChart('mpgChart', tanks.map(r => formatDate(r.date)), [
+            { label: 'Each tank', data: tanks.map(r => r.mpg), borderColor: 'rgba(75, 192, 192, 0.45)',
+              backgroundColor: tanks.map(r => r.low_economy ? '#ef4444' : 'rgb(75, 192, 192)'),
+              pointRadius: 4, borderWidth: 1, tension: 0 },
+            { label: '5-tank average', data: rolling, borderColor: 'rgb(99, 102, 241)',
+              backgroundColor: 'rgb(99, 102, 241)', pointRadius: 0, borderWidth: 2.5, tension: 0.3 }
+        ], 'Miles per Gallon');
     }
 
-    // Prepare data for MPG chart
-    const mpgLabels = recordsWithMpg.map(r => formatDate(r.date));
-    const mpgData = recordsWithMpg.map(r => r.mpg);
-
-    // Prepare data for cost chart
-    const costLabels = records.map(r => formatDate(r.date)).reverse();
-    const costData = records.map(r => (r.cost / r.gallons).toFixed(2)).reverse();
-
-    // Create or update MPG chart
-    const mpgCtx = document.getElementById('mpgChart').getContext('2d');
-    if (mpgChart) {
-        mpgChart.destroy();
+    const priced = byDate.filter(r => r.gallons > 0);
+    if (priced.length > 0) {
+        costChart = lineChart('costChart', priced.map(r => formatDate(r.date)), [
+            { label: 'Price per Gallon', data: priced.map(r => +(r.cost / r.gallons).toFixed(3)),
+              borderColor: 'rgb(255, 99, 132)', backgroundColor: 'rgba(255, 99, 132, 0.2)', tension: 0.3, fill: true }
+        ], 'Price ($)', value => '$' + Number(value).toFixed(2));
     }
-    mpgChart = new Chart(mpgCtx, {
-        type: 'line',
-        data: {
-            labels: mpgLabels,
-            datasets: [{
-                label: 'MPG',
-                data: mpgData,
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    display: false
-                }
+
+    if (insights && insights.monthly.length > 0) {
+        const months = insights.monthly;
+        monthlyChart = new Chart(document.getElementById('monthlyChart').getContext('2d'), {
+            data: {
+                labels: months.map(m => {
+                    const [year, month] = m.month.split('-');
+                    return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                }),
+                datasets: [
+                    { type: 'bar', label: 'Spent', data: months.map(m => m.spent), yAxisID: 'y',
+                      backgroundColor: 'rgba(99, 102, 241, 0.6)' },
+                    { type: 'line', label: 'Miles', data: months.map(m => m.miles), yAxisID: 'miles',
+                      borderColor: 'rgb(16, 185, 129)', backgroundColor: 'rgb(16, 185, 129)', tension: 0.3 }
+                ]
             },
-            scales: {
-                y: {
-                    beginAtZero: false,
-                    title: {
-                        display: true,
-                        text: 'Miles per Gallon'
-                    }
-                },
-                x: {
-                    title: {
-                        display: true,
-                        text: 'Date'
-                    }
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: { legend: { position: 'bottom' } },
+                scales: {
+                    y: { beginAtZero: true, title: { display: true, text: 'Spent ($)' },
+                         ticks: { callback: value => '$' + value } },
+                    miles: { beginAtZero: true, position: 'right', title: { display: true, text: 'Miles' },
+                             grid: { drawOnChartArea: false } }
                 }
             }
-        }
-    });
-
-    // Create or update cost chart
-    const costCtx = document.getElementById('costChart').getContext('2d');
-    if (costChart) {
-        costChart.destroy();
+        });
     }
-    costChart = new Chart(costCtx, {
-        type: 'line',
-        data: {
-            labels: costLabels,
-            datasets: [{
-                label: 'Price per Gallon',
-                data: costData,
-                borderColor: 'rgb(255, 99, 132)',
-                backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: false,
-                    title: {
-                        display: true,
-                        text: 'Price ($)'
-                    },
-                    ticks: {
-                        callback: function(value) {
-                            return '$' + value.toFixed(2);
-                        }
-                    }
-                },
-                x: {
-                    title: {
-                        display: true,
-                        text: 'Date'
-                    }
-                }
-            }
-        }
-    });
 }
 
-function updateStationComparison(records) {
-    const container = document.getElementById('stationComparison');
+// ── Station comparison ──────────────────────────────────────────────────────
 
-    // Group records by station
+function updateGradeFilter() {
+    const grades = [...new Set(periodRecords.map(r => r.grade).filter(Boolean))].sort();
+    const select = document.getElementById('stationGrade');
+    const chosen = select.value;
+    select.innerHTML = '<option value="">All grades</option>';
+    grades.forEach(grade => select.appendChild(new Option(grade, grade)));
+    select.value = grades.includes(chosen) ? chosen : '';
+    // Only worth showing when there is more than one kind of fuel to tell apart
+    document.getElementById('stationGradeFilter').style.display = grades.length > 1 ? 'block' : 'none';
+}
+
+function updateStationComparison() {
+    const container = document.getElementById('stationComparison');
+    const grade = document.getElementById('stationGrade').value;
+    const records = periodRecords.filter(r => !grade || r.grade === grade);
+
     const stationData = {};
     records.forEach(record => {
-        const station = record.station || 'Unknown';
-        if (!stationData[station]) {
-            stationData[station] = {
-                name: station,
-                totalCost: 0,
-                totalGallons: 0,
-                visits: 0,
-                mpgRecords: []
-            };
-        }
-
-        stationData[station].totalCost += record.cost;
-        stationData[station].totalGallons += record.gallons;
-        stationData[station].visits += 1;
-
-        if (record.mpg && record.mpg > 0) {
-            stationData[station].mpgRecords.push(record);
-        }
+        const name = record.station || 'Unknown';
+        const station = stationData[name] || (stationData[name] = { name, totalCost: 0, totalGallons: 0, visits: 0, mpgRecords: [] });
+        station.totalCost += record.cost;
+        station.totalGallons += record.gallons;
+        station.visits += 1;
+        if (record.mpg > 0) station.mpgRecords.push(record);
     });
 
-    // Convert to array and calculate averages
-    const stations = Object.values(stationData).map(station => {
-        const avgPricePerGal = station.totalGallons > 0 ? station.totalCost / station.totalGallons : 0;
-        const avgMpg = weightedAvgMpg(station.mpgRecords);
-
-        return {
-            name: station.name,
-            avgPricePerGal: avgPricePerGal,
-            avgMpg: avgMpg,
-            totalGallons: station.totalGallons,
-            visits: station.visits
-        };
-    });
-
-    // Sort by visits (most used stations first)
-    stations.sort((a, b) => b.visits - a.visits);
+    const stations = Object.values(stationData).map(station => ({
+        name: station.name,
+        avgPricePerGal: station.totalGallons > 0 ? station.totalCost / station.totalGallons : 0,
+        avgMpg: weightedAvgMpg(station.mpgRecords),
+        totalGallons: station.totalGallons,
+        visits: station.visits
+    })).sort((a, b) => b.visits - a.visits);
 
     if (stations.length === 0) {
-        container.innerHTML = '<p class="text-center" style="padding: 2rem;">No station data available</p>';
+        container.innerHTML = '<p class="text-center" style="padding: 2rem;">No station data for this period</p>';
         return;
     }
 
-    // Create table
-    let html = `
+    const cheapest = Math.min(...stations.map(s => s.avgPricePerGal));
+    container.innerHTML = `
         <table>
             <thead>
                 <tr>
@@ -886,27 +932,21 @@ function updateStationComparison(records) {
                 </tr>
             </thead>
             <tbody>
-    `;
-
-    stations.forEach(station => {
-        html += `
-            <tr>
-                <td><strong>${escapeHtml(station.name)}</strong></td>
-                <td>${station.visits}</td>
-                <td>${station.totalGallons.toFixed(1)} gal</td>
-                <td>${formatCurrency(station.avgPricePerGal)}</td>
-                <td>${station.avgMpg > 0 ? station.avgMpg.toFixed(2) : 'N/A'}</td>
-            </tr>
-        `;
-    });
-
-    html += `
+                ${stations.map(station => `
+                    <tr>
+                        <td><strong>${escapeHtml(station.name)}</strong></td>
+                        <td>${station.visits}</td>
+                        <td>${station.totalGallons.toFixed(1)} gal</td>
+                        <td>$${station.avgPricePerGal.toFixed(3)}${stations.length > 1 && station.avgPricePerGal === cheapest ? ' <span class="tag tag-muted">lowest</span>' : ''}</td>
+                        <td>${station.avgMpg > 0 ? station.avgMpg.toFixed(2) : 'N/A'}</td>
+                    </tr>
+                `).join('')}
             </tbody>
         </table>
     `;
-
-    container.innerHTML = html;
 }
+
+// ── Collapsible sections ────────────────────────────────────────────────────
 
 function toggleSection(name) {
     const body = document.getElementById(`section-${name}`);
@@ -934,19 +974,15 @@ function initSections() {
 }
 
 function updateStationDatalist(records) {
-    const datalist = document.getElementById('stationList');
-    const stations = new Set();
-
-    records.forEach(record => {
-        if (record.station && record.station.trim() !== '') {
-            stations.add(record.station);
-        }
-    });
-
-    datalist.innerHTML = Array.from(stations)
-        .sort()
+    const stations = [...new Set(records.map(r => (r.station || '').trim()).filter(Boolean))].sort();
+    document.getElementById('stationList').innerHTML = stations
         .map(station => `<option value="${escapeHtml(station)}">`)
         .join('');
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    initSections();
+    appReady.then(loadFuelRecords);
+});
 </script>
 {% endblock %}

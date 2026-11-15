@@ -39,12 +39,14 @@ A comprehensive web-based vehicle maintenance tracking application designed for 
 - Optional re-order reminder when stock falls to a level you choose
 
 ✅ **Fuel Tracking**
-- Record fill-ups with location
-- Automatic MPG calculation with visual popup display
-- Track total fuel purchased and spent
-- View best MPG and average MPG statistics
-- Sortable fuel history table
-- Beautiful MPG popup shows fuel economy after each fill-up
+- Record fill-ups with station, optional grade and notes; enter any two of gallons, price per gallon and total
+- MPG measured from full tank to full tank, so partial fill-ups don't distort it
+- Statistics for the last 30 days, this year, 12 months or all time: average and best MPG, cost per mile, miles driven, spend
+- Charts for MPG per tank with a rolling average, price per gallon, and spend and miles per month
+- Flags a tank that comes in well below your recent average
+- Station comparison, by fuel grade when you record it
+- Driving pace (miles per year, set by you or estimated from your records) gives mileage-based reminders an expected date
+- CSV import (skips rows already imported) and export
 
 ✅ **Service Reminders**
 - Set reminders by date and/or mileage
@@ -432,6 +434,14 @@ For issues, questions, or feature requests:
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 3.2.0
+- **Partial fill-ups**: untick "Filled the tank" and the gallons count toward the next full tank's MPG. Existing fill-ups all count as full tanks, so current numbers don't change
+- **Fuel insights by period**: cost per mile, miles driven and monthly spend, for 30 days, this year, 12 months or all time
+- **Driving pace and projected dates**: set miles per year per vehicle (or use the estimate from your records) and mileage-based reminders and scheduled services show an expected date
+- **Faster entry**: any two of gallons, price per gallon and total fill in the third; odometer check on save
+- **Economy drop alert**, **fuel grade and notes**, rolling-average MPG chart, station comparison by grade
+- CSV import skips rows already there and carries the full-tank and missed-fill-up flags
 
 ### Version 3.1.0
 - **Service line items**: list the work done on each record from a list of service types (a starter list is included; add your own). Line prices are optional and only break down the total bill
