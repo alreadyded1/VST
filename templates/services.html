@@ -150,6 +150,11 @@
             <button class="btn btn-primary" onclick="addServiceType()">Add Service Type</button>
         </div>
         <p class="hint mb-2">Give a type of work an interval and a reminder is kept up to date for you: each time you log that work, the reminder moves to the next due date or mileage. Intervals are set per vehicle. <span id="scheduleOdometer"></span></p>
+        <p class="mb-2" id="paceLine" style="display: none; font-size: 0.9rem;">
+            <strong>Driving pace:</strong> <span id="paceText"></span>
+            <button class="btn btn-small btn-secondary" onclick="openPaceModal()" style="margin-left: 0.5rem;">Change</button>
+            <span class="sub">Used to estimate the date a mileage-based service will come due.</span>
+        </p>
 
         <div class="mobile-cards" id="scheduleMobileCards"></div>
         <div class="table-container has-mobile-cards">
@@ -338,6 +343,27 @@
                 <div id="viewReceipt" style="margin: 0.5rem 0;"></div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Set driving pace -->
+<div id="paceModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Driving Pace</h3>
+            <button class="close" onclick="closeModal('paceModal')">&times;</button>
+        </div>
+        <form id="paceForm" onsubmit="savePace(event)">
+            <p class="hint" style="margin-bottom: 1rem;">How many miles a year this vehicle is driven. It turns "due at 59,500 miles" into an estimated date, here and on the Reminders page. <span id="paceEstimate"></span></p>
+            <div class="form-group">
+                <label for="paceMiles">Miles per year</label>
+                <input type="number" id="paceMiles" min="0" step="1" placeholder="e.g., 12000">
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="submit" class="btn btn-success">Save</button>
+                <button type="button" class="btn btn-secondary" id="paceUseEstimate" onclick="putPace('')">Use the Estimate From My Records</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -986,7 +1012,57 @@ function nextDueText(row) {
     if (row.days_remaining !== null) {
         left.push(row.days_remaining < 0 ? `${Math.abs(row.days_remaining)} days over` : `${row.days_remaining} days left`);
     }
-    return `<span class="pill ${pill[0]}">${pill[1]}</span><span class="sub">${due.join(' or ')}</span><span class="sub">${left.join(' · ')}</span>`;
+    // When the mileage point should arrive at this vehicle's driving pace
+    const projected = row.projected_date
+        ? `<span class="sub">${row.next_due_mileage.toLocaleString()} mi expected around ${formatDate(row.projected_date)}</span>` : '';
+    return `<span class="pill ${pill[0]}">${pill[1]}</span><span class="sub">${due.join(' or ')}</span><span class="sub">${left.join(' · ')}</span>${projected}`;
+}
+
+// ── Driving pace ────────────────────────────────────────────────────────────
+
+let drivingPace = null;
+
+function displayPace() {
+    const pace = drivingPace;
+    document.getElementById('paceLine').style.display = 'block';
+    document.getElementById('paceText').textContent = pace.effective_miles_per_year
+        ? `${pace.effective_miles_per_year.toLocaleString()} miles a year (${pace.source === 'set' ? 'set by you' : 'estimated from your fuel and service records'})`
+        : 'not known yet — set it, or log a month of fuel or service records';
+}
+
+function openPaceModal() {
+    const pace = drivingPace || {};
+    document.getElementById('paceMiles').value = pace.miles_per_year || '';
+    document.getElementById('paceEstimate').textContent = pace.estimated_miles_per_year
+        ? `Your records suggest about ${pace.estimated_miles_per_year.toLocaleString()} miles a year.`
+        : 'There are not enough records yet to estimate it.';
+    document.getElementById('paceUseEstimate').style.display = pace.miles_per_year ? 'inline-block' : 'none';
+    openModal('paceModal');
+}
+
+async function putPace(miles) {
+    try {
+        await fetchAPI(`/api/vehicle/${getCurrentVehicleId()}/driving-pace`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ miles_per_year: miles })
+        });
+        closeModal('paceModal');
+        showAlert('Driving pace updated', 'success');
+        await loadMaintenance();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+function savePace(event) {
+    event.preventDefault();
+    const miles = document.getElementById('paceMiles').value;
+    if (!Number(miles)) {
+        showAlert('Enter the miles per year', 'warning');
+        return;
+    }
+    putPace(miles);
 }
 
 function spentText(row) {
@@ -1012,6 +1088,8 @@ async function loadMaintenance() {
     try {
         const data = await fetchAPI(`/api/maintenance?vehicle_id=${vehicleId}`);
         maintenance = data.types;
+        drivingPace = data.pace;
+        displayPace();
         document.getElementById('scheduleOdometer').textContent = data.current_odometer !== null
             ? `Current odometer: ${data.current_odometer.toLocaleString()} mi (latest service or fuel record).`
             : '';

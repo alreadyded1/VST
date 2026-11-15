@@ -39,13 +39,17 @@ function closeMobileMenu() {
     if (overlay) overlay.classList.remove('open');
 }
 
-// Average MPG as total miles / total gallons over fill-ups that have an MPG
-// (miles = mpg * gallons), so a small top-up doesn't count as much as a full
-// tank. Matches the server's weighted_avg_mpg(). Returns 0 if none qualify.
+// Average MPG as total miles / total gallons over the full-tank spans that
+// have an MPG, so a short span doesn't count as much as a long one. A span
+// can cover several fill-ups (trip_miles / trip_gallons). Matches the
+// server's weighted_avg_mpg(). Returns 0 if none qualify.
 function weightedAvgMpg(records) {
     let miles = 0, gallons = 0;
     records.forEach(r => {
-        if (r.mpg > 0 && r.gallons > 0) {
+        if (r.mpg > 0 && r.trip_gallons > 0) {
+            miles += r.trip_miles;
+            gallons += r.trip_gallons;
+        } else if (r.mpg > 0 && r.gallons > 0) {
             miles += r.mpg * r.gallons;
             gallons += r.gallons;
         }

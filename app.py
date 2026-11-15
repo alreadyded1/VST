@@ -850,6 +850,32 @@ def init_db():
             db.execute("INSERT INTO settings (key, value) VALUES ('service_attachments_migrated', '1')")
             db.commit()
 
+        for migration in (
+                # 0 for a fill-up that didn't fill the tank; its gallons count
+                # toward the next full tank's MPG
+                'ALTER TABLE fuel_records ADD COLUMN full_tank INTEGER DEFAULT 1',
+                'ALTER TABLE fuel_records ADD COLUMN grade TEXT',
+                'ALTER TABLE fuel_records ADD COLUMN notes TEXT',
+                # Miles and gallons of the full-tank span an MPG covers
+                'ALTER TABLE fuel_records ADD COLUMN trip_miles INTEGER',
+                'ALTER TABLE fuel_records ADD COLUMN trip_gallons REAL',
+                # Driving pace set by the owner, for projecting mileage due dates
+                'ALTER TABLE vehicle ADD COLUMN miles_per_year INTEGER'):
+            try:
+                db.execute(migration)
+                db.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
+        # One-time: fill in the span columns for existing fuel records
+        # (every existing fill-up counts as a full tank, so MPG is unchanged)
+        if not db.execute("SELECT 1 FROM settings WHERE key = 'fuel_trips_calculated'").fetchone():
+            for v in db.execute('SELECT id FROM vehicle').fetchall():
+                recalculate_mpg(db, v['id'])
+            db.execute("INSERT INTO settings (key, value) VALUES ('fuel_trips_calculated', '1')")
+            db.commit()
+
         # One-time repair: MPG used to be computed only at insert time, so
         # edits, deletions and backdated fill-ups left stale values behind.
         if not db.execute("SELECT 1 FROM settings WHERE key = 'mpg_recalculated'").fetchone():
@@ -1300,12 +1326,12 @@ def api_logout():
 
 
 def weighted_avg_mpg(db, vehicle_id):
-    """Average MPG as total miles / total gallons over fill-ups that have an
-    MPG, or None. A plain average of per-fill-up MPG would let a small top-up
-    count as much as a full tank. Each record's miles are mpg * gallons."""
-    row = db.execute('''SELECT SUM(mpg * gallons) / SUM(gallons) AS avg
+    """Average MPG as total miles / total gallons over the full-tank spans
+    that have an MPG, or None. A plain average of per-tank MPG would let a
+    short span count as much as a long one."""
+    row = db.execute('''SELECT SUM(trip_miles) * 1.0 / SUM(trip_gallons) AS avg
                         FROM fuel_records
-                        WHERE vehicle_id = ? AND mpg > 0 AND gallons > 0''',
+                        WHERE vehicle_id = ? AND mpg > 0 AND trip_gallons > 0''',
                      (vehicle_id,)).fetchone()
     return round(row['avg'], 2) if row['avg'] else None
 
@@ -1892,17 +1918,18 @@ def _sync_receipt_path(db, service_id):
                                       WHERE service_id = ? ORDER BY id LIMIT 1)
                   WHERE id = ?''', (service_id, service_id))
 
-def odometer_warning(db, vehicle_id, service_id, service_date, odometer):
+def odometer_warning(db, vehicle_id, record_date, odometer, service_id=None, fuel_id=None):
     """A message if this reading is out of step with the vehicle's other
-    service and fuel records, else None. Readings feed mileage warranties
-    and maintenance intervals, so a typo here matters."""
+    service and fuel records, else None. Readings feed MPG, mileage
+    warranties and maintenance intervals, so a typo here matters. Pass the
+    id of the record being saved so it isn't compared with itself."""
     if odometer is None:
         return None
     readings = '''SELECT date, odometer FROM service_records
                   WHERE vehicle_id = :v AND id != :s AND odometer IS NOT NULL
                   UNION ALL
-                  SELECT date, odometer FROM fuel_records WHERE vehicle_id = :v'''
-    params = {'v': vehicle_id, 's': service_id, 'd': service_date}
+                  SELECT date, odometer FROM fuel_records WHERE vehicle_id = :v AND id != :f'''
+    params = {'v': vehicle_id, 's': service_id or 0, 'f': fuel_id or 0, 'd': record_date}
     earlier = db.execute(f'SELECT MAX(odometer) AS o FROM ({readings}) WHERE date < :d', params).fetchone()['o']
     later = db.execute(f'SELECT MIN(odometer) AS o FROM ({readings}) WHERE date > :d', params).fetchone()['o']
     if earlier is not None and odometer < earlier:
@@ -1949,7 +1976,7 @@ def add_service():
             _sync_receipt_path(db, service_id)
             for type_id in service_type_ids(db, service_id):
                 refresh_schedule_reminder(db, vehicle_id, type_id)
-            warning = odometer_warning(db, vehicle_id, service_id, fields['date'], fields['odometer'])
+            warning = odometer_warning(db, vehicle_id, fields['date'], fields['odometer'], service_id=service_id)
     except Exception:
         for path, _ in uploads:
             remove_upload(path)
@@ -2015,7 +2042,7 @@ def update_service(service_id):
 
             for type_id in affected_types | service_type_ids(db, service_id):
                 refresh_schedule_reminder(db, vehicle_id, type_id)
-            warning = odometer_warning(db, vehicle_id, service_id, fields['date'], fields['odometer'])
+            warning = odometer_warning(db, vehicle_id, fields['date'], fields['odometer'], service_id=service_id)
     except Exception:
         for path, _ in uploads:
             remove_upload(path)
@@ -2195,6 +2222,7 @@ def get_maintenance():
                            JOIN service_records s ON s.id = si.service_id
                            WHERE s.vehicle_id = ?''', (vehicle_id,)).fetchall()
     odometer = latest_odometer(db, vehicle_id)
+    pace = driving_pace(db, vehicle_id)
     db.close()
 
     today = datetime.now().date()
@@ -2228,6 +2256,7 @@ def get_maintenance():
             'days_since': None, 'miles_since': None,
             'next_due_date': None, 'next_due_mileage': None,
             'days_remaining': None, 'miles_remaining': None, 'status': None,
+            'projected_date': None,
         }
         if last:
             last_date = _parse_date(last['date'])
@@ -2239,6 +2268,7 @@ def get_maintenance():
                 due_date, due_mileage = next_due(last['date'], last['odometer'],
                                                  t['interval_miles'], t['interval_months'])
                 row['next_due_date'], row['next_due_mileage'] = due_date, due_mileage
+                row['projected_date'] = projected_date(due_mileage, odometer, pace['effective_miles_per_year'])
                 overdue = soon = False
                 if due_date:
                     row['days_remaining'] = (_parse_date(due_date) - today).days
@@ -2251,7 +2281,7 @@ def get_maintenance():
                 if due_date or due_mileage is not None:
                     row['status'] = 'overdue' if overdue else 'due_soon' if soon else 'ok'
         result.append(row)
-    return jsonify({'current_odometer': odometer, 'types': result})
+    return jsonify({'current_odometer': odometer, 'pace': pace, 'types': result})
 
 @app.route('/api/maintenance/<int:type_id>', methods=['PUT'])
 @api_login_required
@@ -3241,26 +3271,149 @@ def migrate_supplies_to_parts(db):
                                start_date, start_mileage, note)
 
 # Fuel endpoints
+#
+# Fuel economy is measured from one full tank to the next. A fill-up that
+# didn't fill the tank can't say how much fuel the miles before it used, so
+# its gallons are carried forward to the next full tank. Each full tank that
+# closes such a span stores the span as trip_miles / trip_gallons, and
+# mpg = trip_miles / trip_gallons.
+
+FUEL_GRADES = ('Regular', 'Mid-grade', 'Premium', 'Diesel', 'E85')
+
+# A tank is flagged when it comes in this far below the tanks before it
+ECONOMY_DROP_RATIO = 0.85
+ECONOMY_BASELINE_TANKS = 5
+ECONOMY_MIN_TANKS = 3
+
+
 def recalculate_mpg(db, vehicle_id):
     """Recompute MPG for every fuel record of a vehicle, in odometer order.
 
-    Each record's MPG is miles since the previous fill-up divided by the
-    gallons added at this one. Records flagged missed_fillup get no MPG (the
-    miles span an unlogged tank), but they still act as the odometer baseline
-    for the record after them. Called after any insert/update/delete so
-    out-of-order entries and deletions can't leave stale values behind."""
-    records = db.execute('''SELECT id, odometer, gallons, missed_fillup FROM fuel_records
+    Only a full tank gets an MPG: the miles since the previous full tank
+    divided by all the fuel added since then (this fill-up plus any partial
+    ones in between). The first record, or any full tank after a gap, is
+    just the starting point for the next span. A record flagged
+    missed_fillup breaks the chain, since fuel went in that was never
+    logged: it gets no MPG and, if it filled the tank, becomes the new
+    starting point. Called after any insert/update/delete so out-of-order
+    entries and deletions can't leave stale values behind."""
+    records = db.execute('''SELECT id, odometer, gallons, missed_fillup, full_tank FROM fuel_records
                             WHERE vehicle_id = ? ORDER BY odometer, date, id''',
                          (vehicle_id,)).fetchall()
-    prev_odometer = None
+    anchor = None        # odometer at the last full tank, or None if unknown
+    pending = 0.0        # gallons added since then
     for rec in records:
-        mpg = None
-        if prev_odometer is not None and not rec['missed_fillup']:
-            miles_driven = rec['odometer'] - prev_odometer
-            if miles_driven > 0 and rec['gallons'] and rec['gallons'] > 0:
-                mpg = round(miles_driven / rec['gallons'], 2)
-        db.execute('UPDATE fuel_records SET mpg = ? WHERE id = ?', (mpg, rec['id']))
-        prev_odometer = rec['odometer']
+        full = rec['full_tank'] is None or bool(rec['full_tank'])
+        gallons = rec['gallons'] or 0
+        mpg = trip_miles = trip_gallons = None
+        if rec['missed_fillup']:
+            anchor = rec['odometer'] if full else None
+            pending = 0.0
+        elif anchor is None:
+            if full:
+                anchor = rec['odometer']
+                pending = 0.0
+        else:
+            pending += gallons
+            if full:
+                miles = rec['odometer'] - anchor
+                if miles > 0 and pending > 0:
+                    mpg = round(miles / pending, 2)
+                    trip_miles, trip_gallons = miles, round(pending, 3)
+                anchor = rec['odometer']
+                pending = 0.0
+        db.execute('UPDATE fuel_records SET mpg = ?, trip_miles = ?, trip_gallons = ? WHERE id = ?',
+                   (mpg, trip_miles, trip_gallons, rec['id']))
+
+
+def annotate_fuel_records(db, vehicle_id):
+    """Per-record figures that depend on a vehicle's other fill-ups, keyed by
+    record id:
+      distance        miles since the previous fill-up of any kind
+      recent_avg_mpg  economy over the few tanks before this one
+      low_economy     True when this tank is well below that"""
+    rows = db.execute('''SELECT id, odometer, mpg, trip_miles, trip_gallons FROM fuel_records
+                         WHERE vehicle_id = ? ORDER BY odometer, date, id''', (vehicle_id,)).fetchall()
+    notes = {}
+    previous_odometer = None
+    tanks = []   # (trip_miles, trip_gallons) of earlier tanks with an MPG
+    for row in rows:
+        distance = row['odometer'] - previous_odometer if previous_odometer is not None else None
+        previous_odometer = row['odometer']
+        recent = None
+        low = False
+        if row['mpg']:
+            baseline = tanks[-ECONOMY_BASELINE_TANKS:]
+            if len(baseline) >= ECONOMY_MIN_TANKS:
+                recent = round(sum(m for m, _ in baseline) / sum(g for _, g in baseline), 2)
+                low = row['mpg'] < recent * ECONOMY_DROP_RATIO
+            tanks.append((row['trip_miles'], row['trip_gallons']))
+        notes[row['id']] = {'distance': distance if distance and distance > 0 else None,
+                            'recent_avg_mpg': recent, 'low_economy': low}
+    return notes
+
+
+def _fuel_dict(row, notes=None):
+    record = dict(row)
+    record['full_tank'] = record.get('full_tank') is None or bool(record['full_tank'])
+    record['missed_fillup'] = bool(record.get('missed_fillup'))
+    record.update((notes or {}).get(record['id'], {}))
+    return record
+
+
+def _fuel_fields(data):
+    """Validated fields of a fuel record. Any two of gallons, cost and
+    price_per_gallon are enough; the third is worked out."""
+    fuel_date = _date(data, 'date', 'Date')
+    if not fuel_date:
+        raise ApiError('Date is required')
+    odometer = _number(data, 'odometer', 'Odometer', integer=True)
+    if odometer is None:
+        raise ApiError('Odometer is required')
+    gallons = _number(data, 'gallons', 'Gallons')
+    cost = _number(data, 'cost', 'Total cost')
+    price = _number(data, 'price_per_gallon', 'Price per gallon')
+    if gallons is None and cost is not None and price:
+        gallons = round(cost / price, 3)
+    if cost is None and gallons is not None and price is not None:
+        cost = round(gallons * price, 2)
+    if not gallons:
+        raise ApiError('Gallons is required (or give the total cost and price per gallon)')
+    if cost is None:
+        raise ApiError('Total cost is required (or give the gallons and price per gallon)')
+    # The form requires a station; the API stays lenient for imports and
+    # older clients that never sent one
+    station = _text(data, 'station') or ''
+    full_tank = data.get('full_tank')
+    return {
+        'date': fuel_date,
+        'odometer': odometer,
+        'gallons': gallons,
+        'cost': cost,
+        'station': station,
+        # Older clients don't send full_tank: every fill-up was a full tank
+        'full_tank': 1 if full_tank is None or full_tank is True or _flag(data, 'full_tank') else 0,
+        'missed_fillup': 1 if data.get('missed_fillup') is True or _flag(data, 'missed_fillup') else 0,
+        'grade': _text(data, 'grade'),
+        'notes': _text(data, 'notes'),
+    }
+
+
+def _fuel_save_result(db, vehicle_id, fuel_id, fields):
+    """What a fill-up save reports back: its MPG and anything worth a look"""
+    record = db.execute('SELECT mpg FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
+    note = annotate_fuel_records(db, vehicle_id).get(fuel_id, {})
+    alert = None
+    if note.get('low_economy'):
+        drop = round((1 - record['mpg'] / note['recent_avg_mpg']) * 100)
+        alert = (f"This tank came in at {record['mpg']:g} MPG, {drop}% below your recent "
+                 f"{note['recent_avg_mpg']:g}. One low tank can be weather or short trips; if it "
+                 'keeps up, check tire pressure and whether a service is due.')
+    return {
+        'success': True, 'id': fuel_id, 'mpg': record['mpg'],
+        'warning': odometer_warning(db, vehicle_id, fields['date'], fields['odometer'], fuel_id=fuel_id),
+        'economy_alert': alert,
+    }
 
 
 @app.route('/api/fuel', methods=['GET'])
@@ -3278,59 +3431,59 @@ def get_fuel_records():
         base_query = 'SELECT * FROM fuel_records WHERE vehicle_id = ? ORDER BY date DESC, odometer DESC'
         count_query = 'SELECT COUNT(*) as total FROM fuel_records WHERE vehicle_id = ?'
         params = (vehicle_id,)
+        notes = annotate_fuel_records(db, vehicle_id)
     else:
         base_query = 'SELECT * FROM fuel_records ORDER BY date DESC, odometer DESC'
         count_query = 'SELECT COUNT(*) as total FROM fuel_records'
         params = ()
-
-    # Get total count
-    total_count = db.execute(count_query, params).fetchone()['total']
+        notes = {}
 
     # If pagination requested, add LIMIT and OFFSET
     if page is not None:
+        total_count = db.execute(count_query, params).fetchone()['total']
         offset = (page - 1) * per_page
         query = base_query + ' LIMIT ? OFFSET ?'
         records = db.execute(query, params + (per_page, offset)).fetchall()
 
         db.close()
         return jsonify({
-            'data': [dict(row) for row in records],
+            'data': [_fuel_dict(row, notes) for row in records],
             'total': total_count,
             'page': page,
             'per_page': per_page,
             'total_pages': (total_count + per_page - 1) // per_page
         })
-    else:
-        # Return all results (backwards compatibility)
-        records = db.execute(base_query, params).fetchall()
-        db.close()
-        return jsonify([dict(row) for row in records])
+
+    # Return all results (backwards compatibility)
+    records = db.execute(base_query, params).fetchall()
+    db.close()
+    return jsonify([_fuel_dict(row, notes) for row in records])
 
 @app.route('/api/fuel', methods=['POST'])
 @api_login_required
 def add_fuel_record():
-    """Add new fuel record and calculate MPG"""
-    data = request.json
-    vehicle_id = data.get('vehicle_id')
+    """Add new fuel record and calculate MPG.
 
+    JSON: vehicle_id, date, odometer, station, and any two of gallons, cost
+    and price_per_gallon. Optional: full_tank (default true), missed_fillup,
+    grade, notes."""
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
     if not vehicle_id:
-        return jsonify({'error': 'Vehicle ID is required'}), 400
+        raise ApiError('Vehicle ID is required')
+    fields = _fuel_fields(data)
 
-    db = get_db()
-    missed_fillup = 1 if data.get('missed_fillup') else 0
-
-    cursor = db.execute('''INSERT INTO fuel_records
-                          (vehicle_id, date, gallons, cost, odometer, station, missed_fillup)
-                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                       (vehicle_id, data['date'], data['gallons'], data['cost'],
-                        data['odometer'], data.get('station', ''), missed_fillup))
-    record_id = cursor.lastrowid
-    recalculate_mpg(db, vehicle_id)
-    mpg = db.execute('SELECT mpg FROM fuel_records WHERE id = ?', (record_id,)).fetchone()['mpg']
-
-    db.commit()
-    db.close()
-    return jsonify({'success': True, 'id': record_id, 'mpg': mpg})
+    with db_session() as db:
+        cursor = db.execute('''INSERT INTO fuel_records
+                              (vehicle_id, date, gallons, cost, odometer, station, missed_fillup,
+                               full_tank, grade, notes)
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                           (vehicle_id, fields['date'], fields['gallons'], fields['cost'],
+                            fields['odometer'], fields['station'], fields['missed_fillup'],
+                            fields['full_tank'], fields['grade'], fields['notes']))
+        recalculate_mpg(db, vehicle_id)
+        result = _fuel_save_result(db, vehicle_id, cursor.lastrowid, fields)
+    return jsonify(result)
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['GET'])
 @api_login_required
@@ -3341,37 +3494,29 @@ def get_fuel_record(fuel_id):
     db.close()
 
     if record:
-        return jsonify(dict(record))
+        return jsonify(_fuel_dict(record))
     return jsonify({'error': 'Fuel record not found'}), 404
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['PUT'])
 @api_login_required
 def update_fuel_record(fuel_id):
     """Update an existing fuel record"""
-    data = request.json
-
-    db = get_db()
-
-    missed_fillup = 1 if data.get('missed_fillup') else 0
-
-    # Update the fuel record
-    db.execute('''UPDATE fuel_records
-                 SET date=?, gallons=?, cost=?, odometer=?, station=?, missed_fillup=?
-                 WHERE id=?''',
-              (data['date'], data['gallons'], data['cost'],
-               data['odometer'], data.get('station', ''), missed_fillup, fuel_id))
-
-    # Recalculate the whole chain: this edit may have shifted the neighbours' MPG too
-    record = db.execute('SELECT vehicle_id FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
-    if not record:
-        db.close()
-        return jsonify({'error': 'Fuel record not found'}), 404
-    recalculate_mpg(db, record['vehicle_id'])
-    mpg = db.execute('SELECT mpg FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()['mpg']
-
-    db.commit()
-    db.close()
-    return jsonify({'success': True, 'mpg': mpg})
+    fields = _fuel_fields(_payload())
+    with db_session() as db:
+        record = db.execute('SELECT vehicle_id FROM fuel_records WHERE id = ?', (fuel_id,)).fetchone()
+        if not record:
+            raise ApiError('Fuel record not found', 404)
+        db.execute('''UPDATE fuel_records
+                     SET date=?, gallons=?, cost=?, odometer=?, station=?, missed_fillup=?,
+                         full_tank=?, grade=?, notes=?
+                     WHERE id=?''',
+                  (fields['date'], fields['gallons'], fields['cost'], fields['odometer'],
+                   fields['station'], fields['missed_fillup'], fields['full_tank'],
+                   fields['grade'], fields['notes'], fuel_id))
+        # Recalculate the whole chain: this edit may have shifted the neighbours' MPG too
+        recalculate_mpg(db, record['vehicle_id'])
+        result = _fuel_save_result(db, record['vehicle_id'], fuel_id, fields)
+    return jsonify(result)
 
 @app.route('/api/fuel/<int:fuel_id>', methods=['DELETE'])
 @api_login_required
@@ -3386,63 +3531,112 @@ def delete_fuel_record(fuel_id):
     db.close()
     return jsonify({'success': True})
 
+FUEL_PERIODS = ('30d', 'ytd', '12m', 'all')
+
+@app.route('/api/fuel/insights', methods=['GET'])
+@api_login_required
+def get_fuel_insights():
+    """Fuel totals for a vehicle over a period: `period` is 30d, ytd, 12m or
+    all (default). Cost per mile only counts fill-ups whose miles are fully
+    accounted for, so a missed fill-up doesn't make driving look cheaper."""
+    vehicle_id = request.args.get('vehicle_id', type=int)
+    if not vehicle_id:
+        raise ApiError('vehicle_id is required')
+    period = request.args.get('period', 'all')
+    if period not in FUEL_PERIODS:
+        raise ApiError('period must be one of ' + ', '.join(FUEL_PERIODS))
+    today = datetime.now().date()
+    start = {'30d': today - timedelta(days=30), '12m': today - timedelta(days=365),
+             'ytd': today.replace(month=1, day=1), 'all': None}[period]
+    start_date = start.isoformat() if start else None
+
+    db = get_db()
+    notes = annotate_fuel_records(db, vehicle_id)
+    rows = db.execute('SELECT * FROM fuel_records WHERE vehicle_id = ? ORDER BY date, odometer, id',
+                      (vehicle_id,)).fetchall()
+    pace = driving_pace(db, vehicle_id)
+    db.close()
+
+    records = [_fuel_dict(r, notes) for r in rows if not start_date or r['date'] >= start_date]
+    gallons = sum(r['gallons'] or 0 for r in records)
+    spent = sum(r['cost'] or 0 for r in records)
+    miles = sum(r['distance'] or 0 for r in records)
+    tanks = [r for r in records if r['mpg']]
+    trip_miles = sum(r['trip_miles'] for r in tanks)
+    trip_gallons = sum(r['trip_gallons'] for r in tanks)
+    accounted = [r for r in records if r['distance'] and not r['missed_fillup']]
+    accounted_miles = sum(r['distance'] for r in accounted)
+
+    months = {}
+    for r in records:
+        month = months.setdefault(r['date'][:7], {'month': r['date'][:7], 'spent': 0, 'gallons': 0, 'miles': 0})
+        month['spent'] = round(month['spent'] + (r['cost'] or 0), 2)
+        month['gallons'] = round(month['gallons'] + (r['gallons'] or 0), 3)
+        month['miles'] += r['distance'] or 0
+
+    return jsonify({
+        'period': period,
+        'start_date': start_date,
+        'fill_ups': len(records),
+        'gallons': round(gallons, 3),
+        'spent': round(spent, 2),
+        'miles': miles,
+        'avg_mpg': round(trip_miles / trip_gallons, 2) if trip_gallons else None,
+        'best_mpg': max((r['mpg'] for r in tanks), default=None),
+        'avg_price_per_gallon': round(spent / gallons, 3) if gallons else None,
+        'cost_per_mile': round(sum(r['cost'] or 0 for r in accounted) / accounted_miles, 3)
+                         if accounted_miles else None,
+        'low_economy_tanks': sum(1 for r in tanks if r['low_economy']),
+        'monthly': [months[m] for m in sorted(months)],
+        'pace': pace,
+    })
+
 # CSV Export/Import endpoints for fuel records
+FUEL_CSV_COLUMNS = ['date', 'odometer', 'gallons', 'cost', 'station', 'full_tank', 'missed_fillup',
+                    'grade', 'notes']
+
+def _csv_flag(value, default):
+    value = (value or '').strip().lower()
+    if not value:
+        return default
+    return value in ('yes', 'y', 'true', '1')
+
 @app.route('/api/fuel/export-csv', methods=['GET'])
 @api_login_required
 def export_fuel_csv():
-    """Export fuel records to CSV"""
-    try:
-        vehicle_id = request.args.get('vehicle_id')
+    """Export fuel records to CSV. The file can be imported back in; `mpg`
+    is informational and recalculated on import."""
+    vehicle_id = request.args.get('vehicle_id')
+    query = 'SELECT * FROM fuel_records'
+    params = ()
+    if vehicle_id:
+        query += ' WHERE vehicle_id = ?'
+        params = (vehicle_id,)
+    db = get_db()
+    records = [_fuel_dict(r) for r in db.execute(query + ' ORDER BY date DESC, odometer DESC', params).fetchall()]
+    db.close()
 
-        db = get_db()
-        if vehicle_id:
-            fuel_records = db.execute('''
-                SELECT date, odometer, gallons, cost, station, mpg
-                FROM fuel_records
-                WHERE vehicle_id = ?
-                ORDER BY date DESC, odometer DESC
-            ''', (vehicle_id,)).fetchall()
-        else:
-            fuel_records = db.execute('''
-                SELECT date, odometer, gallons, cost, station, mpg
-                FROM fuel_records
-                ORDER BY date DESC, odometer DESC
-            ''').fetchall()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(FUEL_CSV_COLUMNS + ['mpg'])
+    for record in records:
+        writer.writerow([
+            record['date'] or '',
+            record['odometer'],
+            record['gallons'],
+            record['cost'],
+            record['station'] or '',
+            'yes' if record['full_tank'] else 'no',
+            'yes' if record['missed_fillup'] else '',
+            record['grade'] or '',
+            record['notes'] or '',
+            record['mpg'] or ''
+        ])
 
-        # Convert rows to dictionaries
-        records_list = [dict(row) for row in fuel_records]
-        db.close()
-
-        # Create CSV in memory
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        # Write header
-        writer.writerow(['date', 'odometer', 'gallons', 'cost', 'station', 'mpg'])
-
-        # Write data
-        for record in records_list:
-            writer.writerow([
-                record.get('date', ''),
-                record.get('odometer', ''),
-                record.get('gallons', ''),
-                record.get('cost', ''),
-                record.get('station', ''),
-                record.get('mpg', '') or ''
-            ])
-
-        # Create response
-        output.seek(0)
-        response = make_response(output.getvalue())
-        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
-        response.headers['Content-Disposition'] = 'attachment; filename=fuel_records.csv'
-        return response
-
-    except Exception as e:
-        print(f"Export CSV Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename=fuel_records.csv'
+    return response
 
 @app.route('/api/fuel/template-csv', methods=['GET'])
 @api_login_required
@@ -3450,13 +3644,10 @@ def download_fuel_template():
     """Download a CSV template for importing fuel records"""
     output = io.StringIO()
     writer = csv.writer(output)
-
-    # Write header
-    writer.writerow(['date', 'odometer', 'gallons', 'cost', 'station'])
-
-    # Write example rows
-    writer.writerow(['2024-01-15', '50000', '12.5', '45.00', 'Shell'])
-    writer.writerow(['2024-01-22', '50350', '11.8', '42.50', 'BP'])
+    writer.writerow(FUEL_CSV_COLUMNS)
+    # full_tank: yes (default when blank) or no. missed_fillup: yes or blank.
+    writer.writerow(['2024-01-15', '50000', '12.5', '45.00', 'Shell', 'yes', '', 'Regular', ''])
+    writer.writerow(['2024-01-22', '50350', '4.0', '14.80', 'BP', 'no', '', 'Regular', 'Topped up before a trip'])
 
     output.seek(0)
     response = make_response(output.getvalue())
@@ -3467,7 +3658,9 @@ def download_fuel_template():
 @app.route('/api/fuel/import-csv', methods=['POST'])
 @api_login_required
 def import_fuel_csv():
-    """Import fuel records from CSV"""
+    """Import fuel records from CSV. Rows that match a record already there
+    (same date, odometer and gallons) are skipped, so importing the same
+    file twice doesn't duplicate anything."""
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
 
@@ -3480,50 +3673,49 @@ def import_fuel_csv():
         return jsonify({'error': 'Vehicle ID is required'}), 400
 
     try:
-        # Read CSV file
-        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        # utf-8-sig drops the byte-order mark Excel puts at the start
+        stream = io.StringIO(file.stream.read().decode('utf-8-sig'), newline=None)
         csv_reader = csv.DictReader(stream)
 
         db = get_db()
         imported_count = 0
+        skipped_count = 0
         errors = []
 
         for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 because of header
             try:
-                # Validate required fields
+                row = {(k or '').strip(): (v or '').strip() for k, v in row.items()}
                 if not row.get('date') or not row.get('odometer') or not row.get('gallons') or not row.get('cost'):
                     errors.append(f"Row {row_num}: Missing required fields")
                     continue
-
-                # Parse and validate date
-                try:
-                    datetime.strptime(row['date'], '%Y-%m-%d')
-                except ValueError:
+                if _parse_date(row['date']) is None:
                     errors.append(f"Row {row_num}: Invalid date format (use YYYY-MM-DD)")
                     continue
-
-                # Validate numeric fields
                 try:
-                    odometer = int(row['odometer'])
+                    odometer = int(float(row['odometer']))
                     gallons = float(row['gallons'])
                     cost = float(row['cost'])
                 except ValueError:
                     errors.append(f"Row {row_num}: Invalid numeric value")
                     continue
 
-                # Insert fuel record; MPG is computed for the whole chain below
+                duplicate = db.execute('''SELECT 1 FROM fuel_records
+                                          WHERE vehicle_id = ? AND date = ? AND odometer = ?
+                                            AND ABS(gallons - ?) < 0.0005''',
+                                       (vehicle_id, row['date'], odometer, gallons)).fetchone()
+                if duplicate:
+                    skipped_count += 1
+                    continue
+
+                # MPG is computed for the whole chain below
                 db.execute('''
                     INSERT INTO fuel_records
-                    (vehicle_id, date, odometer, gallons, cost, station)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    vehicle_id,
-                    row['date'],
-                    odometer,
-                    gallons,
-                    cost,
-                    row.get('station', '')
-                ))
+                    (vehicle_id, date, odometer, gallons, cost, station, full_tank, missed_fillup, grade, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (vehicle_id, row['date'], odometer, gallons, cost, row.get('station', ''),
+                      1 if _csv_flag(row.get('full_tank'), True) else 0,
+                      1 if _csv_flag(row.get('missed_fillup'), False) else 0,
+                      row.get('grade') or None, row.get('notes') or None))
                 imported_count += 1
 
             except Exception as e:
@@ -3534,23 +3726,100 @@ def import_fuel_csv():
         db.commit()
         db.close()
 
-        response = {
+        return jsonify({
             'success': True,
             'imported': imported_count,
+            'skipped': skipped_count,
             'errors': errors
-        }
-
-        return jsonify(response)
+        })
 
     except Exception as e:
         return jsonify({'error': f'Failed to import CSV: {str(e)}'}), 400
 
 
+# ── Driving pace and projected due dates ────────────────────────────────────
+#
+# A reminder due at a mileage says nothing about when. Each vehicle has a
+# driving pace in miles per year: the figure its owner sets, or failing
+# that an estimate from the odometer readings on its fuel and service
+# records. The pace turns "due at 59,500 mi" into "around mid-March".
+
+PACE_MIN_DAYS = 30
+
+def driving_pace(db, vehicle_id):
+    """A vehicle's miles per year: what was set, what the records suggest,
+    and which of the two is in effect (set wins)."""
+    vehicle = db.execute('SELECT miles_per_year FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
+    chosen = vehicle['miles_per_year'] if vehicle else None
+
+    readings = db.execute('''SELECT date, odometer FROM service_records
+                             WHERE vehicle_id = :v AND odometer IS NOT NULL
+                             UNION ALL
+                             SELECT date, odometer FROM fuel_records WHERE vehicle_id = :v
+                             ORDER BY date, odometer''', {'v': vehicle_id}).fetchall()
+    readings = [(d, r['odometer']) for r in readings for d in [_parse_date(r['date'])] if d]
+    estimate = None
+    if readings:
+        latest = readings[-1][0]
+        # The last year of driving if there's enough of it, else everything
+        recent = [r for r in readings if (latest - r[0]).days <= 365]
+        for window in (recent, readings):
+            days = (window[-1][0] - window[0][0]).days
+            miles = window[-1][1] - window[0][1]
+            if days >= PACE_MIN_DAYS and miles > 0:
+                estimate = round(miles / days * 365)
+                break
+
+    return {
+        'miles_per_year': chosen,
+        'estimated_miles_per_year': estimate,
+        'effective_miles_per_year': chosen or estimate,
+        'source': 'set' if chosen else 'estimated' if estimate else None,
+    }
+
+def projected_date(due_mileage, current_odometer, miles_per_year, today=None):
+    """When the odometer should reach `due_mileage` at the vehicle's pace, or
+    None if that can't be said (no pace, no reading, or already past it)."""
+    if due_mileage is None or current_odometer is None or not miles_per_year:
+        return None
+    remaining = due_mileage - current_odometer
+    if remaining <= 0:
+        return None
+    days = remaining / (miles_per_year / 365)
+    if days > 3650:
+        return None
+    return ((today or datetime.now().date()) + timedelta(days=round(days))).isoformat()
+
+@app.route('/api/vehicle/<int:vehicle_id>/driving-pace', methods=['GET'])
+@api_login_required
+def get_driving_pace(vehicle_id):
+    db = get_db()
+    pace = driving_pace(db, vehicle_id)
+    pace['current_odometer'] = latest_odometer(db, vehicle_id)
+    db.close()
+    return jsonify(pace)
+
+@app.route('/api/vehicle/<int:vehicle_id>/driving-pace', methods=['PUT'])
+@api_login_required
+def set_driving_pace(vehicle_id):
+    """Set how many miles a year this vehicle is driven, used to project
+    when mileage-based reminders will come due. Blank goes back to the
+    estimate from the vehicle's records."""
+    miles = _number(_payload(), 'miles_per_year', 'Miles per year', integer=True) or None
+    with db_session() as db:
+        cursor = db.execute('UPDATE vehicle SET miles_per_year = ? WHERE id = ?', (miles, vehicle_id))
+        if cursor.rowcount == 0:
+            raise ApiError('Vehicle not found', 404)
+        pace = driving_pace(db, vehicle_id)
+    return jsonify({'success': True, **pace})
+
 # Service reminders endpoints
 @app.route('/api/reminders', methods=['GET'])
 @api_login_required
 def get_reminders():
-    """Get all service reminders for a vehicle"""
+    """Get all service reminders for a vehicle. Open reminders with a due
+    mileage also carry `miles_remaining` and, where the vehicle's driving
+    pace is known, the `projected_date` it should reach that mileage."""
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
 
@@ -3559,8 +3828,23 @@ def get_reminders():
     else:
         reminders = db.execute('SELECT * FROM service_reminders ORDER BY completed, due_date').fetchall()
 
+    vehicles = {}
+    result = []
+    for row in reminders:
+        reminder = dict(row)
+        reminder['miles_remaining'] = reminder['projected_date'] = None
+        if reminder['due_mileage'] is not None and not reminder['completed']:
+            if reminder['vehicle_id'] not in vehicles:
+                vehicles[reminder['vehicle_id']] = (
+                    latest_odometer(db, reminder['vehicle_id']),
+                    driving_pace(db, reminder['vehicle_id'])['effective_miles_per_year'])
+            odometer, pace = vehicles[reminder['vehicle_id']]
+            if odometer is not None:
+                reminder['miles_remaining'] = reminder['due_mileage'] - odometer
+            reminder['projected_date'] = projected_date(reminder['due_mileage'], odometer, pace)
+        result.append(reminder)
     db.close()
-    return jsonify([dict(row) for row in reminders])
+    return jsonify(result)
 
 @app.route('/api/reminders', methods=['POST'])
 @api_login_required

@@ -110,6 +110,20 @@ function displayActiveReminders(reminders) {
             isOverdue = parseLocalDate(reminder.due_date) < today;
         }
 
+        // Past its due mileage counts as overdue too
+        if (reminder.miles_remaining !== null && reminder.miles_remaining < 0) {
+            isOverdue = true;
+        }
+        let mileageNote = '';
+        if (reminder.miles_remaining !== null) {
+            mileageNote = reminder.miles_remaining < 0
+                ? ` — ${Math.abs(reminder.miles_remaining).toLocaleString()} miles over`
+                : ` — ${reminder.miles_remaining.toLocaleString()} miles to go`;
+            if (reminder.projected_date) {
+                mileageNote += `, expected around ${formatDate(reminder.projected_date)} at your driving pace`;
+            }
+        }
+
         const className = isOverdue ? 'reminder-item overdue' : 'reminder-item';
 
         html += `
@@ -123,7 +137,7 @@ function displayActiveReminders(reminders) {
                     </div>
                 </div>
                 ${reminder.due_date ? `<p><strong>Due Date:</strong> ${formatDate(reminder.due_date)}</p>` : ''}
-                ${reminder.due_mileage ? `<p><strong>Due at:</strong> ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
+                ${reminder.due_mileage ? `<p><strong>Due at:</strong> ${reminder.due_mileage.toLocaleString()} miles${mileageNote}</p>` : ''}
                 ${reminder.notes ? `<p><strong>Notes:</strong> ${escapeHtml(reminder.notes)}</p>` : ''}
             </div>
         `;
