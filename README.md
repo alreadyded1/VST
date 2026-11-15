@@ -1,21 +1,21 @@
 # Vehicle Maintenance Tracker
 
-A comprehensive web-based vehicle maintenance tracking application designed for easy installation in Proxmox LXC containers.
+A self-hosted web app for keeping track of your vehicles: service history, a maintenance schedule with automatic reminders, parts and warranties, fuel economy, tires and documents. It installs natively in a Proxmox LXC container (no Docker) and keeps everything in one SQLite file.
 
 **GitHub Repository:** https://github.com/alreadyded1/VST
 
+See [FEATURES.md](FEATURES.md) for a page-by-page reference and [QUICKSTART.md](QUICKSTART.md) for the short version of the install.
+
 ## Features
 
-✅ **Multiple Vehicle Management**
-- Manage unlimited vehicles in one application
-- Store manufacturer, model, year, engine, VIN for each vehicle
-- Add custom nickname and vehicle photo
-- Switch between vehicles using header dropdown
-- Edit or delete vehicles anytime
-- All data automatically filtered by selected vehicle
+✅ **Vehicles**
+- Any number of vehicles, each with make, model, year, engine, VIN, nickname and photo
+- Decode a VIN to fill in the details, and check for open recalls (both use the public NHTSA service)
+- Turn recalls into reminders with one click
+- Pick the active vehicle from the sidebar; every page follows it
 
-✅ **Service Record Tracking**
-- Track date, total bill, service provider (or mark it as done yourself) and odometer
+✅ **Service Records**
+- Date, total bill, service provider (or mark it as done yourself) and odometer
 - List the work done as line items picked from a list of service types you can add to; a price per line is optional
 - Attach several receipts or photos to one record
 - Use parts from the shelf; their cost is added to the bill automatically
@@ -38,318 +38,251 @@ A comprehensive web-based vehicle maintenance tracking application designed for 
 - Warranties page lists what is covered, expiring soon or expired, per vehicle or across all of them
 - Optional re-order reminder when stock falls to a level you choose
 
-✅ **Fuel Tracking**
+✅ **Fuel Tracker**
 - Record fill-ups with station, optional grade and notes; enter any two of gallons, price per gallon and total
 - MPG measured from full tank to full tank, so partial fill-ups don't distort it
 - Statistics for the last 30 days, this year, 12 months or all time: average and best MPG, cost per mile, miles driven, spend
 - Charts for MPG per tank with a rolling average, price per gallon, and spend and miles per month
 - Flags a tank that comes in well below your recent average
-- Station comparison, by fuel grade when you record it
-- Driving pace (miles per year, set by you or estimated from your records) gives mileage-based reminders an expected date
+- Station comparison, sortable, by fuel grade when you record it
 - CSV import (skips rows already imported) and export
 
-✅ **Service Reminders**
-- Set reminders by date and/or mileage
-- Automatic overdue detection
-- Mark reminders as complete/incomplete
-- Custom notes for each reminder
+✅ **Reminders**
+- Due by date, by mileage or both; overdue ones are highlighted
+- Scheduled reminders come from the maintenance schedule; manual ones are yours to add and tick off
+- Driving pace (miles per year, set by you or estimated from your records) gives mileage-based reminders an expected date
 
-✅ **Responsive Design**
-- Desktop and mobile view toggle
-- Consistent font styling across all pages
-- Clean, modern interface
-- Optimized for both touch and mouse input
+✅ **Tires**
+- Tire sets with brand, model, size, season, DOT code, purchase date and price
+- Install and uninstall log, rotation log and tread depth readings
+
+✅ **Documents**
+- Manuals, insurance, registration, title, warranty and inspection papers, with notes and an attached PDF or image
+
+✅ **Everything else**
+- Dashboard with totals, recent services and upcoming reminders
+- Search across services, fuel, parts, reminders, documents and tires
+- Printable vehicle report with CSV downloads
+- User accounts with an admin panel; uploads are only served to signed-in users
+- Layout adapts to phones automatically, with a bottom navigation bar
 
 ## Technology Stack
 
-- **Backend**: Python Flask
-- **Database**: SQLite (no separate DB server needed)
-- **Frontend**: HTML5, CSS3, Vanilla JavaScript
-- **File Storage**: Local filesystem
+- **Backend**: Python, Flask, served by gunicorn
+- **Database**: SQLite (no separate database server)
+- **Frontend**: HTML, CSS and plain JavaScript; Chart.js is bundled for the fuel charts
+- **File storage**: local filesystem
+- **Outside services**: none required. VIN decoding and recall checks call NHTSA's public service when you use them; the page font loads from Google Fonts
 
 ## Installation on Proxmox LXC Container
 
-### Prerequisites
+### Step 1: Create the container
 
-- Proxmox VE server
-- Access to create LXC containers
-
-### Step 1: Create LXC Container
-
-1. In Proxmox web interface, click **Create CT**
+1. In the Proxmox web interface, click **Create CT**
 2. Configure the container:
    - **Hostname**: vehicle-tracker (or your choice)
-   - **Template**: Ubuntu 22.04 or Debian 12
-   - **Root Password**: Set a secure password
-   - **Disk**: 8 GB minimum (recommended 16 GB for uploads)
+   - **Template**: Debian 12 or 13, or Ubuntu 22.04 or later
+   - **Disk**: 8 GB minimum (16 GB recommended if you upload many receipts)
    - **CPU**: 1 core minimum (2 recommended)
    - **Memory**: 512 MB minimum (1 GB recommended)
-   - **Network**: Bridge mode with DHCP or static IP
-
+   - **Network**: bridge mode with DHCP or a static IP
 3. Start the container
 
-### Step 2: Access Container Console
+### Step 2: Install
 
-In Proxmox, select your container and click **Console**
-
-### Step 3: Install the Application
+Open the container's **Console** in Proxmox and run:
 
 ```bash
-# Update system
-apt-get update && apt-get upgrade -y
+apt-get update && apt-get install -y git
+```
 
-# Install git
-apt-get install -y git
+```bash
+git clone https://github.com/alreadyded1/VST.git /tmp/vehicle-tracker
+```
 
-# Clone the repository from GitHub
-git clone --branch claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC https://github.com/alreadyded1/VST.git /tmp/vehicle-tracker
-cd /tmp/vehicle-tracker
-
-# Run the installation script
-chmod +x install.sh
-sudo bash install.sh
+```bash
+bash /tmp/vehicle-tracker/install.sh
 ```
 
 The installation script will:
-- Install Python 3 and dependencies
-- Create a dedicated system user
-- Set up a Python virtual environment
-- Install required packages
-- Configure proper permissions
-- Create and start a systemd service
-- Display the access URL
+- Install Python 3
+- Create a dedicated `vtracker` system user
+- Copy the app to `/opt/vehicle-tracker` and set up a Python virtual environment
+- Create and start a systemd service that runs on boot
+- Print the address to open
 
-### Step 4: Access the Application
+### Step 3: Sign in
 
-After installation completes, open your web browser and navigate to:
+Open `http://<container-ip>:5000` in a browser and sign in with:
 
-```
-http://<container-ip>:5000
-```
+- **Username:** `admin`
+- **Password:** `admin`
 
-The installation script will display the exact URL.
+You are taken straight to the profile page to **change the password**. Until you do, every page shows a reminder.
 
 ## Manual Installation (Alternative)
 
-If you prefer manual installation without using the install script:
-
 ```bash
-# Install dependencies
-apt-get update
-apt-get install -y python3 python3-pip python3-venv git
-
-# Clone the repository
-git clone --branch claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC https://github.com/alreadyded1/VST.git /opt/vehicle-tracker
-cd /opt/vehicle-tracker
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install Python packages
-pip install -r requirements.txt
-
-# Run the application (creates instance/ and upload directories on start)
-gunicorn wsgi:app        # production server, settings in gunicorn.conf.py
-# or: python app.py      # Flask development server
+apt-get update && apt-get install -y python3 python3-pip python3-venv git
 ```
 
-The application will be available at `http://<your-ip>:5000`
+```bash
+git clone https://github.com/alreadyded1/VST.git /opt/vehicle-tracker
+```
 
-**Note:** For production use, it's recommended to use the automated `install.sh` script which sets up proper systemd service, permissions, and auto-start on boot.
+```bash
+cd /opt/vehicle-tracker && python3 -m venv venv && venv/bin/pip install -r requirements.txt
+```
+
+```bash
+cd /opt/vehicle-tracker && venv/bin/gunicorn wsgi:app
+```
+
+`gunicorn` reads its settings from `gunicorn.conf.py`. For a quick local try-out you can run `venv/bin/python app.py` instead, which starts Flask's development server.
+
+The install script is the better choice for real use: it sets up the service user, permissions and start on boot.
 
 ## Usage Guide
 
-### First-Time Setup
+### First-time setup
 
-1. **Add Your First Vehicle**
-   - Navigate to "Vehicles" page
-   - Click "Add Vehicle"
-   - Fill in your vehicle information (manufacturer, model, year, etc.)
-   - Optionally upload a vehicle photo
-   - Click "Save Vehicle"
-   - Your new vehicle will be automatically selected
+1. **Add a vehicle**: go to **Vehicles**, click **Add Vehicle**. Typing the VIN and clicking **Decode VIN** fills in the rest.
+2. **Log your first fill-up**: **Fuel Tracker**, **Add Fuel Record**. MPG appears from the second full tank.
+3. **Record a service**: **Service Records**, **Add Service Record**. Enter the total bill and pick the work done from the list.
+4. **Set up the schedule**: on **Service Records**, open the **Maintenance Schedule** tab and click **Set Interval** on the work you want reminding about. The reminder appears once that work has been logged at least once.
+5. **Add parts you keep in stock** (optional): **Parts & Warranties**, **Add Part**, with the purchase details and any warranty.
 
-2. **Add Supplies (Optional)**
-   - Go to "Supplies" page
-   - Add maintenance supplies you keep in stock
-   - These can be linked to service records for automatic cost calculation
+### Service records and the maintenance schedule
 
-3. **Record Your First Service**
-   - Navigate to "Service Records"
-   - Click "Add Service Record"
-   - Fill in service details
-   - Optionally upload a receipt
-   - Select supplies used (if any)
-   - Click "Save"
+- **The bill and the line items are separate.** Enter what you paid as the total. Line items say what was done; a price on a line only breaks the bill down and is not added to it.
+- **Parts from your shelf are added on top** of the bill, at the price you paid for them.
+- **To start the clock on a car you already own**, log the last time each scheduled job was done, even roughly. The schedule counts from the most recent record.
+- **Driving pace** (on the Maintenance Schedule tab) is the miles per year you drive. Set it, or leave the estimate from your records. It turns "due at 59,500 miles" into an expected date.
 
-4. **Track Fuel**
-   - Go to "Fuel Tracker"
-   - Click "Add Fuel Record"
-   - Enter fill-up details including location
-   - MPG is calculated automatically (after 2nd fill-up)
-   - A popup will display your fuel economy!
+### Parts and warranties
 
-5. **Set Reminders**
-   - Navigate to "Reminders"
-   - Click "Add Reminder"
-   - Set service type and due date/mileage
-   - Reminders will show on dashboard
+- **A part** is the thing itself. **A purchase** is one time you bought it, with its price and warranty. **An install** is some of a purchase going onto a vehicle.
+- **Stock goes down when you use a part** on a service record, or with **Install on Vehicle** for jobs you don't log as a service.
+- **Warranties start when the part is installed**, unless the purchase is set to start at purchase.
+- **When a part comes off the car**, edit its install and set the removed date. It stays in the history but drops off the warranty list.
 
-### Managing Multiple Vehicles
+### Fuel
 
-- **Add More Vehicles**: Go to "Vehicles" → "Add Vehicle"
-- **Switch Between Vehicles**: Use the dropdown in the header
-- **Edit Vehicle Details**: Go to "Vehicles" → Click "Edit" on any vehicle
-- **Delete a Vehicle**: Go to "Vehicles" → Click "Delete" (removes all associated data)
-- **Selected Vehicle**: All data (services, supplies, fuel, reminders) automatically filters to your selected vehicle
+- **Untick "Filled the tank"** for a top-up. It gets no MPG of its own; its gallons count toward the next full tank.
+- **Tick "Missed logging a fill-up"** if you forgot one, so the miles in between don't produce a false MPG.
+- **The period buttons** at the top change the statistics, charts and station table together.
 
-### Desktop vs Mobile Mode
+### Managing vehicles
 
-Click the "Switch to Mobile/Desktop" button in the header to toggle between view modes:
-- **Desktop Mode**: Full-width tables, multi-column layouts
-- **Mobile Mode**: Optimized for smaller screens, single-column layouts
-
-The selected mode is saved in your browser.
+- **Switch vehicle**: use the selector at the top of the sidebar
+- **Edit or delete**: on the **Vehicles** page
+- **Deleting a vehicle** removes its services, fuel records, reminders, tires and documents. Parts stay on the shelf, and what the vehicle used stays used.
 
 ## System Management
 
-### Updating the Application
+### Updating
 
-When a new version is available, use the automated update script to upgrade your installation. The script downloads the latest code directly from GitHub:
+The update script downloads the latest code from GitHub and keeps your data:
 
 ```bash
-# Option 1: Download and run update script directly from GitHub
-curl -o /tmp/update.sh https://raw.githubusercontent.com/alreadyded1/VST/claude/vehicle-maintenance-tracker-011CUqiiSkMjCkYo7bsyULQC/update.sh
-chmod +x /tmp/update.sh
+cd /opt/vehicle-tracker && sudo bash update.sh
+```
+
+If you no longer have that copy of the script:
+
+```bash
+curl -o /tmp/update.sh https://raw.githubusercontent.com/alreadyded1/VST/claude/fix-fuel-up-date-display-0128p7VwVdzrdnkLi2zFC7wJ/update.sh
+```
+
+```bash
 sudo bash /tmp/update.sh
 ```
 
-Or if you still have the original installation directory:
+The script will:
+1. Stop the service
+2. **Back up your database and uploads** to `/root/vehicle-tracker-backup-<timestamp>/`
+3. Download the latest code
+4. Replace the application files and update Python packages
+5. Restart the service and check that it started
+
+Any changes the new version needs to make to your database happen automatically the first time it starts. If the service fails to start, the script prints how to restore from the backup it just made.
+
+**What is replaced:** `app.py`, `wsgi.py`, `gunicorn.conf.py`, `requirements.txt`, the templates and the CSS and JavaScript.
+**What is kept:** the database, the signing keys, and all uploaded receipts, documents and photos.
+
+### Service control
 
 ```bash
-# Option 2: Use existing update script and it will pull latest from GitHub
-cd /opt/vehicle-tracker
-sudo bash update.sh
+systemctl status vehicle-tracker
 ```
 
-The update script will:
-1. Stop the running service
-2. **Automatically backup your database and uploads** to `/root/vehicle-tracker-backup-[timestamp]/`
-3. **Download latest code from GitHub** (https://github.com/alreadyded1/VST.git)
-4. Update application files (app.py, templates, static files)
-5. Update Python dependencies
-6. Set proper permissions
-7. Restart the service
-8. Verify successful startup
-
-**Important Notes:**
-- Your data (database and uploads) is **always preserved** during updates
-- A backup is automatically created before any changes
-- The script pulls the latest code from GitHub automatically
-- If the update fails, rollback instructions are provided
-- Git is automatically installed if not present
-- Check the logs if you encounter issues: `journalctl -u vehicle-tracker -xe`
-
-**What Gets Updated:**
-- ✅ Application code (app.py)
-- ✅ Templates (HTML files)
-- ✅ Static files (CSS, JavaScript)
-- ✅ Python dependencies
-- ❌ Database (preserved)
-- ❌ Uploaded files (receipts, vehicle photos - preserved)
-
-### Service Control
+```bash
+systemctl restart vehicle-tracker
+```
 
 ```bash
-# Check service status
-systemctl status vehicle-tracker
-
-# Stop the service
-systemctl stop vehicle-tracker
-
-# Start the service
-systemctl start vehicle-tracker
-
-# Restart the service
-systemctl restart vehicle-tracker
-
-# View logs
 journalctl -u vehicle-tracker -f
 ```
 
 ### Backup
 
-To backup your data:
+Everything worth keeping is in two folders: `instance/` (the database and signing keys) and `static/uploads/` (receipts, documents and photos).
 
 ```bash
-# Backup database
-cp /opt/vehicle-tracker/instance/vehicle_tracker.db ~/backup/
-
-# Backup uploads
-tar -czf ~/backup/uploads.tar.gz /opt/vehicle-tracker/static/uploads/
+tar -czf ~/vehicle-tracker-backup.tar.gz -C /opt/vehicle-tracker instance static/uploads
 ```
 
 ### Restore
 
-To restore from backup:
+```bash
+systemctl stop vehicle-tracker
+```
 
 ```bash
-# Stop the service
-systemctl stop vehicle-tracker
+tar -xzf ~/vehicle-tracker-backup.tar.gz -C /opt/vehicle-tracker
+```
 
-# Restore database
-cp ~/backup/vehicle_tracker.db /opt/vehicle-tracker/instance/
-
-# Restore uploads
-tar -xzf ~/backup/uploads.tar.gz -C /
-
-# Fix permissions
-chown -R vtracker:vtracker /opt/vehicle-tracker
-
-# Start the service
-systemctl start vehicle-tracker
+```bash
+chown -R vtracker:vtracker /opt/vehicle-tracker && systemctl start vehicle-tracker
 ```
 
 ## File Locations
 
 - **Application**: `/opt/vehicle-tracker/`
 - **Database**: `/opt/vehicle-tracker/instance/vehicle_tracker.db`
-- **Receipts**: `/opt/vehicle-tracker/static/uploads/receipts/`
-- **Vehicle Photos**: `/opt/vehicle-tracker/static/uploads/vehicles/`
-- **Service File**: `/etc/systemd/system/vehicle-tracker.service`
+- **Signing keys**: `/opt/vehicle-tracker/instance/secret_key` and `jwt_secret_key`
+- **Receipts and photos**: `/opt/vehicle-tracker/static/uploads/receipts/`
+- **Documents**: `/opt/vehicle-tracker/static/uploads/documents/`
+- **Vehicle photos**: `/opt/vehicle-tracker/static/uploads/vehicles/`
+- **Server settings**: `/opt/vehicle-tracker/gunicorn.conf.py`
+- **Service file**: `/etc/systemd/system/vehicle-tracker.service`
 - **Logs**: `journalctl -u vehicle-tracker`
 
 ## Customization
 
-### Change Port
+### Change the port
 
-Edit `/etc/systemd/system/vehicle-tracker.service` and modify the ExecStart line:
+Edit the `bind` line in `/opt/vehicle-tracker/gunicorn.conf.py`, for example `bind = '0.0.0.0:8080'`, then restart the service. The update script replaces this file, so make the change again after updating.
 
-```bash
-# Change app.py to include port parameter
-# Then edit app.py and change the last line to:
-# app.run(host='0.0.0.0', port=YOUR_PORT, debug=False)
-```
+### Run behind a reverse proxy
 
-### Change Secret Key
+Point the proxy (NGINX Proxy Manager, nginx, Caddy) at `http://<container-ip>:5000` and let it handle HTTPS. Uploads can be up to 16 MB, so raise the proxy's upload limit if it is lower.
 
-Edit `/opt/vehicle-tracker/app.py` and modify:
+### Manage the signing keys yourself
 
-```python
-app.config['SECRET_KEY'] = 'your-new-secret-key-here'
-```
+The keys that sign login sessions and API tokens are generated on first start and stored in `instance/`. To supply your own, set `SECRET_KEY` and `JWT_SECRET_KEY` as `Environment=` lines in the systemd service file. The update script rewrites that file, so add them again after updating.
 
-Then restart the service:
+## API
 
-```bash
-systemctl restart vehicle-tracker
-```
+Every page is built on a JSON API under `/api/`, which other clients can use too. Sign in by posting a username and password to `/api/auth/login`; it returns an access token to send as `Authorization: Bearer <token>` (valid for one hour) and a refresh token for `/api/auth/refresh` (valid for 30 days). The routes are listed, with their fields, in `app.py`.
 
 ## Running Tests
 
 ```bash
 venv/bin/pip install pytest
+```
+
+```bash
 venv/bin/python -m pytest tests
 ```
 
@@ -357,77 +290,81 @@ Tests run against a throwaway SQLite database and upload directory, so they neve
 
 ## Troubleshooting
 
-### Service Won't Start
+### Service won't start
 
 ```bash
-# Check logs
 journalctl -u vehicle-tracker -xe
-
-# Common issues:
-# - Port 5000 already in use: Change port in app.py
-# - Permission errors: Run chown -R vtracker:vtracker /opt/vehicle-tracker
-# - Missing dependencies: Reinstall with pip install -r requirements.txt
 ```
 
-### Can't Access from Browser
+Common causes:
+- **Port 5000 already in use**: change the port (see Customization)
+- **Permission errors**: `chown -R vtracker:vtracker /opt/vehicle-tracker`
+- **Missing packages**: `cd /opt/vehicle-tracker && venv/bin/pip install -r requirements.txt`
 
-1. Check if service is running: `systemctl status vehicle-tracker`
-2. Verify container IP: `ip addr show`
-3. Check firewall: `ufw status` (if enabled)
-4. Try accessing from container: `curl http://localhost:5000`
+### Can't reach it from a browser
 
-### Database Errors
+1. Check the service is running: `systemctl status vehicle-tracker`
+2. Check the container's address: `ip addr show`
+3. Try from inside the container: `curl -I http://localhost:5000/login`
+4. Check any firewall on the container or the Proxmox host
+
+### Locked out
+
+Five failed sign-ins for one username from the same address block further attempts for up to 15 minutes; wait and try again. If an admin has forgotten their password, another admin can reset it from the Admin panel.
+
+### Something looks wrong after an update
+
+Restore the backup the update script made (its location is printed at the end of the update, under `/root/`), following the Restore steps above, and report the problem with the output of `journalctl -u vehicle-tracker -xe`.
+
+### Starting over with an empty database
+
+This deletes all your records. Back up first.
 
 ```bash
-# Recreate database
-systemctl stop vehicle-tracker
-rm /opt/vehicle-tracker/instance/vehicle_tracker.db
-systemctl start vehicle-tracker
-# Database will be recreated automatically
+systemctl stop vehicle-tracker && rm /opt/vehicle-tracker/instance/vehicle_tracker.db && systemctl start vehicle-tracker
 ```
 
-### Upload Issues
+A fresh database is created on start, with the default `admin` / `admin` account.
+
+### Uploads fail
 
 ```bash
-# Fix permissions
 chown -R vtracker:vtracker /opt/vehicle-tracker/static/uploads/
-chmod -R 755 /opt/vehicle-tracker/static/uploads/
 ```
+
+Accepted file types are PDF, PNG, JPG, GIF and WebP, up to 16 MB.
 
 ## Security Considerations
 
 - This application is designed for use on a private network
-- For internet access, use a reverse proxy (nginx/Apache) with HTTPS
+- For access from the internet, put it behind a reverse proxy with HTTPS
 - Change the default `admin`/`admin` password right after installing. Until you do, every page shows a reminder, and the login page shows the default credentials (the admin settings can hide that hint)
-- Session and API-token signing keys are generated on first start and stored in `instance/secret_key` and `instance/jwt_secret_key`. To manage them yourself, set the `SECRET_KEY` / `JWT_SECRET_KEY` environment variables in the systemd unit
-- Uploaded receipts, documents and vehicle photos are only served to logged-in users
+- Every signed-in user can see and edit every vehicle; accounts are for a household, not for keeping users' data apart
+- Session and API-token signing keys are generated on first start and stored in `instance/secret_key` and `instance/jwt_secret_key`
+- Uploaded receipts, documents and vehicle photos are only served to signed-in users
 - After 5 failed logins for one username (or 20 for any usernames) from the same IP address within 15 minutes, further attempts from that IP are refused until the window passes. Behind a reverse proxy every client shares the proxy's address, so those limits apply to everyone together
 - Regular backups are recommended (`instance/` and `static/uploads/`)
 
 ## Uninstallation
 
 ```bash
-# Stop and disable service
-systemctl stop vehicle-tracker
-systemctl disable vehicle-tracker
+systemctl disable --now vehicle-tracker
+```
 
-# Remove service file
-rm /etc/systemd/system/vehicle-tracker.service
-systemctl daemon-reload
+```bash
+rm /etc/systemd/system/vehicle-tracker.service && systemctl daemon-reload
+```
 
-# Remove application (WARNING: This deletes all data!)
-rm -rf /opt/vehicle-tracker
+This deletes the app and all its data:
 
-# Remove user
-userdel vtracker
+```bash
+rm -rf /opt/vehicle-tracker && userdel vtracker
 ```
 
 ## Support
 
-For issues, questions, or feature requests:
 - **GitHub Issues:** https://github.com/alreadyded1/VST/issues
 - **Application logs:** `journalctl -u vehicle-tracker -f`
-- **System logs:** `tail -f /var/log/syslog`
 
 ## License
 
@@ -441,6 +378,7 @@ This project is open source and available for personal and commercial use.
 - **Driving pace and projected dates**: set miles per year per vehicle (or use the estimate from your records) and mileage-based reminders and scheduled services show an expected date
 - **Faster entry**: any two of gallons, price per gallon and total fill in the third; odometer check on save
 - **Economy drop alert**, **fuel grade and notes**, rolling-average MPG chart, station comparison by grade
+- Fuel statistics laid out in two rows of three; station comparison sorts when you click a header
 - CSV import skips rows already there and carries the full-tank and missed-fill-up flags
 
 ### Version 3.1.0
@@ -457,26 +395,24 @@ This project is open source and available for personal and commercial use.
 - Existing supplies are converted automatically the first time the new version starts. The old `supplies`, `supply_units` and `service_supplies` tables are left in the database, unused, as a backup
 - API: `/api/supplies` and `/api/supply-units` are replaced by `/api/parts`, `/api/part-purchases`, `/api/part-installs` and `/api/warranties`. Service records accept a `parts` list (the old `supplies` list of `{id, quantity}` still works)
 
-### Version 2.0.0 (Latest)
-- **Multiple vehicle support** - Manage unlimited vehicles in one application
-- **Vehicle selector** in header for easy switching between vehicles
-- **Edit service records** - Update existing service entries
-- **MPG popup modal** - Beautiful visual display after fuel fill-ups
-- **Improved supplies integration** - Fixed display issues in service records
-- **Automated update script** - Easy updates directly from GitHub
-- **Enhanced UI** - Removed emoji, cleaner professional appearance
-- **Better mobile toggle** - Fixed mobile/desktop view switching
-- All data automatically filtered by selected vehicle
-- Vehicle CRUD operations (Create, Read, Update, Delete)
-- Vehicles management page with card-based layout
+### Between 2.0.0 and 3.0.0 (not released as numbered versions)
+- User accounts, admin panel and API tokens
+- Tire log, documents, global search and the printable report
+- VIN decoding and recall checks
+- Redesigned interface with a sidebar and automatic phone layout
+- Runs under gunicorn
+
+### Version 2.0.0
+- **Multiple vehicle support** with a vehicle selector
+- **Edit service records**
+- **MPG popup** after fuel fill-ups
+- **Automated update script**
+- All data filtered by the selected vehicle
 
 ### Version 1.0.0
 - Initial release
-- Full vehicle maintenance tracking
 - Service records with receipt uploads
-- Supplies inventory management
+- Supplies inventory
 - Fuel tracking with MPG calculation
 - Service reminders
-- Responsive design with mobile/desktop modes
-- Sortable tables
-- Search functionality
+- Sortable tables and search
