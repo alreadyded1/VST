@@ -36,7 +36,7 @@
 .spend-bar span { display: block; height: 100%; }
 .spend-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: 0.8rem; color: var(--light-text); }
 .spend-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.35rem; }
-.c-fuel { background: #6366f1; } .c-service { background: #10b981; } .c-tires { background: #f59e0b; }
+.c-fuel { background: #6366f1; } .c-service { background: #10b981; } .c-tires { background: #f59e0b; } .c-other { background: #ec4899; }
 
 .vehicle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
 .vehicle-card {
@@ -128,7 +128,7 @@ function renderAttention(items) {
 }
 
 function spendTile(title, spend) {
-    const kinds = [['fuel', 'Fuel'], ['service', 'Service & parts'], ['tires', 'Tires']];
+    const kinds = [['fuel', 'Fuel'], ['service', 'Service & parts'], ['tires', 'Tires'], ['other', 'Insurance, tax & other']];
     const bar = spend.total > 0
         ? kinds.map(([key]) => `<span class="c-${key}" style="width: ${(spend[key] / spend.total * 100).toFixed(2)}%"></span>`).join('')
         : '';

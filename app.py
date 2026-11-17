@@ -872,7 +872,14 @@ def init_db():
                 'ALTER TABLE fuel_records ADD COLUMN trip_miles INTEGER',
                 'ALTER TABLE fuel_records ADD COLUMN trip_gallons REAL',
                 # Driving pace set by the owner, for projecting mileage due dates
-                'ALTER TABLE vehicle ADD COLUMN miles_per_year INTEGER'):
+                'ALTER TABLE vehicle ADD COLUMN miles_per_year INTEGER',
+                # Cost of ownership: odometer when bought, and what it's worth now
+                'ALTER TABLE vehicle ADD COLUMN purchase_odometer INTEGER',
+                'ALTER TABLE vehicle ADD COLUMN current_value_cents INTEGER',
+                # A snoozed reminder stays off the dashboard until this date
+                # or odometer reading
+                'ALTER TABLE service_reminders ADD COLUMN snoozed_until DATE',
+                'ALTER TABLE service_reminders ADD COLUMN snoozed_until_mileage INTEGER'):
             try:
                 db.execute(migration)
                 db.commit()
@@ -887,6 +894,25 @@ def init_db():
                 recalculate_mpg(db, v['id'])
             db.execute("INSERT INTO settings (key, value) VALUES ('fuel_trips_calculated', '1')")
             db.commit()
+
+        # Costs of owning a vehicle beyond fuel, service and tires (see the
+        # cost of ownership section)
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS vehicle_costs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT,
+                amount_cents INTEGER NOT NULL,
+                start_date DATE NOT NULL,
+                repeat TEXT NOT NULL DEFAULT 'none',
+                end_date DATE,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle (id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_vehicle_costs_vehicle_id ON vehicle_costs(vehicle_id);
+        ''')
 
         # One-time repair: MPG used to be computed only at insert time, so
         # edits, deletions and backdated fill-ups left stale values behind.
@@ -1196,6 +1222,12 @@ def documents_page():
 def report_page():
     """Printable vehicle report page"""
     return render_template('report.html')
+
+@app.route('/costs')
+@login_required
+def costs_page():
+    """Cost of ownership page"""
+    return render_template('costs.html')
 
 @app.route('/tires')
 @login_required
@@ -1547,7 +1579,7 @@ def delete_vehicle(vehicle_id):
     db.execute('UPDATE part_installs SET vehicle_id = NULL, service_id = NULL WHERE vehicle_id = ?',
                (vehicle_id,))
     for table in ('service_records', 'maintenance_schedules', 'fuel_records',
-                  'service_reminders', 'documents', 'tire_install_log',
+                  'service_reminders', 'documents', 'tire_install_log', 'vehicle_costs',
                   'tire_rotations', 'tread_readings', 'tires'):
         db.execute(f'DELETE FROM {table} WHERE vehicle_id = ?', (vehicle_id,))
     db.execute('DELETE FROM vehicle WHERE id = ?', (vehicle_id,))
@@ -2047,6 +2079,12 @@ def add_service():
             _sync_receipt_path(db, service_id)
             for type_id in service_type_ids(db, service_id):
                 refresh_schedule_reminder(db, vehicle_id, type_id)
+            # Logged from a reminder: tick it off. Scheduled reminders move on
+            # by themselves when the service lists their type.
+            reminder_id = _number(data, 'complete_reminder_id', 'Reminder', integer=True)
+            if reminder_id:
+                db.execute('''UPDATE service_reminders SET completed = 1
+                              WHERE id = ? AND vehicle_id = ? AND schedule_id IS NULL''', (reminder_id, vehicle_id))
             warning = odometer_warning(db, vehicle_id, fields['date'], fields['odometer'], service_id=service_id)
     except Exception:
         for path, _ in uploads:
@@ -2186,9 +2224,9 @@ def refresh_schedule_reminder(db, vehicle_id, type_id):
                           (vehicle_id, type_id)).fetchone()
     if not schedule:
         return
-    open_ids = [r['id'] for r in db.execute(
-        'SELECT id FROM service_reminders WHERE schedule_id = ? AND completed = 0 ORDER BY id',
-        (schedule['id'],)).fetchall()]
+    open_rows = db.execute('SELECT id, due_date, due_mileage FROM service_reminders '
+                           'WHERE schedule_id = ? AND completed = 0 ORDER BY id', (schedule['id'],)).fetchall()
+    open_ids = [r['id'] for r in open_rows]
 
     last = last_service_of_type(db, vehicle_id, type_id)
     due_date, due_mileage = (None, None)
@@ -2207,6 +2245,11 @@ def refresh_schedule_reminder(db, vehicle_id, type_id):
     if open_ids:
         db.execute('''UPDATE service_reminders SET service_type = ?, due_date = ?, due_mileage = ?, notes = ?
                       WHERE id = ?''', (schedule['name'], due_date, due_mileage, notes, open_ids[0]))
+        if (open_rows[0]['due_date'], open_rows[0]['due_mileage']) != (due_date, due_mileage):
+            # The work was done again (or the interval changed): a snooze on
+            # the old due point no longer applies
+            db.execute('''UPDATE service_reminders SET snoozed_until = NULL, snoozed_until_mileage = NULL
+                          WHERE id = ?''', (open_ids[0],))
         for reminder_id in open_ids[1:]:
             db.execute('DELETE FROM service_reminders WHERE id = ?', (reminder_id,))
         return
@@ -3902,12 +3945,22 @@ def set_driving_pace(vehicle_id):
     return jsonify({'success': True, **pace})
 
 # Service reminders endpoints
+def reminder_snoozed(reminder, today, odometer):
+    """True while a snooze holds: before its date, or below its odometer"""
+    until = _parse_date(reminder['snoozed_until'])
+    if until and until > today:
+        return True
+    return (reminder['snoozed_until_mileage'] is not None and odometer is not None
+            and odometer < reminder['snoozed_until_mileage'])
+
+
 @app.route('/api/reminders', methods=['GET'])
 @api_login_required
 def get_reminders():
     """Get all service reminders for a vehicle. Open reminders with a due
     mileage also carry `miles_remaining` and, where the vehicle's driving
-    pace is known, the `projected_date` it should reach that mileage."""
+    pace is known, the `projected_date` it should reach that mileage.
+    `snoozed` says whether a snooze is holding it back right now."""
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
 
@@ -3916,56 +3969,120 @@ def get_reminders():
     else:
         reminders = db.execute('SELECT * FROM service_reminders ORDER BY completed, due_date').fetchall()
 
+    today = datetime.now().date()
     vehicles = {}
     result = []
     for row in reminders:
         reminder = dict(row)
         reminder['miles_remaining'] = reminder['projected_date'] = None
-        if reminder['due_mileage'] is not None and not reminder['completed']:
+        reminder['snoozed'] = False
+        if not reminder['completed']:
             if reminder['vehicle_id'] not in vehicles:
                 vehicles[reminder['vehicle_id']] = (
                     latest_odometer(db, reminder['vehicle_id']),
                     driving_pace(db, reminder['vehicle_id'])['effective_miles_per_year'])
             odometer, pace = vehicles[reminder['vehicle_id']]
-            if odometer is not None:
-                reminder['miles_remaining'] = reminder['due_mileage'] - odometer
-            reminder['projected_date'] = projected_date(reminder['due_mileage'], odometer, pace)
+            reminder['snoozed'] = reminder_snoozed(row, today, odometer)
+            if reminder['due_mileage'] is not None:
+                if odometer is not None:
+                    reminder['miles_remaining'] = reminder['due_mileage'] - odometer
+                reminder['projected_date'] = projected_date(reminder['due_mileage'], odometer, pace)
         result.append(reminder)
     db.close()
     return jsonify(result)
+
+def _reminder_fields(data, current=None):
+    """Validated reminder fields; with `current`, fields not sent keep
+    their present value"""
+    current = current or {}
+    pick = lambda key, read: read() if key in data else current.get(key)
+    service_type = pick('service_type', lambda: _text(data, 'service_type'))
+    if not service_type:
+        raise ApiError('Service type is required')
+    due_date = pick('due_date', lambda: _date(data, 'due_date', 'Due date'))
+    due_mileage = pick('due_mileage', lambda: _number(data, 'due_mileage', 'Due mileage', integer=True))
+    # The form asks for a date or a mileage; the API allows neither, as
+    # recall and re-order reminders have no due point
+    notes = pick('notes', lambda: _text(data, 'notes') or '')
+    return service_type, due_date, due_mileage, notes or ''
+
+def _get_reminder(db, reminder_id):
+    reminder = db.execute('SELECT * FROM service_reminders WHERE id = ?', (reminder_id,)).fetchone()
+    if not reminder:
+        raise ApiError('Reminder not found', 404)
+    return reminder
 
 @app.route('/api/reminders', methods=['POST'])
 @api_login_required
 def add_reminder():
     """Add new service reminder"""
-    data = request.json
-    vehicle_id = data.get('vehicle_id')
-
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
     if not vehicle_id:
-        return jsonify({'error': 'Vehicle ID is required'}), 400
-
-    db = get_db()
-    cursor = db.execute('''INSERT INTO service_reminders
-                          (vehicle_id, service_type, due_date, due_mileage, notes)
-                          VALUES (?, ?, ?, ?, ?)''',
-                       (vehicle_id, data['service_type'],
-                        data.get('due_date'), data.get('due_mileage'), data.get('notes', '')))
-
-    db.commit()
-    reminder_id = cursor.lastrowid
-    db.close()
+        raise ApiError('Vehicle ID is required')
+    service_type, due_date, due_mileage, notes = _reminder_fields(data)
+    with db_session() as db:
+        cursor = db.execute('''INSERT INTO service_reminders (vehicle_id, service_type, due_date, due_mileage, notes)
+                               VALUES (?, ?, ?, ?, ?)''', (vehicle_id, service_type, due_date, due_mileage, notes))
+        reminder_id = cursor.lastrowid
     return jsonify({'success': True, 'id': reminder_id})
 
 @app.route('/api/reminders/<int:reminder_id>', methods=['PUT'])
 @api_login_required
 def update_reminder(reminder_id):
-    """Update reminder completion status"""
-    data = request.json
-    db = get_db()
-    db.execute('UPDATE service_reminders SET completed=? WHERE id=?',
-              (data['completed'], reminder_id))
-    db.commit()
-    db.close()
+    """Edit a reminder and/or mark it complete. `completed` alone works for
+    any reminder; the other fields only for reminders made by hand, since a
+    scheduled one is kept up to date from the maintenance schedule."""
+    data = _payload()
+    with db_session() as db:
+        reminder = _get_reminder(db, reminder_id)
+        if any(key in data for key in ('service_type', 'due_date', 'due_mileage', 'notes')):
+            if reminder['schedule_id']:
+                raise ApiError('This reminder follows the maintenance schedule. To change when it is due, '
+                               'change the interval on the Service Records page.')
+            service_type, due_date, due_mileage, notes = _reminder_fields(data, dict(reminder))
+            db.execute('''UPDATE service_reminders SET service_type = ?, due_date = ?, due_mileage = ?, notes = ?
+                          WHERE id = ?''', (service_type, due_date, due_mileage, notes, reminder_id))
+            if (due_date, due_mileage) != (reminder['due_date'], reminder['due_mileage']):
+                db.execute('''UPDATE service_reminders SET snoozed_until = NULL, snoozed_until_mileage = NULL
+                              WHERE id = ?''', (reminder_id,))
+        if 'completed' in data:
+            done = data['completed'] in (True, 1, '1', 'true', 'on')
+            db.execute('''UPDATE service_reminders SET completed = ?, snoozed_until = NULL,
+                          snoozed_until_mileage = NULL WHERE id = ?''', (1 if done else 0, reminder_id))
+    return jsonify({'success': True})
+
+@app.route('/api/reminders/<int:reminder_id>/snooze', methods=['POST'])
+@api_login_required
+def snooze_reminder(reminder_id):
+    """Keep a reminder off the dashboard for `days` days or `miles` miles.
+    Its due date and mileage don't change."""
+    data = _payload()
+    days = _number(data, 'days', 'Days', integer=True)
+    miles = _number(data, 'miles', 'Miles', integer=True)
+    if not days and not miles:
+        raise ApiError('Snooze for a number of days or miles')
+    with db_session() as db:
+        reminder = _get_reminder(db, reminder_id)
+        until = until_mileage = None
+        if days:
+            until = (datetime.now().date() + timedelta(days=days)).isoformat()
+        if miles:
+            odometer = latest_odometer(db, reminder['vehicle_id'])
+            if odometer is None:
+                raise ApiError('There is no odometer reading for this vehicle yet, so snooze by days instead')
+            until_mileage = odometer + miles
+        db.execute('UPDATE service_reminders SET snoozed_until = ?, snoozed_until_mileage = ? WHERE id = ?',
+                   (until, until_mileage, reminder_id))
+    return jsonify({'success': True, 'snoozed_until': until, 'snoozed_until_mileage': until_mileage})
+
+@app.route('/api/reminders/<int:reminder_id>/snooze', methods=['DELETE'])
+@api_login_required
+def unsnooze_reminder(reminder_id):
+    with db_session() as db:
+        _get_reminder(db, reminder_id)
+        db.execute('UPDATE service_reminders SET snoozed_until = NULL, snoozed_until_mileage = NULL WHERE id = ?',
+                   (reminder_id,))
     return jsonify({'success': True})
 
 @app.route('/api/reminders/<int:reminder_id>', methods=['DELETE'])
@@ -4539,6 +4656,299 @@ def delete_tread_reading(reading_id):
     return jsonify({'success': True})
 
 
+# ── Cost of ownership ────────────────────────────────────────────────────────
+#
+# Fuel, service, parts and tires are already on record. Everything else a
+# vehicle costs (its purchase, insurance, registration, tax, loan payments)
+# is entered here as a cost, either once or repeating on a schedule. A
+# repeating cost isn't stored once per payment: its occurrences are worked
+# out from the start date, so a monthly payment counts once for every month
+# that has come round, up to its end date if it has one.
+
+COST_CATEGORIES = ['Purchase', 'Insurance', 'Registration', 'Tax', 'Loan payment', 'Parking & tolls', 'Other']
+COST_REPEATS = {'none': 0, 'monthly': 1, 'quarterly': 3, 'semiannual': 6, 'annual': 12}
+# Running costs are everything but the purchase itself
+RUNNING_KINDS = ['fuel', 'service', 'tires']
+
+
+def cost_dates(cost, start=None, end=None):
+    """The dates a cost falls on between `start` and `end` (inclusive,
+    dates). Each one is counted from the original start date, so a payment
+    on the 31st lands on the last day of shorter months and comes back."""
+    first = _parse_date(cost['start_date'])
+    if not first:
+        return []
+    end = end or datetime.now().date()
+    last = _parse_date(cost['end_date']) if cost['end_date'] else None
+    if last and last < end:
+        end = last
+    step = COST_REPEATS.get(cost['repeat'] or 'none', 0)
+    dates = []
+    n = 0
+    while True:
+        when = add_months(first, n * step) if step else first
+        if when > end:
+            break
+        if not start or when >= start:
+            dates.append(when)
+        if not step:
+            break
+        n += 1
+    return dates
+
+
+def next_cost_date(cost, today=None):
+    today = today or datetime.now().date()
+    step = COST_REPEATS.get(cost['repeat'] or 'none', 0)
+    first = _parse_date(cost['start_date'])
+    if not first:
+        return None
+    if not step:
+        return first.isoformat() if first > today else None
+    last = _parse_date(cost['end_date']) if cost['end_date'] else None
+    n = 0
+    while True:
+        when = add_months(first, n * step)
+        if last and when > last:
+            return None
+        if when > today:
+            return when.isoformat()
+        n += 1
+
+
+def fixed_costs_cents(db, vehicle_id, start=None, end=None, include_purchase=True):
+    """Entered costs falling between two dates, in cents, by category"""
+    totals = {}
+    for cost in db.execute('SELECT * FROM vehicle_costs WHERE vehicle_id = ?', (vehicle_id,)).fetchall():
+        if cost['category'] == 'Purchase' and not include_purchase:
+            continue
+        count = len(cost_dates(cost, start, end))
+        if count:
+            totals[cost['category']] = totals.get(cost['category'], 0) + count * cost['amount_cents']
+    return totals
+
+
+def running_costs_cents(db, vehicle_id, start=None, end=None):
+    """Fuel, service (with the parts used) and tires between two dates, in
+    cents. Dates are ISO strings or None for open-ended."""
+    clauses, params = ['vehicle_id = :v'], {'v': vehicle_id, 's': start, 'e': end}
+    if start:
+        clauses.append('{d} >= :s')
+    if end:
+        clauses.append('{d} <= :e')
+    where = ' AND '.join(clauses)
+    fuel = db.execute(f"SELECT COALESCE(SUM(cost_cents), 0) AS c FROM fuel_records WHERE {where.format(d='date')}",
+                      params).fetchone()['c']
+    service = db.execute(f'''SELECT COALESCE(SUM(s.cost_cents + {PARTS_CENTS_SQL}), 0) AS c FROM service_records s
+                             WHERE {where.replace('vehicle_id', 's.vehicle_id').format(d='s.date')}''',
+                         params).fetchone()['c']
+    tires = db.execute(f'''SELECT COALESCE(SUM(purchase_price_cents), 0) AS c FROM tires
+                           WHERE purchase_date IS NOT NULL AND {where.format(d='purchase_date')}''',
+                       params).fetchone()['c']
+    return {'fuel': int(fuel), 'service': int(service), 'tires': int(tires)}
+
+
+def first_record_date(db, vehicle_id):
+    """The earliest date anything was recorded for a vehicle"""
+    row = db.execute('''SELECT MIN(d) AS d FROM (
+                            SELECT MIN(start_date) AS d FROM vehicle_costs WHERE vehicle_id = :v
+                            UNION ALL SELECT MIN(date) FROM fuel_records WHERE vehicle_id = :v
+                            UNION ALL SELECT MIN(date) FROM service_records WHERE vehicle_id = :v
+                            UNION ALL SELECT MIN(purchase_date) FROM tires WHERE vehicle_id = :v)''',
+                     {'v': vehicle_id}).fetchone()
+    return _parse_date(row['d']) if row and row['d'] else None
+
+
+def earliest_odometer(db, vehicle_id):
+    row = db.execute('''SELECT MIN(o) AS o FROM (
+                            SELECT MIN(odometer) AS o FROM service_records WHERE vehicle_id = :v
+                            UNION ALL SELECT MIN(odometer) FROM fuel_records WHERE vehicle_id = :v)''',
+                     {'v': vehicle_id}).fetchone()
+    return row['o'] if row else None
+
+
+def ownership_summary(db, vehicle_id, today=None):
+    """What a vehicle has cost to own, from the first record to today.
+
+    The total counts the purchase as what the vehicle has lost in value
+    (purchase price minus its current value) when a current value has been
+    entered, otherwise as the full price. Cost per mile divides by the miles
+    driven since the purchase odometer, or since the first reading on
+    record. All amounts in dollars."""
+    today = today or datetime.now().date()
+    vehicle = db.execute('SELECT * FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
+    running = running_costs_cents(db, vehicle_id, end=today.isoformat())
+    fixed = fixed_costs_cents(db, vehicle_id, end=today)
+    purchase = fixed.pop('Purchase', 0)
+    running_total = sum(running.values()) + sum(fixed.values())
+
+    current_value = vehicle['current_value_cents']
+    depreciation = purchase - current_value if purchase and current_value is not None else None
+    total = running_total + (depreciation if depreciation is not None else purchase)
+
+    since = first_record_date(db, vehicle_id)
+    days = max((today - since).days, 30) if since else None
+    start_odometer = vehicle['purchase_odometer'] if vehicle['purchase_odometer'] is not None \
+        else earliest_odometer(db, vehicle_id)
+    odometer = latest_odometer(db, vehicle_id)
+    miles = odometer - start_odometer if odometer is not None and start_odometer is not None else None
+    if miles is not None and miles <= 0:
+        miles = None
+
+    by_year = []
+    if since:
+        for year in range(since.year, today.year + 1):
+            start, end = datetime(year, 1, 1).date(), min(datetime(year, 12, 31).date(), today)
+            year_running = running_costs_cents(db, vehicle_id, start.isoformat(), end.isoformat())
+            year_fixed = fixed_costs_cents(db, vehicle_id, start, end)
+            row = {'year': year, **{k: dollars(v) for k, v in year_running.items()},
+                   'purchase': dollars(year_fixed.pop('Purchase', 0)),
+                   'other': dollars(sum(year_fixed.values())),
+                   'other_by_category': {k: dollars(v) for k, v in year_fixed.items()}}
+            row['total'] = dollars(sum(year_running.values()) + round(row['purchase'] * 100)
+                                   + round(row['other'] * 100))
+            by_year.append(row)
+
+    return {
+        'since': since.isoformat() if since else None,
+        'years': round(days / 365.25, 2) if days else None,
+        'running': {**{k: dollars(v) for k, v in running.items()},
+                    'by_category': {k: dollars(v) for k, v in fixed.items()},
+                    'total': dollars(running_total)},
+        'purchase': dollars(purchase),
+        'current_value': dollars(current_value),
+        'depreciation': dollars(depreciation),
+        'purchase_counted_as': 'depreciation' if depreciation is not None else 'price',
+        'total': dollars(total),
+        'per_year': dollars(round(total / days * 365.25)) if days else None,
+        'per_month': dollars(round(total / days * 365.25 / 12)) if days else None,
+        'miles': miles,
+        'start_odometer': start_odometer,
+        'purchase_odometer': vehicle['purchase_odometer'],
+        'cost_per_mile': round(total / 100 / miles, 3) if miles else None,
+        'running_cost_per_mile': round(running_total / 100 / miles, 3) if miles else None,
+        'by_year': by_year,
+    }
+
+
+def _cost_dict(row, today=None):
+    cost = dict(row)
+    dates = cost_dates(row, end=today)
+    cost['amount'] = dollars(cost['amount_cents'])
+    cost['times_so_far'] = len(dates)
+    cost['total_so_far'] = dollars(len(dates) * cost['amount_cents'])
+    cost['next_date'] = next_cost_date(row, today)
+    return cost
+
+
+def _cost_fields(data):
+    category = _text(data, 'category')
+    if category not in COST_CATEGORIES:
+        raise ApiError('Choose a category: ' + ', '.join(COST_CATEGORIES))
+    amount = _number(data, 'amount', 'Amount')
+    if amount is None:
+        raise ApiError('Amount is required')
+    start = _date(data, 'start_date', 'Date')
+    if not start:
+        raise ApiError('Date is required')
+    repeat = _text(data, 'repeat') or 'none'
+    if repeat not in COST_REPEATS:
+        raise ApiError('Repeat must be one of ' + ', '.join(COST_REPEATS))
+    end = _date(data, 'end_date', 'End date') if repeat != 'none' else None
+    if end and end < start:
+        raise ApiError('The end date is before the start date')
+    return {'category': category, 'description': _text(data, 'description'), 'amount_cents': to_cents(amount),
+            'start_date': start, 'repeat': repeat, 'end_date': end, 'notes': _text(data, 'notes')}
+
+
+def _require_vehicle(db, vehicle_id):
+    vehicle = db.execute('SELECT * FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
+    if not vehicle:
+        raise ApiError('Vehicle not found', 404)
+    return vehicle
+
+
+@app.route('/api/vehicle/<int:vehicle_id>/ownership', methods=['GET'])
+@api_login_required
+def get_ownership(vehicle_id):
+    """A vehicle's cost of ownership, plus the costs entered for it"""
+    db = get_db()
+    try:
+        _require_vehicle(db, vehicle_id)
+        summary = ownership_summary(db, vehicle_id)
+        costs = db.execute('''SELECT * FROM vehicle_costs WHERE vehicle_id = ?
+                              ORDER BY start_date DESC, id DESC''', (vehicle_id,)).fetchall()
+        summary['costs'] = [_cost_dict(c) for c in costs]
+        summary['categories'] = COST_CATEGORIES
+        return jsonify(summary)
+    finally:
+        db.close()
+
+@app.route('/api/ownership/compare', methods=['GET'])
+@api_login_required
+def compare_ownership():
+    """Cost of ownership side by side for every vehicle"""
+    db = get_db()
+    rows = []
+    for vehicle in db.execute('SELECT * FROM vehicle ORDER BY created_at').fetchall():
+        s = ownership_summary(db, vehicle['id'])
+        rows.append({'id': vehicle['id'], 'name': _vehicle_name(vehicle), 'total': s['total'],
+                     'per_year': s['per_year'], 'per_month': s['per_month'], 'miles': s['miles'],
+                     'cost_per_mile': s['cost_per_mile'], 'running_cost_per_mile': s['running_cost_per_mile'],
+                     'years': s['years'],
+                     'full_price': bool(s['purchase']) and s['purchase_counted_as'] == 'price'})
+    db.close()
+    return jsonify(rows)
+
+@app.route('/api/vehicle/<int:vehicle_id>/costs', methods=['POST'])
+@api_login_required
+def add_vehicle_cost(vehicle_id):
+    f = _cost_fields(_payload())
+    with db_session() as db:
+        _require_vehicle(db, vehicle_id)
+        cursor = db.execute('''INSERT INTO vehicle_costs
+                               (vehicle_id, category, description, amount_cents, start_date, repeat, end_date, notes)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                            (vehicle_id, f['category'], f['description'], f['amount_cents'], f['start_date'],
+                             f['repeat'], f['end_date'], f['notes']))
+        cost_id = cursor.lastrowid
+    return jsonify({'success': True, 'id': cost_id})
+
+@app.route('/api/vehicle-costs/<int:cost_id>', methods=['PUT'])
+@api_login_required
+def update_vehicle_cost(cost_id):
+    f = _cost_fields(_payload())
+    with db_session() as db:
+        cursor = db.execute('''UPDATE vehicle_costs SET category=?, description=?, amount_cents=?, start_date=?,
+                                      repeat=?, end_date=?, notes=? WHERE id=?''',
+                            (f['category'], f['description'], f['amount_cents'], f['start_date'],
+                             f['repeat'], f['end_date'], f['notes'], cost_id))
+        if cursor.rowcount == 0:
+            raise ApiError('Cost not found', 404)
+    return jsonify({'success': True})
+
+@app.route('/api/vehicle-costs/<int:cost_id>', methods=['DELETE'])
+@api_login_required
+def delete_vehicle_cost(cost_id):
+    with db_session() as db:
+        if db.execute('DELETE FROM vehicle_costs WHERE id = ?', (cost_id,)).rowcount == 0:
+            raise ApiError('Cost not found', 404)
+    return jsonify({'success': True})
+
+@app.route('/api/vehicle/<int:vehicle_id>/ownership-settings', methods=['PUT'])
+@api_login_required
+def set_ownership_settings(vehicle_id):
+    """`purchase_odometer` (miles when bought) and `current_value` (what the
+    vehicle is worth now). Blank clears either."""
+    data = _payload()
+    with db_session() as db:
+        _require_vehicle(db, vehicle_id)
+        db.execute('UPDATE vehicle SET purchase_odometer = ?, current_value_cents = ? WHERE id = ?',
+                   (_number(data, 'purchase_odometer', 'Odometer at purchase', integer=True),
+                    to_cents(_number(data, 'current_value', 'Current value')), vehicle_id))
+    return jsonify({'success': True})
+
+
 # ── Dashboard ────────────────────────────────────────────────────────────────
 #
 # One call that answers "what needs my attention, across every vehicle":
@@ -4561,8 +4971,9 @@ def _vehicle_name(vehicle):
 
 
 def _spend_cents(db, start_date, vehicle_id=None):
-    """What was spent on or after a date, in cents, by kind. Service spend
-    includes the parts used; parts still on the shelf aren't spend yet."""
+    """What was spent on or after a date (up to today), in cents, by kind.
+    Service spend includes the parts used; parts still on the shelf aren't
+    spend yet."""
     where = ' AND vehicle_id = :v' if vehicle_id else ''
     params = {'d': start_date, 'v': vehicle_id}
     fuel = db.execute(f'SELECT COALESCE(SUM(cost_cents), 0) AS c FROM fuel_records WHERE date >= :d{where}',
@@ -4573,7 +4984,13 @@ def _spend_cents(db, start_date, vehicle_id=None):
     tires = db.execute(f'''SELECT COALESCE(SUM(purchase_price_cents), 0) AS c FROM tires
                            WHERE purchase_date >= :d{where}''', params).fetchone()['c']
     fuel, service, tires = int(fuel), int(service), int(tires)
-    return {'fuel': fuel, 'service': service, 'tires': tires, 'total': fuel + service + tires}
+    # Insurance, registration, tax, loan payments and the like. The purchase
+    # price itself is left out: it would swamp the month it fell in.
+    vehicle_ids = [vehicle_id] if vehicle_id else [v['id'] for v in db.execute('SELECT id FROM vehicle')]
+    other = sum(sum(fixed_costs_cents(db, vid, _parse_date(start_date), include_purchase=False).values())
+                for vid in vehicle_ids)
+    return {'fuel': fuel, 'service': service, 'tires': tires, 'other': other,
+            'total': fuel + service + tires + other}
 
 
 def _spend_dollars(cents):
@@ -4594,6 +5011,8 @@ def vehicle_attention(db, vehicle, today):
 
     for r in db.execute('SELECT * FROM service_reminders WHERE vehicle_id = ? AND completed = 0',
                         (vehicle_id,)).fetchall():
+        if reminder_snoozed(r, today, odometer):
+            continue
         overdue = soon = False
         parts = []
         due = _parse_date(r['due_date'])

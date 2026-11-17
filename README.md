@@ -49,8 +49,17 @@ See [FEATURES.md](FEATURES.md) for a page-by-page reference and [QUICKSTART.md](
 
 ✅ **Reminders**
 - Due by date, by mileage or both; overdue ones are highlighted
-- Scheduled reminders come from the maintenance schedule; manual ones are yours to add and tick off
+- Scheduled reminders come from the maintenance schedule; manual ones are yours to add, edit and tick off
+- Snooze a reminder for a week, a month or a few hundred miles to keep it off the dashboard
+- **Log as Service** opens a new service record for that work and ticks the reminder off when you save
 - Driving pace (miles per year, set by you or estimated from your records) gives mileage-based reminders an expected date
+
+✅ **Cost of Ownership**
+- Add what fuel, service and tires don't cover: the purchase, insurance, registration, tax, loan payments
+- Enter a repeating cost once (monthly, every 3 or 6 months, yearly) and it is counted every time it comes round
+- Total cost of ownership, cost per year, per month and per mile, with a breakdown and a year-by-year table
+- Enter what the vehicle is worth now and the purchase counts as what it has lost in value
+- Compare every vehicle side by side
 
 ✅ **Tires**
 - Tire sets with brand, model, size, season, DOT code, purchase date and price
@@ -211,8 +220,10 @@ The script will:
 
 Any changes the new version needs to make to your database happen automatically the first time it starts. If the service fails to start, the script prints how to restore from the backup it just made.
 
-**What is replaced:** `app.py`, `wsgi.py`, `gunicorn.conf.py`, `requirements.txt`, the templates and the CSS and JavaScript.
-**What is kept:** the database, the signing keys, and all uploaded receipts, documents and photos.
+**What is replaced:** `app.py`, `wsgi.py`, `gunicorn.conf.py`, `requirements.txt`, `update.sh`, `install.sh`, the docs, the templates and the CSS and JavaScript. The service file is rewritten too.
+**What is kept:** the database, the signing keys, all uploaded receipts, documents and photos, and your settings in `/etc/vehicle-tracker.env` (see Customization).
+
+If the update script that ran is older than the one in the new version, it hands over to the new one, so the newest steps always run.
 
 ### Service control
 
@@ -275,6 +286,7 @@ chown -R vtracker:vtracker /opt/vehicle-tracker && systemctl start vehicle-track
 - **Application**: `/opt/vehicle-tracker/`
 - **Database**: `/opt/vehicle-tracker/instance/vehicle_tracker.db`
 - **Signing keys**: `/opt/vehicle-tracker/instance/secret_key` and `jwt_secret_key`
+- **Your settings** (port, address, keys): `/etc/vehicle-tracker.env`
 - **Receipts and photos**: `/opt/vehicle-tracker/static/uploads/receipts/`
 - **Documents**: `/opt/vehicle-tracker/static/uploads/documents/`
 - **Vehicle photos**: `/opt/vehicle-tracker/static/uploads/vehicles/`
@@ -284,9 +296,26 @@ chown -R vtracker:vtracker /opt/vehicle-tracker && systemctl start vehicle-track
 
 ## Customization
 
+### Your settings file
+
+Settings live in `/etc/vehicle-tracker.env`, which the service loads on start. Updates never change it. Each line is `NAME=value`; a line starting with `#` is ignored. After editing it:
+
+```bash
+systemctl restart vehicle-tracker
+```
+
+| Setting | What it does | Default |
+|---|---|---|
+| `VT_PORT` | Port to listen on | `5000` |
+| `VT_HOST` | Address to listen on | `0.0.0.0` (every interface) |
+| `VT_WORKERS` | Worker processes | `2` |
+| `SECRET_KEY`, `JWT_SECRET_KEY` | Keys that sign logins and API tokens | generated and kept in `instance/` |
+
+If you changed the port in `gunicorn.conf.py` or added `Environment=` lines to the service file with an earlier version, the update script moves those settings into this file before replacing the old files. For any other systemd change, use `systemctl edit vehicle-tracker`; updates keep that too.
+
 ### Change the port
 
-Edit the `bind` line in `/opt/vehicle-tracker/gunicorn.conf.py`, for example `bind = '0.0.0.0:8080'`, then restart the service. The update script replaces this file, so make the change again after updating.
+Set `VT_PORT` in `/etc/vehicle-tracker.env`, for example `VT_PORT=8080`, then restart the service.
 
 ### Run behind a reverse proxy
 
@@ -294,7 +323,7 @@ Point the proxy (NGINX Proxy Manager, nginx, Caddy) at `http://<container-ip>:50
 
 ### Manage the signing keys yourself
 
-The keys that sign login sessions and API tokens are generated on first start and stored in `instance/`. To supply your own, set `SECRET_KEY` and `JWT_SECRET_KEY` as `Environment=` lines in the systemd service file. The update script rewrites that file, so add them again after updating.
+The keys that sign login sessions and API tokens are generated on first start and stored in `instance/`. To supply your own, set `SECRET_KEY` and `JWT_SECRET_KEY` in `/etc/vehicle-tracker.env`. That file is readable by root only.
 
 ## API
 
@@ -395,6 +424,11 @@ rm -rf /opt/vehicle-tracker && userdel vtracker
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 3.4.0
+- **Cost of ownership**: a new Costs page for the purchase, insurance, registration, tax, loan payments and anything else, entered once or repeating. Shows total cost of ownership, per year, per month and per mile, a year-by-year table, and every vehicle side by side. These costs (except the purchase price) also appear in the dashboard's spending
+- **Reminders**: edit a reminder you made, snooze one by days or miles to keep it off the dashboard, and **Log as Service** to start a service record for it that ticks it off when saved
+- **Updates keep your settings**: port, address, worker count and signing keys now live in `/etc/vehicle-tracker.env`, which updates never touch. Settings made the old way are moved there automatically. The installed update script now updates itself
 
 ### Version 3.3.0
 - **New dashboard** covering every vehicle: a "needs attention" list (overdue and upcoming reminders, expiring warranties, low stock, worn tires, a low-MPG tank), spending this month and this year, a card per vehicle and recent activity

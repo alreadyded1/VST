@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+
+{% block title %}Cost of Ownership - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<style>
+.own-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.own-stats .stat-card { display: flex; flex-direction: column; justify-content: center; min-height: 120px; }
+.stat-note { font-size: 0.75rem; color: var(--light-text); margin-top: 0.3rem; }
+.breakdown-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--light-bg); margin: 0.5rem 0 1rem; }
+.breakdown-bar span { display: block; height: 100%; }
+.breakdown-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0.5rem 1.5rem; }
+.breakdown-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border-color); font-size: 0.9rem; }
+.breakdown-row i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 0.45rem; vertical-align: middle; }
+.hint { color: var(--light-text); font-size: 0.8rem; }
+.sub { display: block; font-size: 0.78rem; color: var(--light-text); }
+.settings-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.75rem; align-items: end; }
+@media (max-width: 768px) {
+    .own-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .settings-row { grid-template-columns: 1fr; }
+}
+</style>
+
+<h1>Cost of Ownership</h1>
+<p class="hint mb-2" id="vehicleLine"></p>
+
+<div class="card">
+    <div class="stats-grid own-stats">
+        <div class="stat-card">
+            <h3>Total Cost of Ownership</h3>
+            <div class="stat-value" id="statTotal">—</div>
+            <div class="stat-note" id="statTotalNote"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Per Year</h3>
+            <div class="stat-value" id="statYear">—</div>
+            <div class="stat-note" id="statMonth"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Cost per Mile</h3>
+            <div class="stat-value" id="statMile">—</div>
+            <div class="stat-note" id="statMileNote"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Running Costs</h3>
+            <div class="stat-value" id="statRunning">—</div>
+            <div class="stat-note">everything except buying it</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Where It Goes</h2>
+    <div class="breakdown-bar" id="breakdownBar"></div>
+    <div class="breakdown-list" id="breakdownList"></div>
+</div>
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Other Costs</h2>
+        <button class="btn btn-primary" onclick="openCostModal()">Add Cost</button>
+    </div>
+    <p class="hint mb-2">Fuel, service, parts and tires are counted from their own pages. Add everything else here: what you paid for the vehicle, insurance, registration, tax, loan payments. A cost that repeats is entered once and counted every time it comes round.</p>
+    <div class="mobile-cards" id="costsMobileCards"></div>
+    <div class="table-container has-mobile-cards">
+        <table id="costsTable">
+            <thead>
+                <tr>
+                    <th>What</th>
+                    <th>Amount</th>
+                    <th>Repeats</th>
+                    <th>So Far</th>
+                    <th>Next</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="costsTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="mb-2">Purchase Details</h2>
+    <p class="hint mb-2">Both optional. The odometer when you bought it makes cost per mile cover the miles you have driven. A current value counts the purchase as what the vehicle has lost in value, rather than its full price.</p>
+    <form class="settings-row" onsubmit="saveSettings(event)">
+        <div class="form-group" style="margin: 0;">
+            <label for="purchaseOdometer">Odometer When Bought</label>
+            <input type="number" id="purchaseOdometer" min="0" step="1" placeholder="e.g., 32000">
+        </div>
+        <div class="form-group" style="margin: 0;">
+            <label for="currentValue">What It's Worth Now</label>
+            <input type="number" id="currentValue" min="0" step="0.01" placeholder="e.g., 14500">
+        </div>
+        <button type="submit" class="btn btn-secondary">Save</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2 class="mb-2">By Year</h2>
+    <p class="hint mb-2">What was paid out each calendar year, purchase included.</p>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Year</th>
+                    <th>Fuel</th>
+                    <th>Service &amp; Parts</th>
+                    <th>Tires</th>
+                    <th>Insurance, Tax &amp; Other</th>
+                    <th>Purchase</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody id="yearsTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="mb-2">All Vehicles</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Vehicle</th>
+                    <th>Total</th>
+                    <th>Per Year</th>
+                    <th>Miles</th>
+                    <th>Cost per Mile</th>
+                    <th>Running per Mile</th>
+                </tr>
+            </thead>
+            <tbody id="compareTableBody"></tbody>
+        </table>
+    </div>
+    <p class="hint" id="compareNote" style="margin-top: 0.5rem;"></p>
+</div>
+
+<!-- Add / edit cost -->
+<div id="costModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="costModalTitle">Add Cost</h3>
+            <button class="close" onclick="closeModal('costModal')">&times;</button>
+        </div>
+        <form id="costForm" onsubmit="saveCost(event)">
+            <input type="hidden" id="costId">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="costCategory">Category *</label>
+                    <select id="costCategory" required onchange="updateCostHint()"></select>
+                </div>
+                <div class="form-group">
+                    <label for="costAmount">Amount *</label>
+                    <input type="number" id="costAmount" min="0" step="0.01" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="costDescription">Description</label>
+                <input type="text" id="costDescription" placeholder="e.g., State Farm, County registration">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="costRepeat">Repeats</label>
+                    <select id="costRepeat" onchange="updateCostHint()">
+                        <option value="none">Once</option>
+                        <option value="monthly">Every month</option>
+                        <option value="quarterly">Every 3 months</option>
+                        <option value="semiannual">Every 6 months</option>
+                        <option value="annual">Every year</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="costStart" id="costStartLabel">Date *</label>
+                    <input type="date" id="costStart" required>
+                </div>
+                <div class="form-group" id="costEndGroup" style="display: none;">
+                    <label for="costEnd">Last Payment</label>
+                    <input type="date" id="costEnd">
+                </div>
+            </div>
+            <p class="hint" id="costHint" style="margin: -0.25rem 0 1rem;"></p>
+            <div class="form-group">
+                <label for="costNotes">Notes</label>
+                <textarea id="costNotes" rows="2"></textarea>
+            </div>
+            <button type="submit" class="btn btn-success" id="costSubmit">Save Cost</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let ownership = null;
+
+const REPEAT_LABELS = { none: 'Once', monthly: 'Monthly', quarterly: 'Every 3 months', semiannual: 'Every 6 months', annual: 'Yearly' };
+const COLORS = {
+    fuel: '#6366f1', service: '#10b981', tires: '#f59e0b', purchase: '#64748b',
+    Insurance: '#ec4899', Registration: '#8b5cf6', Tax: '#ef4444', 'Loan payment': '#0ea5e9',
+    'Parking & tolls': '#14b8a6', Other: '#a3a3a3'
+};
+
+function money(value) {
+    return value === null || value === undefined ? '—' : formatCurrency(value);
+}
+
+async function loadOwnership() {
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) {
+        document.getElementById('vehicleLine').textContent = 'Please select a vehicle first.';
+        return;
+    }
+    try {
+        ownership = await fetchAPI(`/api/vehicle/${vehicleId}/ownership`);
+    } catch (error) {
+        showAlert(error.message, 'danger');
+        return;
+    }
+    renderStats();
+    renderBreakdown();
+    renderCosts();
+    renderYears();
+    document.getElementById('purchaseOdometer').value = ownership.purchase_odometer ?? '';
+    document.getElementById('currentValue').value = ownership.current_value ?? '';
+    const rows = await loadCompare();
+    const me = rows.find(r => r.id === Number(vehicleId));
+    const name = me ? me.name : '';
+    document.getElementById('vehicleLine').textContent = ownership.since
+        ? `${name} · on record since ${formatDate(ownership.since)} (${ownership.years.toFixed(1)} years)`
+        : `${name} · nothing recorded yet`;
+}
+
+function renderStats() {
+    const o = ownership;
+    document.getElementById('statTotal').textContent = money(o.total);
+    document.getElementById('statTotalNote').textContent = !o.purchase ? 'no purchase price entered'
+        : o.purchase_counted_as === 'depreciation'
+            ? `purchase counted as ${formatCurrency(o.depreciation)} lost in value`
+            : 'purchase counted at full price';
+    document.getElementById('statYear').textContent = money(o.per_year);
+    // With no current value the whole purchase price lands in the figures,
+    // which overstates them for a vehicle owned only a short while
+    const fullPrice = o.purchase && o.purchase_counted_as === 'price';
+    document.getElementById('statMonth').textContent = o.per_month === null ? ''
+        : fullPrice ? 'includes the full purchase price; add what it is worth now below for a fairer figure'
+        : `${formatCurrency(o.per_month)} a month`;
+    document.getElementById('statMile').textContent = o.cost_per_mile !== null ? '$' + o.cost_per_mile.toFixed(2) : '—';
+    document.getElementById('statMileNote').textContent = o.miles
+        ? `over ${o.miles.toLocaleString()} miles` + (o.purchase_odometer === null ? ' on record' : ' since bought')
+        : 'needs two odometer readings';
+    document.getElementById('statRunning').textContent = money(o.running.total);
+}
+
+function renderBreakdown() {
+    const o = ownership;
+    const rows = [
+        ['fuel', 'Fuel', o.running.fuel],
+        ['service', 'Service & parts', o.running.service],
+        ['tires', 'Tires', o.running.tires],
+        ...Object.entries(o.running.by_category).map(([category, value]) => [category, category, value])
+    ];
+    if (o.purchase) {
+        rows.push(['purchase', o.purchase_counted_as === 'depreciation' ? 'Lost in value' : 'Purchase', o.depreciation ?? o.purchase]);
+    }
+    const shown = rows.filter(r => r[2] > 0);
+    const total = shown.reduce((sum, r) => sum + r[2], 0);
+    document.getElementById('breakdownBar').innerHTML = total > 0
+        ? shown.map(([key, label, value]) => `<span title="${escapeHtml(label)}" style="width: ${(value / total * 100).toFixed(2)}%; background: ${COLORS[key] || '#a3a3a3'}"></span>`).join('')
+        : '';
+    document.getElementById('breakdownList').innerHTML = shown.length
+        ? shown.map(([key, label, value]) => `
+            <div class="breakdown-row">
+                <span><i style="background: ${COLORS[key] || '#a3a3a3'}"></i>${escapeHtml(label)}</span>
+                <span>${formatCurrency(value)} <span class="hint">${(value / total * 100).toFixed(0)}%</span></span>
+            </div>`).join('')
+        : '<p class="hint">Nothing to show yet.</p>';
+}
+
+function renderCosts() {
+    const tbody = document.getElementById('costsTableBody');
+    const cards = document.getElementById('costsMobileCards');
+    const costs = ownership.costs;
+    if (!costs.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">No costs added yet.</td></tr>';
+        cards.innerHTML = '<p class="text-center">No costs added yet.</p>';
+        return;
+    }
+    const repeatText = c => c.repeat === 'none' ? `Once, ${formatDate(c.start_date)}`
+        : `${REPEAT_LABELS[c.repeat]} from ${formatDate(c.start_date)}` + (c.end_date ? ` to ${formatDate(c.end_date)}` : '');
+    const soFar = c => c.repeat === 'none' ? (c.times_so_far ? formatCurrency(c.total_so_far) : 'Not yet')
+        : `${formatCurrency(c.total_so_far)}<span class="sub">${c.times_so_far} payment${c.times_so_far === 1 ? '' : 's'}</span>`;
+    const what = c => `<strong>${escapeHtml(c.category)}</strong>` + (c.description ? `<span class="sub">${escapeHtml(c.description)}</span>` : '');
+    tbody.innerHTML = costs.map(c => `
+        <tr>
+            <td>${what(c)}</td>
+            <td>${formatCurrency(c.amount)}</td>
+            <td>${repeatText(c)}</td>
+            <td>${soFar(c)}</td>
+            <td>${c.next_date ? formatDate(c.next_date) : '—'}</td>
+            <td style="white-space: nowrap;">
+                <button class="btn btn-small btn-secondary" onclick="openCostModal(${c.id})">Edit</button>
+                <button class="btn btn-small btn-danger" onclick="deleteCost(${c.id})">Delete</button>
+            </td>
+        </tr>`).join('');
+    cards.innerHTML = costs.map(c => createMobileCard(escapeHtml(c.category), [
+        ...(c.description ? [{ label: 'Description', value: escapeHtml(c.description) }] : []),
+        { label: 'Amount', value: formatCurrency(c.amount) },
+        { label: 'Repeats', value: repeatText(c) },
+        { label: 'So far', value: soFar(c) },
+        { label: 'Next', value: c.next_date ? formatDate(c.next_date) : '—' }
+    ], [
+        { label: 'Edit', class: 'btn-secondary', onclick: `openCostModal(${c.id})` },
+        { label: 'Delete', class: 'btn-danger', onclick: `deleteCost(${c.id})` }
+    ])).join('');
+}
+
+function renderYears() {
+    const tbody = document.getElementById('yearsTableBody');
+    const years = ownership.by_year.slice().reverse();
+    tbody.innerHTML = years.length ? years.map(y => `
+        <tr>
+            <td><strong>${y.year}</strong></td>
+            <td>${formatCurrency(y.fuel)}</td>
+            <td>${formatCurrency(y.service)}</td>
+            <td>${formatCurrency(y.tires)}</td>
+            <td title="${escapeHtml(Object.entries(y.other_by_category).map(([k, v]) => `${k}: ${formatCurrency(v)}`).join(', '))}">${formatCurrency(y.other)}</td>
+            <td>${y.purchase ? formatCurrency(y.purchase) : '—'}</td>
+            <td><strong>${formatCurrency(y.total)}</strong></td>
+        </tr>`).join('')
+        : '<tr><td colspan="7" class="text-center">Nothing recorded yet.</td></tr>';
+}
+
+async function loadCompare() {
+    try {
+        const rows = await fetchAPI('/api/ownership/compare');
+        const priced = rows.filter(r => r.full_price);
+        document.getElementById('compareNote').textContent = priced.length
+            ? '* Includes the full purchase price, as no current value has been entered for it.' : '';
+        const active = Number(getCurrentVehicleId());
+        const perMile = v => v === null ? '—' : '$' + v.toFixed(2);
+        document.getElementById('compareTableBody').innerHTML = rows.map(r => `
+            <tr${r.id === active ? ' style="font-weight: 600;"' : ''}>
+                <td>${escapeHtml(r.name)}${r.full_price ? ' *' : ''}</td>
+                <td>${money(r.total)}</td>
+                <td>${money(r.per_year)}</td>
+                <td>${r.miles !== null ? r.miles.toLocaleString() : '—'}</td>
+                <td>${perMile(r.cost_per_mile)}</td>
+                <td>${perMile(r.running_cost_per_mile)}</td>
+            </tr>`).join('');
+        return rows;
+    } catch (error) {
+        document.getElementById('compareTableBody').innerHTML = '<tr><td colspan="6">Could not load.</td></tr>';
+        return [];
+    }
+}
+
+// ── Costs ───────────────────────────────────────────────────────────────────
+
+function updateCostHint() {
+    const category = document.getElementById('costCategory').value;
+    const repeating = document.getElementById('costRepeat').value !== 'none';
+    document.getElementById('costEndGroup').style.display = repeating ? 'block' : 'none';
+    document.getElementById('costStartLabel').textContent = repeating ? 'First Payment *' : 'Date *';
+    const hints = {
+        'Purchase': 'If you financed it, enter the down payment here and each loan payment as its own cost, so nothing is counted twice.',
+        'Loan payment': 'Leave the last payment blank while the loan is running. If you entered the full price as the purchase, enter only the interest here.',
+        'Insurance': 'For a policy paid every 6 or 12 months, enter one premium and choose how often it repeats.'
+    };
+    document.getElementById('costHint').textContent = hints[category] || '';
+}
+
+function openCostModal(costId = null) {
+    const cost = costId ? ownership.costs.find(c => c.id === costId) : null;
+    const select = document.getElementById('costCategory');
+    select.innerHTML = ownership.categories.map(c => `<option>${escapeHtml(c)}</option>`).join('');
+    document.getElementById('costForm').reset();
+    document.getElementById('costId').value = cost ? cost.id : '';
+    document.getElementById('costModalTitle').textContent = cost ? 'Edit Cost' : 'Add Cost';
+    if (cost) {
+        select.value = cost.category;
+        document.getElementById('costAmount').value = cost.amount;
+        document.getElementById('costDescription').value = cost.description || '';
+        document.getElementById('costRepeat').value = cost.repeat;
+        document.getElementById('costStart').value = cost.start_date;
+        document.getElementById('costEnd').value = cost.end_date || '';
+        document.getElementById('costNotes').value = cost.notes || '';
+    } else {
+        select.value = 'Insurance';
+        document.getElementById('costStart').value = toISODate(new Date());
+    }
+    updateCostHint();
+    openModal('costModal');
+}
+
+async function send(method, url, body, message) {
+    try {
+        await fetchAPI(url, {
+            method,
+            headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        showAlert(message, 'success');
+        await loadOwnership();
+        return true;
+    } catch (error) {
+        showAlert(error.message, 'danger');
+        return false;
+    }
+}
+
+async function saveCost(event) {
+    event.preventDefault();
+    const value = id => document.getElementById(id).value;
+    const costId = value('costId');
+    const repeat = value('costRepeat');
+    const body = {
+        category: value('costCategory'), amount: value('costAmount'), description: value('costDescription'),
+        repeat, start_date: value('costStart'), end_date: repeat === 'none' ? '' : value('costEnd'),
+        notes: value('costNotes')
+    };
+    const saved = await send(costId ? 'PUT' : 'POST',
+                             costId ? `/api/vehicle-costs/${costId}` : `/api/vehicle/${getCurrentVehicleId()}/costs`,
+                             body, costId ? 'Cost updated' : 'Cost added');
+    if (saved) closeModal('costModal');
+}
+
+function deleteCost(costId) {
+    if (!confirm('Delete this cost?')) return;
+    send('DELETE', `/api/vehicle-costs/${costId}`, undefined, 'Cost deleted');
+}
+
+function saveSettings(event) {
+    event.preventDefault();
+    send('PUT', `/api/vehicle/${getCurrentVehicleId()}/ownership-settings`, {
+        purchase_odometer: document.getElementById('purchaseOdometer').value,
+        current_value: document.getElementById('currentValue').value
+    }, 'Purchase details saved');
+}
+
+appReady.then(loadOwnership);
+</script>
+{% endblock %}

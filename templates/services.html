@@ -407,6 +407,8 @@ let intervalTypeId = null;
 
 // Line items on the service being added or edited: {type_id, name, cost}
 let selectedItems = [];
+// A manual reminder this new record was started from; saving ticks it off
+let completeReminderId = null;
 // Attachments already on the service being edited, and ids marked to remove
 let existingAttachments = [];
 let removedAttachmentIds = [];
@@ -821,11 +823,41 @@ function resetServiceForm() {
     originalPartQuantities = {};
     existingAttachments = [];
     removedAttachmentIds = [];
+    completeReminderId = null;
     updateItemsList();
     updatePartsList();
     renderExistingAttachments();
     toggleDiy();
     document.querySelector('#addServiceModal h3').textContent = 'Add Service Record';
+}
+
+// Opened from a reminder's "Log as Service" button (?from_reminder=ID):
+// start a new record for that work, dated today
+async function startFromReminder() {
+    const params = new URLSearchParams(window.location.search);
+    const reminderId = parseInt(params.get('from_reminder'));
+    if (!reminderId) return;
+    history.replaceState(null, '', window.location.pathname);
+    const vehicleId = getCurrentVehicleId();
+    if (!vehicleId) return;
+    try {
+        const reminders = await fetchAPI(`/api/reminders?vehicle_id=${vehicleId}`);
+        const reminder = reminders.find(r => r.id === reminderId);
+        if (!reminder) return;
+        openAddServiceModal();
+        document.querySelector('#addServiceModal h3').textContent = `Log Service: ${reminder.service_type}`;
+        const type = serviceTypes.find(t => t.name.toLowerCase() === reminder.service_type.toLowerCase());
+        if (type) {
+            selectedItems = [{ type_id: type.id, name: type.name, cost: null }];
+            updateItemsList();
+        } else {
+            document.getElementById('repairsCompleted').value = reminder.service_type;
+        }
+        // Scheduled reminders move on by themselves once the work is logged
+        if (!reminder.schedule_id) completeReminderId = reminder.id;
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
 }
 
 function openAddServiceModal() {
@@ -909,12 +941,13 @@ async function addService(event) {
         ? { install_id: p.install_id, quantity: p.quantity }
         : { part_id: p.part_id, quantity: p.quantity })));
     formData.append('remove_attachments', JSON.stringify(removedAttachmentIds));
+    if (completeReminderId && !currentEditServiceId) formData.append('complete_reminder_id', completeReminderId);
 
     try {
         const editing = currentEditServiceId;
         const result = await fetchAPI(editing ? `/api/services/${editing}` : '/api/services',
                                       { method: editing ? 'PUT' : 'POST', body: formData });
-        showAlert(editing ? 'Service record updated' : 'Service record added', 'success');
+        showAlert(editing ? 'Service record updated' : (completeReminderId ? 'Service record added and the reminder marked complete' : 'Service record added'), 'success');
         if (result.warning) showAlert(result.warning, 'warning');
 
         resetServiceForm();
@@ -1282,10 +1315,11 @@ async function importCSV(event) {
     }
 }
 
-appReady.then(() => {
-    loadServiceTypes();
+appReady.then(async () => {
     loadServices();
     loadParts();
+    await loadServiceTypes();
+    startFromReminder();
 });
 </script>
 {% endblock %}

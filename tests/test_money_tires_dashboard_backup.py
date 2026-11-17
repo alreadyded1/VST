@@ -243,7 +243,7 @@ def _dashboard(client):
 def test_dashboard_is_empty_but_valid_with_no_data(client):
     d = _dashboard(client)
     assert d['attention'] == [] and d['vehicles'] == [] and d['recent'] == []
-    assert d['spend']['this_month'] == {'fuel': 0, 'service': 0, 'tires': 0, 'total': 0}
+    assert d['spend']['this_month'] == {'fuel': 0, 'service': 0, 'tires': 0, 'other': 0, 'total': 0}
 
 
 def test_dashboard_attention_covers_every_vehicle_and_is_worst_first(client, vehicle_id):
@@ -305,7 +305,7 @@ def test_dashboard_spend_and_recent_activity(client, vehicle_id):
     client.post('/api/tires', json={'vehicle_id': other, 'brand': 'BFG', 'purchase_price': 600, 'purchase_date': today})
 
     d = _dashboard(client)
-    assert d['spend']['this_month'] == {'fuel': 30, 'service': 140, 'tires': 600, 'total': 770}
+    assert d['spend']['this_month'] == {'fuel': 30, 'service': 140, 'tires': 600, 'other': 0, 'total': 770}
     assert d['spend']['this_year']['total'] == 770
     cards = {c['id']: c['spend_this_year']['total'] for c in d['vehicles']}
     assert cards == {vehicle_id: 130, other: 640}
