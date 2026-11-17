@@ -3,171 +3,220 @@
 {% block title %}Dashboard - Vehicle Maintenance Tracker{% endblock %}
 
 {% block content %}
+<style>
+.attention-list { display: grid; gap: 0.5rem; }
+.attention-item {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem;
+    border: 1px solid var(--border-color); border-left-width: 4px; border-radius: 8px;
+    background: var(--card-bg); color: inherit; text-decoration: none;
+}
+.attention-item:hover { background: var(--light-bg); }
+.attention-item.overdue { border-left-color: var(--danger-color); }
+.attention-item.soon { border-left-color: var(--warning-color); }
+.attention-item.info { border-left-color: var(--accent); }
+.attention-body { flex: 1; min-width: 0; }
+.attention-title { font-weight: 600; }
+.attention-detail { font-size: 0.85rem; color: var(--light-text); }
+.attention-vehicle { font-size: 0.75rem; color: var(--light-text); white-space: nowrap; }
+.pill {
+    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+}
+.pill-ok { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.pill-warn { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.pill-bad { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.pill-info { background: var(--accent-light); color: var(--accent); }
+.all-clear { display: flex; align-items: center; gap: 0.6rem; color: #047857; font-weight: 600; }
+
+.spend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.spend-tile { border: 1px solid var(--border-color); border-radius: 10px; padding: 1.1rem 1.25rem; }
+.spend-tile h3 { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--light-text); margin-bottom: 0.4rem; }
+.spend-total { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.spend-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--light-bg); margin: 0.75rem 0 0.5rem; }
+.spend-bar span { display: block; height: 100%; }
+.spend-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: 0.8rem; color: var(--light-text); }
+.spend-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.35rem; }
+.c-fuel { background: #6366f1; } .c-service { background: #10b981; } .c-tires { background: #f59e0b; }
+
+.vehicle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+.vehicle-card {
+    border: 1px solid var(--border-color); border-radius: 10px; padding: 1rem 1.1rem; cursor: pointer;
+    background: var(--card-bg); text-align: left; font: inherit; color: inherit; width: 100%;
+}
+.vehicle-card:hover { border-color: var(--accent); }
+.vehicle-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
+.vehicle-card-head { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
+.vehicle-thumb {
+    width: 52px; height: 52px; border-radius: 8px; object-fit: cover; flex-shrink: 0;
+    background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text);
+}
+.vehicle-name { font-weight: 600; }
+.vehicle-sub { font-size: 0.8rem; color: var(--light-text); }
+.vehicle-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; font-size: 0.85rem; }
+.vehicle-facts span { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--light-text); }
+
+.recent-kind { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--light-text); }
+@media (max-width: 768px) {
+    .spend-grid { grid-template-columns: 1fr; }
+    .attention-item { align-items: flex-start; flex-wrap: wrap; }
+    .attention-vehicle { white-space: normal; }
+}
+</style>
+
 <h1>Dashboard</h1>
 
 <div class="card">
-    <h2>Vehicle Statistics</h2>
-    <div class="stats-grid" id="statsGrid">
-        <div class="stat-card">
-            <h3>Total Services</h3>
-            <div class="stat-value" id="totalServices">0</div>
-        </div>
-        <div class="stat-card">
-            <h3>Total Spent</h3>
-            <div class="stat-value" id="totalSpent">$0.00</div>
-        </div>
-        <div class="stat-card" style="padding: 3rem 0 1rem 0;">
-            <div id="avgMpgGauge"></div>
-        </div>
-        <div class="stat-card">
-            <h3>Pending Reminders</h3>
-            <div class="stat-value" id="pendingReminders">0</div>
-        </div>
+    <div class="flex-between mb-2">
+        <h2>Needs Attention</h2>
+        <span id="attentionCount"></span>
     </div>
+    <div id="attentionList"><p>Loading...</p></div>
 </div>
 
 <div class="card">
-    <h2>Recent Service Records</h2>
-    <div id="recentServices">
-        <p>Loading...</p>
-    </div>
+    <h2 class="mb-2">Spending <span style="font-size: 0.8rem; font-weight: 400; color: var(--light-text);">all vehicles</span></h2>
+    <div class="spend-grid" id="spendGrid"></div>
 </div>
 
 <div class="card">
-    <h2>Upcoming Reminders</h2>
-    <div id="upcomingReminders">
-        <p>Loading...</p>
-    </div>
+    <h2 class="mb-2">Vehicles</h2>
+    <div class="vehicle-grid" id="vehicleGrid"></div>
+</div>
+
+<div class="card">
+    <h2 class="mb-2">Recent Activity</h2>
+    <div id="recentActivity"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Create Fuel Gauge Component
-function createFuelGauge(containerId, value, label, bestMpg = null) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
+const SEVERITY = {
+    overdue: ['pill-bad', 'Overdue'],
+    soon: ['pill-warn', 'Soon'],
+    info: ['pill-info', 'Heads up']
+};
 
-    // Use best MPG as max value (right side of gauge = best MPG)
-    // If no best MPG, use 50 as default
-    const maxValue = bestMpg && bestMpg > 0 ? bestMpg : 50;
+function renderAttention(items) {
+    const list = document.getElementById('attentionList');
+    const overdue = items.filter(i => i.severity === 'overdue').length;
+    const soon = items.filter(i => i.severity === 'soon').length;
+    document.getElementById('attentionCount').innerHTML =
+        (overdue ? `<span class="pill pill-bad">${overdue} overdue</span> ` : '') +
+        (soon ? `<span class="pill pill-warn">${soon} coming up</span>` : '');
 
-    // Clamp value between 0 and maxValue
-    const clampedValue = Math.max(0, Math.min(value, maxValue));
-
-    // Calculate needle rotation (-90deg to 90deg, total 180deg)
-    // When value = maxValue (best MPG), needle points all the way right
-    const percentage = clampedValue / maxValue;
-    const rotation = -90 + (percentage * 180);
-
-    // Determine color based on best MPG if available
-    let color = '#27ae60'; // Green default
-    if (bestMpg && bestMpg > 0 && value > 0) {
-        const lossPercentage = ((bestMpg - value) / bestMpg) * 100;
-
-        if (lossPercentage <= 3) {
-            color = '#27ae60'; // Green - within 3% of best
-        } else if (lossPercentage <= 11) {
-            color = '#f39c12'; // Orange - 3-11% loss
-        } else {
-            color = '#e74c3c'; // Red - more than 11% loss
-        }
+    if (items.length === 0) {
+        list.innerHTML = `<div class="all-clear">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Nothing needs attention right now.</div>`;
+        return;
     }
+    list.innerHTML = '<div class="attention-list">' + items.map(item => {
+        const [pill, label] = SEVERITY[item.severity];
+        // Follow the link with that vehicle selected, so the page shows it
+        const select = item.vehicle_id ? ` onclick="setCurrentVehicleId(${item.vehicle_id})"` : '';
+        return `
+            <a class="attention-item ${item.severity}" href="${item.link}"${select}>
+                <span class="pill ${pill}">${label}</span>
+                <div class="attention-body">
+                    <div class="attention-title">${escapeHtml(item.title)}</div>
+                    <div class="attention-detail">${escapeHtml(item.detail)}</div>
+                </div>
+                <span class="attention-vehicle">${escapeHtml(item.vehicle_name || 'Parts shelf')}</span>
+            </a>`;
+    }).join('') + '</div>';
+}
 
+function spendTile(title, spend) {
+    const kinds = [['fuel', 'Fuel'], ['service', 'Service & parts'], ['tires', 'Tires']];
+    const bar = spend.total > 0
+        ? kinds.map(([key]) => `<span class="c-${key}" style="width: ${(spend[key] / spend.total * 100).toFixed(2)}%"></span>`).join('')
+        : '';
+    const legend = kinds.map(([key, label]) =>
+        `<span><i class="c-${key}"></i>${label} ${formatCurrency(spend[key])}</span>`).join('');
+    return `
+        <div class="spend-tile">
+            <h3>${title}</h3>
+            <div class="spend-total">${formatCurrency(spend.total)}</div>
+            <div class="spend-bar">${bar}</div>
+            <div class="spend-legend">${legend}</div>
+        </div>`;
+}
+
+function renderVehicles(vehicles) {
+    const grid = document.getElementById('vehicleGrid');
+    if (vehicles.length === 0) {
+        grid.innerHTML = '<p>No vehicles yet. <a href="/vehicles">Add your first vehicle</a> to get started.</p>';
+        return;
+    }
+    const active = Number(getCurrentVehicleId());
+    grid.innerHTML = vehicles.map(v => {
+        const thumb = v.picture
+            ? `<img class="vehicle-thumb" src="/static/${escapeHtml(v.picture)}" alt="">`
+            : `<div class="vehicle-thumb"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect x="9" y="11" width="14" height="10" rx="2"/></svg></div>`;
+        const status = v.overdue ? `<span class="pill pill-bad">${v.overdue} overdue</span>`
+            : v.soon ? `<span class="pill pill-warn">${v.soon} coming up</span>`
+            : '<span class="pill pill-ok">All good</span>';
+        return `
+            <button class="vehicle-card${v.id === active ? ' active' : ''}" onclick="chooseVehicle(${v.id})" title="Make this the active vehicle">
+                <div class="vehicle-card-head">
+                    ${thumb}
+                    <div style="flex: 1; min-width: 0;">
+                        <div class="vehicle-name">${escapeHtml(v.name)}</div>
+                        ${v.name !== v.description ? `<div class="vehicle-sub">${escapeHtml(v.description)}</div>` : ''}
+                        <div style="margin-top: 0.3rem;">${status}</div>
+                    </div>
+                </div>
+                <div class="vehicle-facts">
+                    <div><span>Odometer</span>${v.current_odometer !== null ? v.current_odometer.toLocaleString() + ' mi' : '—'}</div>
+                    <div><span>Average MPG</span>${v.avg_mpg !== null ? v.avg_mpg.toFixed(1) : '—'}</div>
+                    <div><span>Last service</span>${v.last_service ? formatDate(v.last_service) : '—'}</div>
+                    <div><span>Spent this year</span>${formatCurrency(v.spend_this_year.total)}</div>
+                </div>
+            </button>`;
+    }).join('');
+}
+
+function chooseVehicle(vehicleId) {
+    if (Number(getCurrentVehicleId()) === vehicleId) return;
+    setCurrentVehicleId(vehicleId);
+    window.location.reload();
+}
+
+function renderRecent(recent) {
+    const container = document.getElementById('recentActivity');
+    if (recent.length === 0) {
+        container.innerHTML = '<p>Nothing logged yet. Add a <a href="/services">service record</a> or a <a href="/fuel">fill-up</a>.</p>';
+        return;
+    }
     container.innerHTML = `
-        <div class="fuel-gauge">
-            <div class="fuel-gauge-arc">
-                <div class="fuel-gauge-background"></div>
-                <div class="fuel-gauge-fill" style="border-color: ${color}; clip-path: inset(0 ${100 - (percentage * 100)}% 0 0);"></div>
-                <div class="fuel-gauge-needle" style="transform: translateX(-50%) rotate(${rotation}deg);"></div>
-                <div class="fuel-gauge-center"></div>
-            </div>
-            <div class="fuel-gauge-value">${value > 0 ? value.toFixed(1) : '0.0'}</div>
-            <div class="fuel-gauge-label">${label}</div>
-        </div>
-    `;
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Date</th><th>Vehicle</th><th>What</th><th>Cost</th></tr></thead>
+                <tbody>
+                    ${recent.map(r => `
+                        <tr>
+                            <td>${formatDate(r.date)}</td>
+                            <td>${escapeHtml(r.vehicle_name || '—')}</td>
+                            <td><span class="recent-kind">${r.kind === 'fuel' ? 'Fuel' : 'Service'}</span><br>
+                                <a href="${r.link}" onclick="setCurrentVehicleId(${r.vehicle_id})">${escapeHtml(r.title)}</a></td>
+                            <td>${formatCurrency(r.amount)}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
 }
 
 async function loadDashboard() {
-    const vehicleId = getCurrentVehicleId();
-    if (!vehicleId) {
-        document.getElementById('recentServices').innerHTML = '<p>Please <a href="/vehicles">select or add a vehicle</a> to get started.</p>';
-        document.getElementById('upcomingReminders').innerHTML = '';
-        return;
-    }
-
     try {
-        // Load stats
-        const stats = await fetchAPI(`/api/stats?vehicle_id=${vehicleId}`);
-        document.getElementById('totalServices').textContent = stats.total_services;
-        document.getElementById('totalSpent').textContent = formatCurrency(stats.total_spent);
-        document.getElementById('pendingReminders').textContent = stats.pending_reminders;
-
-        // Load fuel records to get best MPG
-        const fuelRecords = await fetchAPI(`/api/fuel?vehicle_id=${vehicleId}`);
-        const recordsWithMpg = fuelRecords.filter(r => r.mpg !== null && r.mpg > 0);
-        const bestMpg = recordsWithMpg.length > 0 ? Math.max(...recordsWithMpg.map(r => r.mpg)) : null;
-
-        // Create gauge with best MPG for color calculation
-        createFuelGauge('avgMpgGauge', stats.avg_mpg, 'Average MPG', bestMpg);
-
-        // Load recent services
-        const services = await fetchAPI(`/api/services?vehicle_id=${vehicleId}`);
-        const recentServicesDiv = document.getElementById('recentServices');
-
-        if (services.length === 0) {
-            recentServicesDiv.innerHTML = '<p>No service records yet. <a href="/services">Add your first service</a>.</p>';
-        } else {
-            const recentFive = services.slice(0, 5);
-            let html = '<table><thead><tr><th>Date</th><th>Service Provider</th><th>Cost</th><th>Repairs</th></tr></thead><tbody>';
-
-            recentFive.forEach(service => {
-                const totalCost = parseFloat(service.cost) + parseFloat(service.supplies_cost || 0);
-                html += `
-                    <tr>
-                        <td>${formatDate(service.date)}</td>
-                        <td>${escapeHtml(service.service_provider)}</td>
-                        <td>${formatCurrency(totalCost)}</td>
-                        <td>${escapeHtml(service.repairs_completed || 'N/A')}</td>
-                    </tr>
-                `;
-            });
-
-            html += '</tbody></table>';
-            recentServicesDiv.innerHTML = html;
-        }
-
-        // Load upcoming reminders
-        const reminders = await fetchAPI(`/api/reminders?vehicle_id=${vehicleId}`);
-        const upcomingRemindersDiv = document.getElementById('upcomingReminders');
-
-        const activeReminders = reminders.filter(r => !r.completed);
-
-        if (activeReminders.length === 0) {
-            upcomingRemindersDiv.innerHTML = '<p>No pending reminders. <a href="/reminders">Add a reminder</a>.</p>';
-        } else {
-            let html = '<div>';
-            activeReminders.slice(0, 5).forEach(reminder => {
-                const isOverdue = reminder.due_date && new Date(reminder.due_date) < new Date();
-                const className = isOverdue ? 'reminder-item overdue' : 'reminder-item';
-
-                html += `
-                    <div class="${className}">
-                        <div class="reminder-header">
-                            <span class="reminder-title">${escapeHtml(reminder.service_type)}</span>
-                            ${isOverdue ? '<span style="color: var(--danger-color); font-weight: bold;">OVERDUE</span>' : ''}
-                        </div>
-                        ${reminder.due_date ? `<p>Due: ${formatDate(reminder.due_date)}</p>` : ''}
-                        ${reminder.due_mileage ? `<p>Due at: ${reminder.due_mileage.toLocaleString()} miles</p>` : ''}
-                        ${reminder.notes ? `<p>${escapeHtml(reminder.notes)}</p>` : ''}
-                    </div>
-                `;
-            });
-            html += '</div>';
-            upcomingRemindersDiv.innerHTML = html;
-        }
+        const data = await fetchAPI('/api/dashboard');
+        renderAttention(data.attention);
+        document.getElementById('spendGrid').innerHTML =
+            spendTile('This month', data.spend.this_month) + spendTile('This year', data.spend.this_year);
+        renderVehicles(data.vehicles);
+        renderRecent(data.recent);
     } catch (error) {
-        console.error('Error loading dashboard:', error);
+        document.getElementById('attentionList').innerHTML = '<p>Could not load the dashboard.</p>';
     }
 }
 

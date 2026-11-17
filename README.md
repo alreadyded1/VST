@@ -54,13 +54,17 @@ See [FEATURES.md](FEATURES.md) for a page-by-page reference and [QUICKSTART.md](
 
 ✅ **Tires**
 - Tire sets with brand, model, size, season, DOT code, purchase date and price
-- Install and uninstall log, rotation log and tread depth readings
+- Install and uninstall log, with the miles driven on each set
+- Rotation log that counts toward a tire rotation interval on the maintenance schedule
+- Tread depth readings, with a warning as a set nears the end of its life
+- Tire purchases count toward what the vehicle has cost
 
 ✅ **Documents**
 - Manuals, insurance, registration, title, warranty and inspection papers, with notes and an attached PDF or image
 
 ✅ **Everything else**
-- Dashboard with totals, recent services and upcoming reminders
+- Dashboard across all vehicles: what is overdue or coming up, expiring warranties, low stock, worn tires, a drop in fuel economy, spending this month and this year, and recent activity
+- Backups from the Admin panel: download everything as one zip, plus an automatic daily copy of the database
 - Search across services, fuel, parts, reminders, documents and tires
 - Printable vehicle report with CSV downloads
 - User accounts with an admin panel; uploads are only served to signed-in users
@@ -226,13 +230,33 @@ journalctl -u vehicle-tracker -f
 
 ### Backup
 
-Everything worth keeping is in two folders: `instance/` (the database and signing keys) and `static/uploads/` (receipts, documents and photos).
+The easy way is in the app: **Admin → Backups**.
+
+- **Download Full Backup** gives you one zip with the database, the signing keys and every uploaded file. Keep a copy somewhere other than the server.
+- **Automatic daily backup** (on by default) saves a copy of the database on the server about once a day, the first time the app is used after 24 hours. It keeps the newest 7 unless you change the number. These copies are small because they leave out uploads, and they live in `instance/backups/` on the same disk as your data, so they protect against a mistake or a bad update but not against losing the disk.
+- **Back Up Now** makes one of those database copies on demand.
+
+To restore a backup zip made by the app:
+
+```bash
+systemctl stop vehicle-tracker
+```
+
+```bash
+unzip -o <backup file>.zip -d /opt/vehicle-tracker
+```
+
+```bash
+chown -R vtracker:vtracker /opt/vehicle-tracker && systemctl start vehicle-tracker
+```
+
+You can also back up from the command line. Everything worth keeping is in two folders: `instance/` (the database and signing keys) and `static/uploads/` (receipts, documents and photos).
 
 ```bash
 tar -czf ~/vehicle-tracker-backup.tar.gz -C /opt/vehicle-tracker instance static/uploads
 ```
 
-### Restore
+### Restore from a command-line backup
 
 ```bash
 systemctl stop vehicle-tracker
@@ -371,6 +395,12 @@ rm -rf /opt/vehicle-tracker && userdel vtracker
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 3.3.0
+- **New dashboard** covering every vehicle: a "needs attention" list (overdue and upcoming reminders, expiring warranties, low stock, worn tires, a low-MPG tank), spending this month and this year, a card per vehicle and recent activity
+- **Tires join the rest of the app**: rotations count toward the tire rotation interval, tire purchases count toward spend, each set shows the miles driven on it, and worn tread is flagged when logged and on the dashboard
+- **Backups in the Admin panel**: download a full backup as one zip, and an automatic daily database backup with a number to keep
+- **Money is stored as whole cents**, so totals are always exactly the sum of their parts. Existing amounts are converted automatically the first time this version starts; nothing changes in how you enter or see them
 
 ### Version 3.2.0
 - **Partial fill-ups**: untick "Filled the tank" and the gallons count toward the next full tank's MPG. Existing fill-ups all count as full tanks, so current numbers don't change

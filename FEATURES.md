@@ -6,7 +6,7 @@ What each page of the app does. For installation and upkeep see [README.md](READ
 
 | Page | Address | What it is for |
 |---|---|---|
-| Dashboard | `/` | Totals, recent services and upcoming reminders for the active vehicle |
+| Dashboard | `/` | What needs attention across all vehicles, spending and recent activity |
 | Vehicles | `/vehicles` | Add, edit and delete vehicles; VIN decode and recall check |
 | Service Records | `/services` | Service history and the maintenance schedule |
 | Parts & Warranties | `/parts` | Parts shelf, purchases, installs and warranty status |
@@ -19,6 +19,21 @@ What each page of the app does. For installation and upkeep see [README.md](READ
 | Admin | `/admin` | Users and settings (admins only) |
 
 The active vehicle is chosen in the sidebar and every page follows it. Search (top right) looks across services, fuel, parts, reminders, documents and tires.
+
+## Dashboard
+
+Covers every vehicle at once, not just the active one.
+
+- **Needs attention**, worst first:
+  - reminders that are overdue, or due within 30 days or 500 miles (this includes scheduled maintenance)
+  - warranties about to run out on installed parts
+  - parts at or below their re-order level
+  - installed tires with tread at 4/32" or less
+  - a latest tank well below the vehicle's recent MPG
+- Clicking an item opens the right page with that vehicle selected
+- **Spending** this month and this year, split into fuel, service and parts, and tires. Parts still on the shelf are not counted until they are used
+- **A card per vehicle:** odometer, average MPG, last service, spend this year, and whether anything is overdue. Clicking a card makes it the active vehicle
+- **Recent activity:** the latest services and fill-ups across all vehicles
 
 ## Vehicles
 
@@ -134,8 +149,11 @@ The active vehicle is chosen in the sidebar and every page follows it. Search (t
 
 - **Tire sets:** brand, model, size, season, DOT code, purchase date, price and notes
 - **Install and uninstall** a set, with date and odometer; installing one set uninstalls the other
-- **Rotation log:** date, odometer, pattern and notes
-- **Tread depth log:** a reading for each corner, in 32nds of an inch
+- **Miles on each set**, worked out from its install history and the vehicle's latest odometer
+- **Rotation log:** date, odometer, pattern and notes. A rotation logged here counts toward the tire rotation interval on the maintenance schedule, and a tire rotation on a service record is listed here too
+- **Tread depth log:** a reading for each corner, in 32nds of an inch. 4/32" or less is marked marginal and 2/32" or less as replace now, with a warning when you save the reading and an item on the dashboard
+- **Purchase price** counts toward the vehicle's spend, in the year of the purchase date
+- An out-of-step odometer on an install or rotation is saved with a warning
 
 ## Documents
 
@@ -151,6 +169,10 @@ The active vehicle is chosen in the sidebar and every page follows it. Search (t
 
 - Sign in with a username and password; change your own password on the Profile page
 - Admins can add and remove users, reset passwords, and hide the default-credentials hint on the login page
+- **Backups** (admins only):
+  - **Download Full Backup:** one zip with the database, signing keys and every upload, laid out so it unzips straight over the install folder
+  - **Automatic daily backup:** a database-only copy kept on the server, made on the first visit after 24 hours, with a number to keep
+  - **Back Up Now**, download and delete for the copies kept on the server
 - Every signed-in user sees every vehicle
 - Uploaded files are only served to signed-in users
 - Repeated failed sign-ins from one address are blocked for up to 15 minutes
@@ -164,6 +186,7 @@ The active vehicle is chosen in the sidebar and every page follows it. Search (t
 
 - Python and Flask, served by gunicorn under systemd; no Docker
 - One SQLite database file; uploads stored on disk
+- Money is stored as whole cents and added up as integers; the API and CSV files use dollars
 - Database changes for a new version are applied automatically at startup
 - A JSON API under `/api/` backs every page and accepts session cookies or bearer tokens
 - Automated tests cover the calculations and the upgrade steps (`pytest tests`)
