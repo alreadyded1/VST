@@ -308,8 +308,8 @@ def test_disallowed_file_types_are_ignored(client, vehicle_id):
 
 def test_existing_single_receipts_become_attachments_on_upgrade(client, vehicle_id):
     db = app_module.get_db()
-    db.execute('''INSERT INTO service_records (id, vehicle_id, date, cost, service_provider, receipt_path)
-                  VALUES (50, ?, '2023-01-01', 10, 'Shop', 'uploads/receipts/old.pdf')''', (vehicle_id,))
+    db.execute('''INSERT INTO service_records (id, vehicle_id, date, cost_cents, service_provider, receipt_path)
+                  VALUES (50, ?, '2023-01-01', 1000, 'Shop', 'uploads/receipts/old.pdf')''', (vehicle_id,))
     db.execute("DELETE FROM settings WHERE key = 'service_attachments_migrated'")
     db.commit()
     db.close()

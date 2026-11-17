@@ -296,8 +296,8 @@ def _legacy_db(vehicle_id):
     part with units in every status."""
     db = app_module.get_db()
     db.execute("DELETE FROM settings WHERE key = 'parts_migrated'")
-    db.execute('''INSERT INTO service_records (id, vehicle_id, date, cost, service_provider, odometer)
-                  VALUES (1, ?, '2024-02-01', 100, 'Shop', 40000)''', (vehicle_id,))
+    db.execute('''INSERT INTO service_records (id, vehicle_id, date, cost_cents, service_provider, odometer)
+                  VALUES (1, ?, '2024-02-01', 10000, 'Shop', 40000)''', (vehicle_id,))
 
     # 1: oil, 3 left, 2 used on service 1, re-order reminder on
     db.execute('''INSERT INTO supplies (id, vehicle_id, name, cost, quantity, supplier, purchase_date,

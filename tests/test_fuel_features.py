@@ -68,8 +68,8 @@ def test_missed_fillup_breaks_a_span_that_has_partials(client, vehicle_id):
 def test_existing_records_count_as_full_tanks_after_upgrade(client, vehicle_id):
     db = app_module.get_db()
     for odometer, gallons in ((1000, 10), (1300, 10)):
-        db.execute('''INSERT INTO fuel_records (vehicle_id, date, gallons, cost, odometer, station, mpg, full_tank)
-                      VALUES (?, '2025-01-01', ?, 40, ?, 'BP', NULL, NULL)''', (vehicle_id, gallons, odometer))
+        db.execute('''INSERT INTO fuel_records (vehicle_id, date, gallons, cost_cents, odometer, station, mpg, full_tank)
+                      VALUES (?, '2025-01-01', ?, 4000, ?, 'BP', NULL, NULL)''', (vehicle_id, gallons, odometer))
     db.execute("DELETE FROM settings WHERE key = 'fuel_trips_calculated'")
     db.commit()
     db.close()

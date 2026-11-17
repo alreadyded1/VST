@@ -45,6 +45,60 @@
     </div>
 </div>
 
+<!-- Backups -->
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Backups</h2>
+        <a class="btn btn-primary" href="/api/admin/backup/download">Download Full Backup</a>
+    </div>
+    <p style="color: var(--light-text); font-size: 0.875rem; margin-bottom: 1rem;">
+        A full backup is one zip with the database, the signing keys and every uploaded receipt, document and photo.
+        Keep a copy somewhere other than this server.
+    </p>
+
+    <div class="setting-row">
+        <div class="setting-info">
+            <div class="setting-label">Automatic daily backup</div>
+            <div class="setting-desc">
+                Saves a copy of the database on this server about once a day, on the first visit after 24 hours.
+                These are small (no uploads) and protect against a mistake or a bad update, not against losing the server's disk.
+                <span id="backupLast"></span>
+            </div>
+        </div>
+        <label class="toggle-switch">
+            <input type="checkbox" id="backupEnabledToggle" onchange="saveBackupSettings()">
+            <span class="toggle-slider"></span>
+        </label>
+    </div>
+    <div class="setting-row">
+        <div class="setting-info">
+            <div class="setting-label">Automatic backups to keep</div>
+            <div class="setting-desc">Older automatic backups are deleted as new ones are made. Ones you make by hand are kept until you delete them.</div>
+        </div>
+        <input type="number" id="backupKeep" min="1" max="365" step="1" onchange="saveBackupSettings()" aria-label="Automatic backups to keep"
+               style="width: 5.5rem; padding: 0.5rem 0.6rem; border: 1px solid var(--border-color); border-radius: 8px; font: inherit; text-align: right;">
+    </div>
+
+    <div class="flex-between" style="margin: 1.25rem 0 0.5rem;">
+        <h3 style="margin: 0;">Database backups on this server</h3>
+        <button class="btn btn-secondary btn-small" onclick="createBackup()">Back Up Now</button>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Made</th>
+                    <th>Kind</th>
+                    <th>Size</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="backupsTableBody"></tbody>
+        </table>
+    </div>
+    <p style="color: var(--light-text); font-size: 0.8rem; margin-top: 0.5rem;" id="backupFolder"></p>
+</div>
+
 <!-- Create User Modal -->
 <div id="createUserModal" class="modal">
     <div class="modal-content">
@@ -295,6 +349,70 @@ async function saveSettings() {
         showAdminAlert('Failed to save settings.', 'danger');
     }
 }
+
+// ── Backups ─────────────────────────────────────────────────────────────────
+
+function fileSize(bytes) {
+    if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+async function loadBackups() {
+    const tbody = document.getElementById('backupsTableBody');
+    try {
+        const data = await fetchAPI('/api/admin/backups');
+        document.getElementById('backupEnabledToggle').checked = data.enabled;
+        document.getElementById('backupKeep').value = data.keep;
+        document.getElementById('backupLast').textContent = data.last_automatic
+            ? `Last one: ${new Date(data.last_automatic).toLocaleString()}.` : 'None made yet.';
+        document.getElementById('backupFolder').textContent = `Stored in ${data.folder}`;
+        tbody.innerHTML = data.backups.length ? data.backups.map(b => `
+            <tr>
+                <td>${new Date(b.created).toLocaleString()}</td>
+                <td>${b.automatic ? 'Automatic' : 'Made by hand'}</td>
+                <td>${fileSize(b.size)}</td>
+                <td style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+                    <a class="btn btn-small btn-secondary" href="/api/admin/backups/${encodeURIComponent(b.name)}">Download</a>
+                    <button class="btn btn-small btn-danger" onclick="deleteBackup('${escapeHtml(b.name)}')">Delete</button>
+                </td>
+            </tr>`).join('')
+            : '<tr><td colspan="4" style="text-align: center; color: var(--light-text);">No backups on this server yet.</td></tr>';
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center;">Could not load backups.</td></tr>';
+    }
+}
+
+async function backupRequest(url, options, message) {
+    try {
+        await fetchAPI(url, options);
+        showAdminAlert(message, 'success');
+        await loadBackups();
+    } catch (err) {
+        showAdminAlert(err.message, 'danger');
+    }
+}
+
+function createBackup() {
+    backupRequest('/api/admin/backups', { method: 'POST' }, 'Backup made.');
+}
+
+function deleteBackup(name) {
+    if (!confirm('Delete this backup?')) return;
+    backupRequest(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }, 'Backup deleted.');
+}
+
+function saveBackupSettings() {
+    backupRequest('/api/admin/backups/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            enabled: document.getElementById('backupEnabledToggle').checked,
+            keep: document.getElementById('backupKeep').value
+        })
+    }, 'Backup settings saved.');
+}
+
+document.addEventListener('DOMContentLoaded', loadBackups);
 
 function showAdminAlert(message, type) {
     const el = document.getElementById('alertContainer');

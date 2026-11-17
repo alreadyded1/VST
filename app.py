@@ -1,12 +1,18 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, make_response, g, session
+from flask import (Flask, render_template, request, jsonify, redirect, url_for, flash, make_response, g,
+                   session, send_file)
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import calendar
 import posixpath
+import re
+import tempfile
+import threading
+import zipfile
 import sqlite3
 import os
 import secrets
@@ -768,6 +774,7 @@ def init_db():
         # One-time copy of the old supplies data into the tables above.
         # Guarded by the setting and by the tables being empty, so a restart
         # can never run it twice.
+        migrate_money_to_cents(db)
         if not db.execute("SELECT 1 FROM settings WHERE key = 'parts_migrated'").fetchone():
             if not db.execute('SELECT 1 FROM parts LIMIT 1').fetchone():
                 migrate_supplies_to_parts(db)
@@ -850,6 +857,11 @@ def init_db():
             db.execute("INSERT INTO settings (key, value) VALUES ('service_attachments_migrated', '1')")
             db.commit()
 
+        # Money moves from dollars to whole cents (see the Money section).
+        # After every table exists and the older migrations, which still
+        # speak dollars, have run.
+        migrate_money_to_cents(db)
+
         for migration in (
                 # 0 for a fill-up that didn't fill the tank; its gallons count
                 # toward the next full tank's MPG
@@ -891,6 +903,56 @@ DEFAULT_SERVICE_TYPES = [
     'Brake fluid', 'Engine air filter', 'Cabin air filter', 'Coolant', 'Transmission fluid',
     'Spark plugs', 'Battery', 'Wiper blades', 'Serpentine belt', 'Inspection', 'Diagnostics',
 ]
+
+# ── Money ────────────────────────────────────────────────────────────────────
+#
+# Every amount is stored as a whole number of cents, in a column whose name
+# ends in _cents, and added up as integers. Dollars only exist at the edge:
+# the API and CSV files take and give dollars, converted here. That way a
+# total is always exactly the sum of its parts, which sums of decimal
+# fractions (0.10 + 0.20) do not guarantee.
+
+# (table, old dollar column, new cents column)
+MONEY_COLUMNS = [
+    ('service_records', 'cost', 'cost_cents'),
+    ('service_items', 'cost', 'cost_cents'),
+    ('part_purchases', 'unit_cost', 'unit_cost_cents'),
+    ('fuel_records', 'cost', 'cost_cents'),
+    ('tires', 'purchase_price', 'purchase_price_cents'),
+]
+
+def to_cents(amount):
+    """Dollars (number or text) to whole cents, half a cent rounding up.
+    None stays None."""
+    if amount is None:
+        return None
+    try:
+        return int((Decimal(str(amount)) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, ValueError):
+        raise ApiError('Amount must be a number')
+
+def dollars(cents):
+    """Whole cents to dollars for the API. None stays None."""
+    return None if cents is None else round(cents / 100, 2)
+
+def migrate_money_to_cents(db):
+    """One-time, per column: rename a dollar column to its _cents name and
+    convert what it holds. Rename and conversion happen in one transaction,
+    and a column that already has its new name is skipped, so this can't
+    half-apply or run twice."""
+    for table, old, new in MONEY_COLUMNS:
+        columns = [row['name'] for row in db.execute(f'PRAGMA table_info({table})')]
+        if old not in columns or new in columns:
+            continue
+        db.commit()
+        db.execute('BEGIN')
+        try:
+            db.execute(f'ALTER TABLE {table} RENAME COLUMN {old} TO {new}')
+            db.execute(f'UPDATE {table} SET {new} = CAST(ROUND({new} * 100) AS INTEGER) WHERE {new} IS NOT NULL')
+            db.execute('COMMIT')
+        except Exception:
+            db.execute('ROLLBACK')
+            raise
 
 def get_setting(key, default='1'):
     """Get a setting value from the database"""
@@ -1350,18 +1412,21 @@ def get_vehicles_summary():
                (SELECT MAX(date) FROM service_records s WHERE s.vehicle_id = v.id) AS last_service,
                (SELECT COUNT(*) FROM fuel_records f WHERE f.vehicle_id = v.id) AS fuel_record_count,
                (SELECT MAX(date) FROM fuel_records f WHERE f.vehicle_id = v.id) AS last_fuel,
-               (SELECT COALESCE(SUM(cost), 0) FROM fuel_records f WHERE f.vehicle_id = v.id) AS total_fuel_cost,
-               (SELECT COALESCE(SUM(cost), 0) FROM fuel_records f
-                 WHERE f.vehicle_id = v.id AND strftime('%Y', f.date) = :year) AS ytd_fuel_cost
+               (SELECT COALESCE(SUM(cost_cents), 0) FROM fuel_records f WHERE f.vehicle_id = v.id) AS total_fuel_cents,
+               (SELECT COALESCE(SUM(cost_cents), 0) FROM fuel_records f
+                 WHERE f.vehicle_id = v.id AND strftime('%Y', f.date) = :year) AS ytd_fuel_cents,
+               (SELECT COALESCE(SUM(purchase_price_cents), 0) FROM tires t WHERE t.vehicle_id = v.id) AS total_tire_cents,
+               (SELECT COALESCE(SUM(purchase_price_cents), 0) FROM tires t
+                 WHERE t.vehicle_id = v.id AND strftime('%Y', t.purchase_date) = :year) AS ytd_tire_cents
         FROM vehicle v
     ''', {'year': year}).fetchall()
 
     # Service cost = labor/shop cost + parts used, per service
     service_costs = db.execute(f'''
         SELECT s.vehicle_id,
-               SUM(s.cost + {PARTS_COST_SQL}) AS total,
+               SUM(s.cost_cents + {PARTS_CENTS_SQL}) AS total,
                SUM(CASE WHEN strftime('%Y', s.date) = :year
-                        THEN s.cost + {PARTS_COST_SQL} ELSE 0 END) AS ytd
+                        THEN s.cost_cents + {PARTS_CENTS_SQL} ELSE 0 END) AS ytd
         FROM service_records s
         GROUP BY s.vehicle_id
     ''', {'year': year}).fetchall()
@@ -1370,8 +1435,10 @@ def get_vehicles_summary():
     summary = {}
     for r in rows:
         sc = service_costs.get(r['id'])
-        total_service = round(sc['total'], 2) if sc else 0
-        ytd_service = round(sc['ytd'], 2) if sc else 0
+        total_service = int(sc['total']) if sc else 0
+        ytd_service = int(sc['ytd']) if sc else 0
+        total_fuel, ytd_fuel = int(r['total_fuel_cents']), int(r['ytd_fuel_cents'])
+        total_tires, ytd_tires = int(r['total_tire_cents']), int(r['ytd_tire_cents'])
         summary[r['id']] = {
             'service_count': r['service_count'],
             'fuel_record_count': r['fuel_record_count'],
@@ -1379,12 +1446,14 @@ def get_vehicles_summary():
             'last_fuel': r['last_fuel'],
             'current_odometer': latest_odometer(db, r['id']),
             'avg_mpg': weighted_avg_mpg(db, r['id']),
-            'total_service_cost': total_service,
-            'total_fuel_cost': round(r['total_fuel_cost'], 2),
-            'total_all_time_cost': round(total_service + r['total_fuel_cost'], 2),
-            'ytd_service_cost': ytd_service,
-            'ytd_fuel_cost': round(r['ytd_fuel_cost'], 2),
-            'ytd_total_cost': round(ytd_service + r['ytd_fuel_cost'], 2),
+            'total_service_cost': dollars(total_service),
+            'total_fuel_cost': dollars(total_fuel),
+            'total_tire_cost': dollars(total_tires),
+            'total_all_time_cost': dollars(total_service + total_fuel + total_tires),
+            'ytd_service_cost': dollars(ytd_service),
+            'ytd_fuel_cost': dollars(ytd_fuel),
+            'ytd_tire_cost': dollars(ytd_tires),
+            'ytd_total_cost': dollars(ytd_service + ytd_fuel + ytd_tires),
         }
     db.close()
     return jsonify(summary)
@@ -1672,13 +1741,14 @@ def create_recall_reminders():
 
 # Cost of the parts used on a service: each install is priced at the unit
 # cost of the purchase it was drawn from, so old services keep their real
-# cost when prices change. The API still calls this `supplies_cost`.
-PARTS_COST_SQL = '''(SELECT COALESCE(SUM(pi.quantity * pp.unit_cost), 0)
-                     FROM part_installs pi
-                     JOIN part_purchases pp ON pp.id = pi.purchase_id
-                     WHERE pi.service_id = s.id)'''
+# cost when prices change. Each line is rounded to a whole cent, so the
+# total is the sum of what is shown. The API calls this `supplies_cost`.
+PARTS_CENTS_SQL = '''(SELECT COALESCE(SUM(CAST(ROUND(pi.quantity * pp.unit_cost_cents) AS INTEGER)), 0)
+                      FROM part_installs pi
+                      JOIN part_purchases pp ON pp.id = pi.purchase_id
+                      WHERE pi.service_id = s.id)'''
 SERVICE_SELECT = f'''
-    SELECT s.*, {PARTS_COST_SQL} AS supplies_cost,
+    SELECT s.*, s.cost_cents / 100.0 AS cost, {PARTS_CENTS_SQL} / 100.0 AS supplies_cost,
            (SELECT GROUP_CONCAT(st.name, ', ') FROM service_items si
             JOIN service_types st ON st.id = si.service_type_id
             WHERE si.service_id = s.id) AS service_types,
@@ -1754,7 +1824,8 @@ def get_service(service_id):
         return jsonify(None), 404
 
     installs = load_installs(db, 'pi.service_id = ?', (service_id,))
-    items = db.execute('''SELECT si.id, si.service_type_id AS type_id, st.name, si.cost, si.notes
+    items = db.execute('''SELECT si.id, si.service_type_id AS type_id, st.name,
+                                 si.cost_cents / 100.0 AS cost, si.notes
                           FROM service_items si
                           JOIN service_types st ON st.id = si.service_type_id
                           WHERE si.service_id = ? ORDER BY si.id''', (service_id,)).fetchall()
@@ -1819,7 +1890,7 @@ def _service_fields(data):
         raise ApiError('Service provider is required')
     return {
         'date': service_date,
-        'cost': cost,
+        'cost_cents': to_cents(cost),
         'service_provider': provider,
         'diy': 1 if diy else 0,
         'odometer': _number(data, 'odometer', 'Odometer', integer=True),
@@ -1854,8 +1925,8 @@ def sync_service_items(db, service_id, entries):
         else:
             type_id = get_or_create_service_type(db, entry.get('type_name') or entry.get('name'))
         cost = _number(entry, 'cost', 'Line item price')
-        db.execute('INSERT INTO service_items (service_id, service_type_id, cost, notes) VALUES (?, ?, ?, ?)',
-                   (service_id, type_id, cost, _text(entry, 'notes')))
+        db.execute('INSERT INTO service_items (service_id, service_type_id, cost_cents, notes) VALUES (?, ?, ?, ?)',
+                   (service_id, type_id, to_cents(cost), _text(entry, 'notes')))
 
 def sync_service_parts(db, service_id, vehicle_id, service_date, odometer, entries):
     """Make the installs linked to a service match `entries`.
@@ -1961,10 +2032,10 @@ def add_service():
     try:
         with db_session() as db:
             cursor = db.execute('''INSERT INTO service_records
-                                  (vehicle_id, date, cost, service_provider, diy, odometer, comments,
+                                  (vehicle_id, date, cost_cents, service_provider, diy, odometer, comments,
                                    repairs_completed)
                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                               (vehicle_id, fields['date'], fields['cost'], fields['service_provider'],
+                               (vehicle_id, fields['date'], fields['cost_cents'], fields['service_provider'],
                                 fields['diy'], fields['odometer'], fields['comments'],
                                 fields['repairs_completed']))
             service_id = cursor.lastrowid
@@ -2009,10 +2080,10 @@ def update_service(service_id):
             affected_types = service_type_ids(db, service_id)
 
             db.execute('''UPDATE service_records
-                         SET date=?, cost=?, service_provider=?, diy=?, odometer=?, comments=?,
+                         SET date=?, cost_cents=?, service_provider=?, diy=?, odometer=?, comments=?,
                              repairs_completed=?
                          WHERE id=?''',
-                      (fields['date'], fields['cost'], fields['service_provider'], fields['diy'],
+                      (fields['date'], fields['cost_cents'], fields['service_provider'], fields['diy'],
                        fields['odometer'], fields['comments'], fields['repairs_completed'], service_id))
 
             if items is not None:
@@ -2083,13 +2154,17 @@ def _interval_text(miles, months):
     return ' or '.join(parts)
 
 def last_service_of_type(db, vehicle_id, type_id):
-    """The most recent service on a vehicle that included a service type"""
-    return db.execute('''SELECT s.id, s.date, s.odometer
-                         FROM service_items si
-                         JOIN service_records s ON s.id = si.service_id
-                         WHERE s.vehicle_id = ? AND si.service_type_id = ?
-                         ORDER BY s.date DESC, COALESCE(s.odometer, 0) DESC, s.id DESC
-                         LIMIT 1''', (vehicle_id, type_id)).fetchone()
+    """The most recent time a type of work was done on a vehicle: a service
+    record that lists it or, for tire rotation, an entry in the tire
+    rotation log"""
+    query = '''SELECT s.date, s.odometer
+               FROM service_items si
+               JOIN service_records s ON s.id = si.service_id
+               WHERE s.vehicle_id = :v AND si.service_type_id = :t'''
+    if type_id == tire_rotation_type_id(db):
+        query += ' UNION ALL SELECT date, odometer FROM tire_rotations WHERE vehicle_id = :v'
+    return db.execute(f'SELECT date, odometer FROM ({query}) ORDER BY date DESC, COALESCE(odometer, 0) DESC LIMIT 1',
+                      {'v': vehicle_id, 't': type_id}).fetchone()
 
 def next_due(last_date, last_odometer, interval_miles, interval_months):
     """(due_date, due_mileage) counted from the last time a service was done"""
@@ -2215,14 +2290,24 @@ def get_maintenance():
                           LEFT JOIN maintenance_schedules ms
                                  ON ms.service_type_id = st.id AND ms.vehicle_id = ?
                           ORDER BY st.name COLLATE NOCASE''', (vehicle_id,)).fetchall()
-    items = db.execute(f'''SELECT si.service_type_id, si.cost AS item_cost, s.id AS service_id, s.date,
-                                  s.odometer, s.cost AS service_cost, {PARTS_COST_SQL} AS parts_cost,
+    items = db.execute(f'''SELECT si.service_type_id, si.cost_cents AS item_cents, s.id AS service_id, s.date,
+                                  s.odometer, s.cost_cents AS service_cents, {PARTS_CENTS_SQL} AS parts_cents,
                                   (SELECT COUNT(*) FROM service_items x WHERE x.service_id = s.id) AS item_count
                            FROM service_items si
                            JOIN service_records s ON s.id = si.service_id
                            WHERE s.vehicle_id = ?''', (vehicle_id,)).fetchall()
+    items = [dict(i) for i in items]
+    # Rotations from the tire log: done, at no recorded cost
+    rotation_type = tire_rotation_type_id(db)
+    if rotation_type:
+        for r in db.execute('SELECT id, date, odometer FROM tire_rotations WHERE vehicle_id = ?',
+                            (vehicle_id,)).fetchall():
+            items.append({'service_type_id': rotation_type, 'item_cents': 0, 'service_id': -r['id'],
+                          'date': r['date'], 'odometer': r['odometer'], 'service_cents': 0,
+                          'parts_cents': 0, 'item_count': 1})
     odometer = latest_odometer(db, vehicle_id)
     pace = driving_pace(db, vehicle_id)
+    db.commit()
     db.close()
 
     today = datetime.now().date()
@@ -2238,10 +2323,10 @@ def get_maintenance():
         spent = 0
         partial = False
         for i in mine:
-            if i['item_cost'] is not None:
-                spent += i['item_cost']
+            if i['item_cents'] is not None:
+                spent += int(i['item_cents'])
             elif i['item_count'] == 1:
-                spent += (i['service_cost'] or 0) + (i['parts_cost'] or 0)
+                spent += int(i['service_cents'] or 0) + int(i['parts_cents'] or 0)
             else:
                 partial = True
 
@@ -2250,7 +2335,7 @@ def get_maintenance():
             'schedule_id': t['schedule_id'],
             'interval_miles': t['interval_miles'], 'interval_months': t['interval_months'],
             'times_done': len(services),
-            'spent': round(spent, 2), 'spent_partial': partial,
+            'spent': dollars(spent), 'spent_partial': partial,
             'last_date': last['date'] if last else None,
             'last_odometer': last['odometer'] if last else None,
             'days_since': None, 'miles_since': None,
@@ -2416,21 +2501,21 @@ def import_services_csv():
                     errors.append(f"Row {row_num}: Invalid date format (use YYYY-MM-DD)")
                     continue
                 odometer = int(float(row['odometer'])) if row.get('odometer') else None
-                cost = float(row.get('cost') or 0)
+                cost_cents = to_cents(row.get('cost') or 0)
 
                 duplicate = db.execute('''SELECT 1 FROM service_records
                                           WHERE vehicle_id = ? AND date = ? AND service_provider = ?
-                                            AND ABS(cost - ?) < 0.005 AND odometer IS ?''',
-                                       (vehicle_id, row['date'], provider, cost, odometer)).fetchone()
+                                            AND cost_cents = ? AND odometer IS ?''',
+                                       (vehicle_id, row['date'], provider, cost_cents, odometer)).fetchone()
                 if duplicate:
                     skipped_count += 1
                     continue
 
                 cursor = db.execute('''
                     INSERT INTO service_records
-                    (vehicle_id, date, service_provider, diy, odometer, cost, repairs_completed, comments)
+                    (vehicle_id, date, service_provider, diy, odometer, cost_cents, repairs_completed, comments)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (vehicle_id, row['date'], provider, 1 if diy else 0, odometer, cost,
+                ''', (vehicle_id, row['date'], provider, 1 if diy else 0, odometer, cost_cents,
                       row.get('repairs_completed', ''), row.get('comments', '')))
                 for name in filter(None, (n.strip() for n in row.get('service_types', '').split(';'))):
                     type_id = get_or_create_service_type(db, name)
@@ -2633,13 +2718,14 @@ def warranty_info(terms, install_date=None, odometer=None, start_date_override=N
 
 
 PURCHASE_SELECT = '''
-    SELECT pp.*,
+    SELECT pp.*, pp.unit_cost_cents / 100.0 AS unit_cost,
            COALESCE((SELECT SUM(quantity) FROM part_installs WHERE purchase_id = pp.id), 0) AS installed
     FROM part_purchases pp
 '''
 
 INSTALL_SELECT = '''
-    SELECT pi.*, pp.part_id, pp.unit_cost, pp.purchase_date, pp.supplier, pp.receipt_path,
+    SELECT pi.*, pp.part_id, pp.unit_cost_cents / 100.0 AS unit_cost, pp.purchase_date, pp.supplier,
+           pp.receipt_path,
            pp.warranty_months, pp.warranty_miles, pp.warranty_lifetime, pp.warranty_starts,
            p.name AS part_name, p.part_number, p.brand,
            v.nickname AS vehicle_nickname, v.year AS vehicle_year,
@@ -2756,7 +2842,7 @@ def build_parts(db, part_id=None):
             # `quantity` and `cost` keep the names older API clients read
             'quantity': in_stock,
             'cost': (next_lot or (lots[-1] if lots else {})).get('unit_cost', 0),
-            'stock_value': round(sum(p['remaining'] * p['unit_cost'] for p in lots), 2),
+            'stock_value': dollars(sum(round(p['remaining'] * p['unit_cost_cents']) for p in lots)),
             'installed': round(sum(i['quantity'] for i in current), 4),
             'low_stock': part['reorder_threshold'] is not None and in_stock <= part['reorder_threshold'],
             'warranty': warranty,
@@ -2856,11 +2942,11 @@ def _purchase_fields(data, notes_key='notes'):
 
 def _insert_purchase(db, part_id, fields, receipt_path):
     cursor = db.execute('''INSERT INTO part_purchases
-                           (part_id, purchase_date, supplier, condition, quantity, unit_cost, receipt_path,
+                           (part_id, purchase_date, supplier, condition, quantity, unit_cost_cents, receipt_path,
                             warranty_months, warranty_miles, warranty_lifetime, warranty_starts, notes)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                         (part_id, fields['purchase_date'], fields['supplier'], fields['condition'],
-                         fields['quantity'], fields['unit_cost'], receipt_path,
+                         fields['quantity'], to_cents(fields['unit_cost']), receipt_path,
                          fields['warranty_months'], fields['warranty_miles'], fields['warranty_lifetime'],
                          fields['warranty_starts'], fields['notes']))
     return cursor.lastrowid
@@ -2982,12 +3068,12 @@ def update_part_purchase(purchase_id):
                                'the quantity cannot be lower than that')
             # A new upload replaces the receipt; otherwise keep the current one
             db.execute('''UPDATE part_purchases
-                          SET purchase_date=?, supplier=?, condition=?, quantity=?, unit_cost=?,
+                          SET purchase_date=?, supplier=?, condition=?, quantity=?, unit_cost_cents=?,
                               receipt_path=COALESCE(?, receipt_path), warranty_months=?, warranty_miles=?,
                               warranty_lifetime=?, warranty_starts=?, notes=?
                           WHERE id=?''',
                        (fields['purchase_date'], fields['supplier'], fields['condition'], fields['quantity'],
-                        fields['unit_cost'], receipt_path, fields['warranty_months'], fields['warranty_miles'],
+                        to_cents(fields['unit_cost']), receipt_path, fields['warranty_months'], fields['warranty_miles'],
                         fields['warranty_lifetime'], fields['warranty_starts'], fields['notes'], purchase_id))
             orphaned = _unreferenced_receipts(db, [old['receipt_path']]) if receipt_path else []
     except Exception:
@@ -3196,12 +3282,12 @@ def migrate_supplies_to_parts(db):
             if s['installation_date'] and not (fitted and has_warranty):
                 notes = f"Installation date recorded before the parts rebuild: {s['installation_date']}"
             cursor = db.execute('''INSERT INTO part_purchases
-                                   (part_id, purchase_date, supplier, condition, quantity, unit_cost,
+                                   (part_id, purchase_date, supplier, condition, quantity, unit_cost_cents,
                                     receipt_path, warranty_months, warranty_miles, warranty_lifetime,
                                     warranty_starts, notes)
                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                                 (s['id'], s['purchase_date'] or None, s['supplier'] or None,
-                                 s['condition'] or 'New', on_hand + used, s['cost'] or 0,
+                                 s['condition'] or 'New', on_hand + used, to_cents(s['cost'] or 0),
                                  None if tracked else s['receipt_path'],
                                  s['warranty_months'], s['warranty_mileage_limit'],
                                  1 if s['warranty_lifetime'] else 0,
@@ -3241,10 +3327,10 @@ def migrate_supplies_to_parts(db):
                     notes.append(f"Unit #{u['id']} had a warranty start date of {u['warranty_start_date']} "
                                  'while still in stock')
             cursor = db.execute('''INSERT INTO part_purchases
-                                   (part_id, purchase_date, supplier, quantity, unit_cost, receipt_path,
+                                   (part_id, purchase_date, supplier, quantity, unit_cost_cents, receipt_path,
                                     warranty_months, warranty_miles, warranty_lifetime, warranty_starts, notes)
                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                                (s['id'], purchase_date, supplier, len(kept), unit_cost, receipt, months,
+                                (s['id'], purchase_date, supplier, len(kept), to_cents(unit_cost), receipt, months,
                                  miles, lifetime, 'purchase' if at_purchase else 'install',
                                  '\n'.join(notes) or None))
             purchase_id = cursor.lastrowid
@@ -3357,6 +3443,7 @@ def _fuel_dict(row, notes=None):
     record = dict(row)
     record['full_tank'] = record.get('full_tank') is None or bool(record['full_tank'])
     record['missed_fillup'] = bool(record.get('missed_fillup'))
+    record['cost'] = dollars(record.get('cost_cents'))
     record.update((notes or {}).get(record['id'], {}))
     return record
 
@@ -3376,7 +3463,7 @@ def _fuel_fields(data):
     if gallons is None and cost is not None and price:
         gallons = round(cost / price, 3)
     if cost is None and gallons is not None and price is not None:
-        cost = round(gallons * price, 2)
+        cost = gallons * price
     if not gallons:
         raise ApiError('Gallons is required (or give the total cost and price per gallon)')
     if cost is None:
@@ -3389,7 +3476,7 @@ def _fuel_fields(data):
         'date': fuel_date,
         'odometer': odometer,
         'gallons': gallons,
-        'cost': cost,
+        'cost_cents': to_cents(cost),
         'station': station,
         # Older clients don't send full_tank: every fill-up was a full tank
         'full_tank': 1 if full_tank is None or full_tank is True or _flag(data, 'full_tank') else 0,
@@ -3475,10 +3562,10 @@ def add_fuel_record():
 
     with db_session() as db:
         cursor = db.execute('''INSERT INTO fuel_records
-                              (vehicle_id, date, gallons, cost, odometer, station, missed_fillup,
+                              (vehicle_id, date, gallons, cost_cents, odometer, station, missed_fillup,
                                full_tank, grade, notes)
                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                           (vehicle_id, fields['date'], fields['gallons'], fields['cost'],
+                           (vehicle_id, fields['date'], fields['gallons'], fields['cost_cents'],
                             fields['odometer'], fields['station'], fields['missed_fillup'],
                             fields['full_tank'], fields['grade'], fields['notes']))
         recalculate_mpg(db, vehicle_id)
@@ -3507,10 +3594,10 @@ def update_fuel_record(fuel_id):
         if not record:
             raise ApiError('Fuel record not found', 404)
         db.execute('''UPDATE fuel_records
-                     SET date=?, gallons=?, cost=?, odometer=?, station=?, missed_fillup=?,
+                     SET date=?, gallons=?, cost_cents=?, odometer=?, station=?, missed_fillup=?,
                          full_tank=?, grade=?, notes=?
                      WHERE id=?''',
-                  (fields['date'], fields['gallons'], fields['cost'], fields['odometer'],
+                  (fields['date'], fields['gallons'], fields['cost_cents'], fields['odometer'],
                    fields['station'], fields['missed_fillup'], fields['full_tank'],
                    fields['grade'], fields['notes'], fuel_id))
         # Recalculate the whole chain: this edit may have shifted the neighbours' MPG too
@@ -3559,7 +3646,7 @@ def get_fuel_insights():
 
     records = [_fuel_dict(r, notes) for r in rows if not start_date or r['date'] >= start_date]
     gallons = sum(r['gallons'] or 0 for r in records)
-    spent = sum(r['cost'] or 0 for r in records)
+    spent = sum(r['cost_cents'] or 0 for r in records)
     miles = sum(r['distance'] or 0 for r in records)
     tanks = [r for r in records if r['mpg']]
     trip_miles = sum(r['trip_miles'] for r in tanks)
@@ -3569,8 +3656,8 @@ def get_fuel_insights():
 
     months = {}
     for r in records:
-        month = months.setdefault(r['date'][:7], {'month': r['date'][:7], 'spent': 0, 'gallons': 0, 'miles': 0})
-        month['spent'] = round(month['spent'] + (r['cost'] or 0), 2)
+        month = months.setdefault(r['date'][:7], {'month': r['date'][:7], 'cents': 0, 'gallons': 0, 'miles': 0})
+        month['cents'] += r['cost_cents'] or 0
         month['gallons'] = round(month['gallons'] + (r['gallons'] or 0), 3)
         month['miles'] += r['distance'] or 0
 
@@ -3579,15 +3666,16 @@ def get_fuel_insights():
         'start_date': start_date,
         'fill_ups': len(records),
         'gallons': round(gallons, 3),
-        'spent': round(spent, 2),
+        'spent': dollars(spent),
         'miles': miles,
         'avg_mpg': round(trip_miles / trip_gallons, 2) if trip_gallons else None,
         'best_mpg': max((r['mpg'] for r in tanks), default=None),
-        'avg_price_per_gallon': round(spent / gallons, 3) if gallons else None,
-        'cost_per_mile': round(sum(r['cost'] or 0 for r in accounted) / accounted_miles, 3)
+        'avg_price_per_gallon': round(spent / 100 / gallons, 3) if gallons else None,
+        'cost_per_mile': round(sum(r['cost_cents'] or 0 for r in accounted) / 100 / accounted_miles, 3)
                          if accounted_miles else None,
         'low_economy_tanks': sum(1 for r in tanks if r['low_economy']),
-        'monthly': [months[m] for m in sorted(months)],
+        'monthly': [{'month': m, 'spent': dollars(months[m]['cents']), 'gallons': months[m]['gallons'],
+                     'miles': months[m]['miles']} for m in sorted(months)],
         'pace': pace,
     })
 
@@ -3694,7 +3782,7 @@ def import_fuel_csv():
                 try:
                     odometer = int(float(row['odometer']))
                     gallons = float(row['gallons'])
-                    cost = float(row['cost'])
+                    cost_cents = to_cents(float(row['cost']))
                 except ValueError:
                     errors.append(f"Row {row_num}: Invalid numeric value")
                     continue
@@ -3710,9 +3798,9 @@ def import_fuel_csv():
                 # MPG is computed for the whole chain below
                 db.execute('''
                     INSERT INTO fuel_records
-                    (vehicle_id, date, odometer, gallons, cost, station, full_tank, missed_fillup, grade, notes)
+                    (vehicle_id, date, odometer, gallons, cost_cents, station, full_tank, missed_fillup, grade, notes)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (vehicle_id, row['date'], odometer, gallons, cost, row.get('station', ''),
+                ''', (vehicle_id, row['date'], odometer, gallons, cost_cents, row.get('station', ''),
                       1 if _csv_flag(row.get('full_tank'), True) else 0,
                       1 if _csv_flag(row.get('missed_fillup'), False) else 0,
                       row.get('grade') or None, row.get('notes') or None))
@@ -3920,9 +4008,9 @@ def get_stats():
 
     # Total spent on services, including parts used (matches the
     # per-service totals shown on the Services page)
-    result = db.execute(f'''SELECT COALESCE(SUM(s.cost + {PARTS_COST_SQL}), 0) AS total
+    result = db.execute(f'''SELECT COALESCE(SUM(s.cost_cents + {PARTS_CENTS_SQL}), 0) AS total
                             FROM service_records s WHERE s.vehicle_id = ?''', (vehicle_id,)).fetchone()
-    stats['total_spent'] = round(result['total'], 2)
+    stats['total_spent'] = dollars(int(result['total']))
 
     stats['avg_mpg'] = weighted_avg_mpg(db, vehicle_id) or 0
 
@@ -4052,10 +4140,10 @@ def global_search():
     if vehicle_id:
         base += ' AND vehicle_id = ?'
         params += (vehicle_id,)
-    rows = db.execute(f'SELECT id, date, station, gallons, cost {base} ORDER BY date DESC LIMIT 10', params).fetchall()
+    rows = db.execute(f'SELECT id, date, station, gallons, cost_cents {base} ORDER BY date DESC LIMIT 10', params).fetchall()
     if rows:
         results['fuel'] = [{'id': r['id'], 'date': r['date'], 'label': r['station'],
-                             'sub': f"{r['gallons']} gal — ${r['cost']}"} for r in rows]
+                             'sub': f"{r['gallons']:g} gal — ${dollars(r['cost_cents']):.2f}"} for r in rows]
 
     # Parts (one shared shelf, so not filtered by vehicle)
     rows = db.execute('''
@@ -4111,6 +4199,108 @@ def global_search():
 
 
 # Tire log endpoints
+#
+# Tires are tracked as sets. A set has a purchase (which counts toward what
+# the vehicle has cost), an install / uninstall history, rotations and tread
+# depth readings. Rotations logged here count toward the "Tire rotation"
+# service type, so a maintenance interval on it follows either log.
+
+TREAD_REPLACE = 2      # 32nds of an inch: the legal minimum in most places
+TREAD_MARGINAL = 4     # worth planning a replacement
+TIRE_ROTATION_TYPE = 'Tire rotation'
+
+
+def tire_rotation_type_id(db):
+    """The service type that tire rotations count toward, or None. Found by
+    name once and then remembered by id, so renaming the type keeps the
+    link; deleting the type ends it."""
+    row = db.execute("SELECT value FROM settings WHERE key = 'tire_rotation_type_id'").fetchone()
+    if row:
+        exists = db.execute('SELECT id FROM service_types WHERE id = ?', (row['value'],)).fetchone()
+        return exists['id'] if exists else None
+    found = db.execute('SELECT id FROM service_types WHERE name = ? COLLATE NOCASE',
+                       (TIRE_ROTATION_TYPE,)).fetchone()
+    if not found:
+        return None
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('tire_rotation_type_id', ?)",
+               (str(found['id']),))
+    return found['id']
+
+
+def refresh_rotation_reminder(db, vehicle_id):
+    type_id = tire_rotation_type_id(db)
+    if type_id:
+        refresh_schedule_reminder(db, vehicle_id, type_id)
+
+
+def tread_status(reading):
+    """(lowest depth, 'replace' | 'marginal' | 'good') for a tread reading,
+    or (None, None) if it has no depths"""
+    depths = [d for d in (reading['fl_depth'], reading['fr_depth'], reading['rl_depth'], reading['rr_depth'])
+              if d is not None]
+    if not depths:
+        return None, None
+    lowest = min(depths)
+    return lowest, 'replace' if lowest <= TREAD_REPLACE else 'marginal' if lowest <= TREAD_MARGINAL else 'good'
+
+
+def tire_miles(db, tire_id, is_installed, current_odometer):
+    """Miles driven on a tire set, from its install / uninstall history. An
+    open install counts up to the vehicle's latest odometer. None when the
+    history has no odometer readings to go on."""
+    events = db.execute('''SELECT event_type, odometer FROM tire_install_log
+                           WHERE tire_id = ? ORDER BY date, id''', (tire_id,)).fetchall()
+    total = None
+    fitted_at = None
+    for event in events:
+        if event['event_type'] == 'install':
+            fitted_at = event['odometer']
+        elif fitted_at is not None and event['odometer'] is not None:
+            total = (total or 0) + max(event['odometer'] - fitted_at, 0)
+            fitted_at = None
+        else:
+            fitted_at = None
+    if is_installed and fitted_at is not None and current_odometer is not None:
+        total = (total or 0) + max(current_odometer - fitted_at, 0)
+    return total
+
+
+def _tire_dict(db, row, current_odometer):
+    tire = dict(row)
+    tire['purchase_price'] = dollars(tire.get('purchase_price_cents'))
+    tire['miles_on_set'] = tire_miles(db, tire['id'], tire['is_installed'], current_odometer)
+    latest = db.execute('''SELECT * FROM tread_readings WHERE tire_id = ?
+                           ORDER BY date DESC, id DESC LIMIT 1''', (tire['id'],)).fetchone()
+    lowest, status = tread_status(latest) if latest else (None, None)
+    tire['tread'] = {'date': latest['date'], 'lowest': lowest, 'status': status} if latest else None
+    return tire
+
+
+def _tire_fields(data):
+    brand = _text(data, 'brand')
+    if not brand:
+        raise ApiError('Brand is required')
+    return {
+        'brand': brand,
+        'model': _text(data, 'model') or '',
+        'size': _text(data, 'size') or '',
+        'season': _text(data, 'season') or 'All-Season',
+        'dot_code': _text(data, 'dot_code') or '',
+        'purchase_date': _date(data, 'purchase_date', 'Purchase date'),
+        'purchase_price_cents': to_cents(_number(data, 'purchase_price', 'Purchase price')),
+        'installed_date': _date(data, 'installed_date', 'Installed date'),
+        'notes': _text(data, 'notes') or '',
+    }
+
+
+def _dated(data, label='Date'):
+    """A required date plus an optional odometer, as the tire logs take them"""
+    when = _date(data, 'date', label)
+    if not when:
+        raise ApiError(f'{label} is required')
+    return when, _number(data, 'odometer', 'Odometer', integer=True)
+
+
 @app.route('/api/tires', methods=['GET'])
 @api_login_required
 def get_tires():
@@ -4120,89 +4310,76 @@ def get_tires():
         tires = db.execute('SELECT * FROM tires WHERE vehicle_id = ? ORDER BY is_installed DESC, created_at DESC', (vehicle_id,)).fetchall()
     else:
         tires = db.execute('SELECT * FROM tires ORDER BY is_installed DESC, created_at DESC').fetchall()
+    odometers = {}
+    result = []
+    for row in tires:
+        if row['vehicle_id'] not in odometers:
+            odometers[row['vehicle_id']] = latest_odometer(db, row['vehicle_id'])
+        result.append(_tire_dict(db, row, odometers[row['vehicle_id']]))
     db.close()
-    return jsonify([dict(t) for t in tires])
+    return jsonify(result)
 
 @app.route('/api/tires', methods=['POST'])
 @api_login_required
 def add_tire():
-    data = request.json
-    vehicle_id = data.get('vehicle_id')
-    if not vehicle_id or not data.get('brand'):
-        return jsonify({'error': 'vehicle_id and brand are required'}), 400
-    db = get_db()
-    cursor = db.execute(
-        '''INSERT INTO tires (vehicle_id, brand, model, size, season, dot_code,
-           purchase_date, purchase_price, is_installed, installed_date, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (vehicle_id, data['brand'], data.get('model', ''), data.get('size', ''),
-         data.get('season', 'All-Season'), data.get('dot_code', ''),
-         data.get('purchase_date'), data.get('purchase_price'),
-         1 if data.get('is_installed') else 0,
-         data.get('installed_date'), data.get('notes', ''))
-    )
-    db.commit()
-    db.close()
-    return jsonify({'success': True, 'id': cursor.lastrowid})
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
+    if not vehicle_id:
+        raise ApiError('vehicle_id and brand are required')
+    f = _tire_fields(data)
+    with db_session() as db:
+        cursor = db.execute(
+            '''INSERT INTO tires (vehicle_id, brand, model, size, season, dot_code,
+               purchase_date, purchase_price_cents, is_installed, installed_date, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (vehicle_id, f['brand'], f['model'], f['size'], f['season'], f['dot_code'],
+             f['purchase_date'], f['purchase_price_cents'],
+             1 if data.get('is_installed') is True or _flag(data, 'is_installed') else 0,
+             f['installed_date'], f['notes']))
+        tire_id = cursor.lastrowid
+    return jsonify({'success': True, 'id': tire_id})
 
 @app.route('/api/tires/<int:tire_id>', methods=['PUT'])
 @api_login_required
 def update_tire(tire_id):
-    data = request.json
-    db = get_db()
-    db.execute(
-        '''UPDATE tires SET brand=?, model=?, size=?, season=?, dot_code=?,
-           purchase_date=?, purchase_price=?, installed_date=?, notes=? WHERE id=?''',
-        (data['brand'], data.get('model', ''), data.get('size', ''),
-         data.get('season', 'All-Season'), data.get('dot_code', ''),
-         data.get('purchase_date'), data.get('purchase_price'),
-         data.get('installed_date'), data.get('notes', ''), tire_id)
-    )
-    db.commit()
-    db.close()
+    f = _tire_fields(_payload())
+    with db_session() as db:
+        cursor = db.execute(
+            '''UPDATE tires SET brand=?, model=?, size=?, season=?, dot_code=?,
+               purchase_date=?, purchase_price_cents=?, installed_date=?, notes=? WHERE id=?''',
+            (f['brand'], f['model'], f['size'], f['season'], f['dot_code'],
+             f['purchase_date'], f['purchase_price_cents'], f['installed_date'], f['notes'], tire_id))
+        if cursor.rowcount == 0:
+            raise ApiError('Tire not found', 404)
     return jsonify({'success': True})
+
+def _tire_event(tire_id, event_type):
+    when, odometer = _dated(_payload())
+    with db_session() as db:
+        tire = db.execute('SELECT vehicle_id FROM tires WHERE id = ?', (tire_id,)).fetchone()
+        if not tire:
+            raise ApiError('Tire not found', 404)
+        if event_type == 'install':
+            # One set on the vehicle at a time
+            db.execute('UPDATE tires SET is_installed = 0 WHERE vehicle_id = ?', (tire['vehicle_id'],))
+            db.execute('UPDATE tires SET is_installed = 1, installed_date = ? WHERE id = ?', (when, tire_id))
+        else:
+            db.execute('UPDATE tires SET is_installed = 0 WHERE id = ?', (tire_id,))
+        db.execute('INSERT INTO tire_install_log (tire_id, vehicle_id, event_type, date, odometer) VALUES (?, ?, ?, ?, ?)',
+                   (tire_id, tire['vehicle_id'], event_type, when, odometer))
+        warning = odometer_warning(db, tire['vehicle_id'], when, odometer)
+    return jsonify({'success': True, 'warning': warning})
 
 @app.route('/api/tires/<int:tire_id>/install', methods=['POST'])
 @api_login_required
 def install_tire(tire_id):
     """Mark a tire set as currently installed (uninstalls others for the same vehicle)"""
-    data = request.json or {}
-    date = data.get('date')
-    odometer = data.get('odometer')
-    if not date:
-        return jsonify({'error': 'date is required'}), 400
-    db = get_db()
-    tire = db.execute('SELECT vehicle_id FROM tires WHERE id = ?', (tire_id,)).fetchone()
-    if not tire:
-        db.close()
-        return jsonify({'error': 'Tire not found'}), 404
-    db.execute('UPDATE tires SET is_installed = 0 WHERE vehicle_id = ?', (tire['vehicle_id'],))
-    db.execute('UPDATE tires SET is_installed = 1, installed_date = ? WHERE id = ?', (date, tire_id))
-    db.execute('INSERT INTO tire_install_log (tire_id, vehicle_id, event_type, date, odometer) VALUES (?, ?, ?, ?, ?)',
-               (tire_id, tire['vehicle_id'], 'install', date, odometer))
-    db.commit()
-    db.close()
-    return jsonify({'success': True})
+    return _tire_event(tire_id, 'install')
 
 @app.route('/api/tires/<int:tire_id>/uninstall', methods=['POST'])
 @api_login_required
 def uninstall_tire(tire_id):
-    data = request.json or {}
-    date = data.get('date')
-    odometer = data.get('odometer')
-    if not date:
-        return jsonify({'error': 'date is required'}), 400
-    db = get_db()
-    tire = db.execute('SELECT vehicle_id FROM tires WHERE id = ?', (tire_id,)).fetchone()
-    if not tire:
-        db.close()
-        return jsonify({'error': 'Tire not found'}), 404
-    db.execute('UPDATE tires SET is_installed = 0 WHERE id = ?', (tire_id,))
-    db.execute('INSERT INTO tire_install_log (tire_id, vehicle_id, event_type, date, odometer) VALUES (?, ?, ?, ?, ?)',
-               (tire_id, tire['vehicle_id'], 'uninstall', date, odometer))
-    db.commit()
-    db.close()
-    return jsonify({'success': True})
+    return _tire_event(tire_id, 'uninstall')
 
 @app.route('/api/tire-install-log', methods=['GET'])
 @api_login_required
@@ -4246,6 +4423,8 @@ def delete_tire(tire_id):
 @app.route('/api/tire-rotations', methods=['GET'])
 @api_login_required
 def get_tire_rotations():
+    """Rotations for a vehicle, newest first: those logged here, plus any
+    service record that lists a tire rotation (`from_service`, read-only)."""
     vehicle_id = request.args.get('vehicle_id')
     db = get_db()
     query = '''
@@ -4254,35 +4433,52 @@ def get_tire_rotations():
         LEFT JOIN tires t ON t.id = tr.tire_id
     '''
     if vehicle_id:
-        rows = db.execute(query + ' WHERE tr.vehicle_id = ? ORDER BY tr.date DESC', (vehicle_id,)).fetchall()
+        rows = db.execute(query + ' WHERE tr.vehicle_id = ?', (vehicle_id,)).fetchall()
     else:
-        rows = db.execute(query + ' ORDER BY tr.date DESC').fetchall()
+        rows = db.execute(query).fetchall()
+    rotations = [dict(r, from_service=False, service_id=None) for r in rows]
+
+    type_id = tire_rotation_type_id(db)
+    if type_id and vehicle_id:
+        for s in db.execute('''SELECT DISTINCT s.id, s.date, s.odometer, s.service_provider
+                               FROM service_items si JOIN service_records s ON s.id = si.service_id
+                               WHERE si.service_type_id = ? AND s.vehicle_id = ?''',
+                            (type_id, vehicle_id)).fetchall():
+            rotations.append({'id': None, 'vehicle_id': int(vehicle_id), 'tire_id': None, 'tire_name': None,
+                              'date': s['date'], 'odometer': s['odometer'], 'pattern': '',
+                              'notes': f"Service record ({s['service_provider']})",
+                              'from_service': True, 'service_id': s['id']})
+    db.commit()
     db.close()
-    return jsonify([dict(r) for r in rows])
+    rotations.sort(key=lambda r: (r['date'] or '', r['odometer'] or 0), reverse=True)
+    return jsonify(rotations)
 
 @app.route('/api/tire-rotations', methods=['POST'])
 @api_login_required
 def add_tire_rotation():
-    data = request.json
-    vehicle_id = data.get('vehicle_id')
-    if not vehicle_id or not data.get('date'):
-        return jsonify({'error': 'vehicle_id and date are required'}), 400
-    db = get_db()
-    cursor = db.execute(
-        'INSERT INTO tire_rotations (vehicle_id, date, odometer, pattern, notes, tire_id) VALUES (?, ?, ?, ?, ?, ?)',
-        (vehicle_id, data['date'], data.get('odometer'), data.get('pattern', ''), data.get('notes', ''), data.get('tire_id'))
-    )
-    db.commit()
-    db.close()
-    return jsonify({'success': True, 'id': cursor.lastrowid})
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
+    if not vehicle_id:
+        raise ApiError('vehicle_id and date are required')
+    when, odometer = _dated(data)
+    with db_session() as db:
+        cursor = db.execute(
+            'INSERT INTO tire_rotations (vehicle_id, date, odometer, pattern, notes, tire_id) VALUES (?, ?, ?, ?, ?, ?)',
+            (vehicle_id, when, odometer, _text(data, 'pattern') or '', _text(data, 'notes') or '',
+             _number(data, 'tire_id', 'Tire set', integer=True)))
+        rotation_id = cursor.lastrowid
+        refresh_rotation_reminder(db, vehicle_id)
+        warning = odometer_warning(db, vehicle_id, when, odometer)
+    return jsonify({'success': True, 'id': rotation_id, 'warning': warning})
 
 @app.route('/api/tire-rotations/<int:rotation_id>', methods=['DELETE'])
 @api_login_required
 def delete_tire_rotation(rotation_id):
-    db = get_db()
-    db.execute('DELETE FROM tire_rotations WHERE id = ?', (rotation_id,))
-    db.commit()
-    db.close()
+    with db_session() as db:
+        row = db.execute('SELECT vehicle_id FROM tire_rotations WHERE id = ?', (rotation_id,)).fetchone()
+        db.execute('DELETE FROM tire_rotations WHERE id = ?', (rotation_id,))
+        if row:
+            refresh_rotation_reminder(db, row['vehicle_id'])
     return jsonify({'success': True})
 
 @app.route('/api/tread-readings', methods=['GET'])
@@ -4295,32 +4491,43 @@ def get_tread_readings():
             '''SELECT tr.*, t.brand || COALESCE(' ' || NULLIF(t.model, ''), '') AS tire_name
                FROM tread_readings tr
                LEFT JOIN tires t ON tr.tire_id = t.id
-               WHERE tr.vehicle_id = ? ORDER BY tr.date DESC''', (vehicle_id,)
+               WHERE tr.vehicle_id = ? ORDER BY tr.date DESC, tr.id DESC''', (vehicle_id,)
         ).fetchall()
     else:
-        rows = db.execute('SELECT * FROM tread_readings ORDER BY date DESC').fetchall()
+        rows = db.execute('SELECT * FROM tread_readings ORDER BY date DESC, id DESC').fetchall()
     db.close()
-    return jsonify([dict(r) for r in rows])
+    readings = []
+    for row in rows:
+        reading = dict(row)
+        reading['lowest'], reading['status'] = tread_status(row)
+        readings.append(reading)
+    return jsonify(readings)
 
 @app.route('/api/tread-readings', methods=['POST'])
 @api_login_required
 def add_tread_reading():
-    data = request.json
-    vehicle_id = data.get('vehicle_id')
-    if not vehicle_id or not data.get('date'):
-        return jsonify({'error': 'vehicle_id and date are required'}), 400
-    db = get_db()
-    cursor = db.execute(
-        '''INSERT INTO tread_readings (vehicle_id, tire_id, date, odometer,
-           fl_depth, fr_depth, rl_depth, rr_depth, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (vehicle_id, data.get('tire_id'), data['date'], data.get('odometer'),
-         data.get('fl_depth'), data.get('fr_depth'),
-         data.get('rl_depth'), data.get('rr_depth'), data.get('notes', ''))
-    )
-    db.commit()
-    db.close()
-    return jsonify({'success': True, 'id': cursor.lastrowid})
+    data = _payload()
+    vehicle_id = _number(data, 'vehicle_id', 'Vehicle', integer=True)
+    if not vehicle_id:
+        raise ApiError('vehicle_id and date are required')
+    when, odometer = _dated(data)
+    depths = {key: _number(data, key, 'Tread depth') for key in ('fl_depth', 'fr_depth', 'rl_depth', 'rr_depth')}
+    with db_session() as db:
+        cursor = db.execute(
+            '''INSERT INTO tread_readings (vehicle_id, tire_id, date, odometer,
+               fl_depth, fr_depth, rl_depth, rr_depth, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (vehicle_id, _number(data, 'tire_id', 'Tire set', integer=True), when, odometer,
+             depths['fl_depth'], depths['fr_depth'], depths['rl_depth'], depths['rr_depth'],
+             _text(data, 'notes') or ''))
+        reading_id = cursor.lastrowid
+    lowest, status = tread_status(depths)
+    warning = None
+    if status == 'replace':
+        warning = f'Tread is down to {lowest:g}/32". That is at or below the legal minimum; replace these tires now.'
+    elif status == 'marginal':
+        warning = f'Tread is down to {lowest:g}/32". Wet grip falls off below 4/32"; plan to replace these tires soon.'
+    return jsonify({'success': True, 'id': reading_id, 'lowest': lowest, 'status': status, 'warning': warning})
 
 @app.route('/api/tread-readings/<int:reading_id>', methods=['DELETE'])
 @api_login_required
@@ -4330,6 +4537,392 @@ def delete_tread_reading(reading_id):
     db.commit()
     db.close()
     return jsonify({'success': True})
+
+
+# ── Dashboard ────────────────────────────────────────────────────────────────
+#
+# One call that answers "what needs my attention, across every vehicle":
+# reminders that are overdue or close, warranties about to run out, parts
+# running low, worn tires and a tank that came in well under the usual MPG.
+
+ATTENTION_SOON_DAYS = 30
+ATTENTION_SOON_MILES = 500
+ATTENTION_ORDER = {'overdue': 0, 'soon': 1, 'info': 2}
+
+
+def _short_date(iso):
+    """'2026-11-17' as 'Nov 17, 2026', for text the dashboard shows as is"""
+    when = _parse_date(iso)
+    return f"{when.strftime('%b')} {when.day}, {when.year}" if when else (iso or '')
+
+
+def _vehicle_name(vehicle):
+    return vehicle['nickname'] or f"{vehicle['year']} {vehicle['manufacturer']} {vehicle['model']}"
+
+
+def _spend_cents(db, start_date, vehicle_id=None):
+    """What was spent on or after a date, in cents, by kind. Service spend
+    includes the parts used; parts still on the shelf aren't spend yet."""
+    where = ' AND vehicle_id = :v' if vehicle_id else ''
+    params = {'d': start_date, 'v': vehicle_id}
+    fuel = db.execute(f'SELECT COALESCE(SUM(cost_cents), 0) AS c FROM fuel_records WHERE date >= :d{where}',
+                      params).fetchone()['c']
+    service = db.execute(f'''SELECT COALESCE(SUM(s.cost_cents + {PARTS_CENTS_SQL}), 0) AS c
+                             FROM service_records s WHERE s.date >= :d{where.replace('vehicle_id', 's.vehicle_id')}''',
+                         params).fetchone()['c']
+    tires = db.execute(f'''SELECT COALESCE(SUM(purchase_price_cents), 0) AS c FROM tires
+                           WHERE purchase_date >= :d{where}''', params).fetchone()['c']
+    fuel, service, tires = int(fuel), int(service), int(tires)
+    return {'fuel': fuel, 'service': service, 'tires': tires, 'total': fuel + service + tires}
+
+
+def _spend_dollars(cents):
+    return {key: dollars(value) for key, value in cents.items()}
+
+
+def vehicle_attention(db, vehicle, today):
+    """Things about one vehicle worth acting on, as a list of
+    {severity, kind, title, detail, link}"""
+    vehicle_id = vehicle['id']
+    odometer = latest_odometer(db, vehicle_id)
+    pace = driving_pace(db, vehicle_id)['effective_miles_per_year']
+    items = []
+
+    def add(severity, kind, title, detail, link):
+        items.append({'severity': severity, 'kind': kind, 'title': title, 'detail': detail, 'link': link,
+                      'vehicle_id': vehicle_id, 'vehicle_name': _vehicle_name(vehicle)})
+
+    for r in db.execute('SELECT * FROM service_reminders WHERE vehicle_id = ? AND completed = 0',
+                        (vehicle_id,)).fetchall():
+        overdue = soon = False
+        parts = []
+        due = _parse_date(r['due_date'])
+        if due:
+            days = (due - today).days
+            overdue = overdue or days < 0
+            soon = soon or days <= ATTENTION_SOON_DAYS
+            parts.append(f'{-days} days overdue' if days < 0 else 'due today' if days == 0 else f'due in {days} days')
+        if r['due_mileage'] is not None and odometer is not None:
+            miles = r['due_mileage'] - odometer
+            overdue = overdue or miles < 0
+            soon = soon or miles <= ATTENTION_SOON_MILES
+            text = f'{-miles:,} miles over' if miles < 0 else f'{miles:,} miles to go'
+            expected = projected_date(r['due_mileage'], odometer, pace, today)
+            if expected and (not due or expected < r['due_date']):
+                text += f', expected around {_short_date(expected)}'
+            parts.append(text)
+        if overdue or soon:
+            add('overdue' if overdue else 'soon', 'reminder', r['service_type'], ' · '.join(parts), '/reminders')
+
+    for install in load_installs(db, 'pi.vehicle_id = ? AND pi.removed_date IS NULL', (vehicle_id,)):
+        w = install['warranty']
+        if w and w['status'] == 'expiring':
+            left = []
+            if w['expires_on']:
+                left.append(f"ends {_short_date(w['expires_on'])}")
+            if w['miles_remaining'] is not None:
+                left.append(f"{w['miles_remaining']:,} miles left")
+            add('soon', 'warranty', f"Warranty ending: {install['part_name']}", ' · '.join(left), '/parts')
+
+    for tire in db.execute('SELECT * FROM tires WHERE vehicle_id = ? AND is_installed = 1', (vehicle_id,)).fetchall():
+        reading = db.execute('SELECT * FROM tread_readings WHERE tire_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+                             (tire['id'],)).fetchone()
+        lowest, status = tread_status(reading) if reading else (None, None)
+        name = f"{tire['brand']} {tire['model'] or ''}".strip()
+        if status == 'replace':
+            add('overdue', 'tires', f'Replace tires: {name}',
+                f'Tread down to {lowest:g}/32" on {_short_date(reading["date"])}', '/tires')
+        elif status == 'marginal':
+            add('soon', 'tires', f'Tires wearing thin: {name}',
+                f'Tread down to {lowest:g}/32" on {_short_date(reading["date"])}', '/tires')
+
+    notes = annotate_fuel_records(db, vehicle_id)
+    last_tank = db.execute('''SELECT id, mpg, date FROM fuel_records WHERE vehicle_id = ? AND mpg > 0
+                              ORDER BY odometer DESC, date DESC LIMIT 1''', (vehicle_id,)).fetchone()
+    if last_tank and notes.get(last_tank['id'], {}).get('low_economy'):
+        add('info', 'fuel', 'Fuel economy dropped',
+            f"Last tank {last_tank['mpg']:g} MPG against a recent {notes[last_tank['id']]['recent_avg_mpg']:g}",
+            '/fuel')
+    return items
+
+
+@app.route('/api/dashboard', methods=['GET'])
+@api_login_required
+def get_dashboard():
+    """Everything the dashboard shows, for all vehicles in one call"""
+    today = datetime.now().date()
+    month_start = today.replace(day=1).isoformat()
+    year_start = today.replace(month=1, day=1).isoformat()
+    db = get_db()
+    vehicles = db.execute('SELECT * FROM vehicle ORDER BY created_at').fetchall()
+
+    attention = []
+    cards = []
+    for vehicle in vehicles:
+        items = vehicle_attention(db, vehicle, today)
+        attention.extend(items)
+        last_service = db.execute('SELECT MAX(date) AS d FROM service_records WHERE vehicle_id = ?',
+                                  (vehicle['id'],)).fetchone()['d']
+        cards.append({
+            'id': vehicle['id'],
+            'name': _vehicle_name(vehicle),
+            'description': f"{vehicle['year']} {vehicle['manufacturer']} {vehicle['model']}",
+            'picture': vehicle['picture'],
+            'current_odometer': latest_odometer(db, vehicle['id']),
+            'avg_mpg': weighted_avg_mpg(db, vehicle['id']),
+            'last_service': last_service,
+            'spend_this_year': _spend_dollars(_spend_cents(db, year_start, vehicle['id'])),
+            'overdue': sum(1 for i in items if i['severity'] == 'overdue'),
+            'soon': sum(1 for i in items if i['severity'] == 'soon'),
+        })
+
+    # Parts are one shelf for every vehicle
+    for part in build_parts(db):
+        if part['low_stock']:
+            attention.append({'severity': 'soon', 'kind': 'stock', 'title': f"Low stock: {part['name']}",
+                              'detail': f"{part['in_stock']:g} left (re-order at {part['reorder_threshold']:g})",
+                              'link': '/parts', 'vehicle_id': None, 'vehicle_name': None})
+    attention.sort(key=lambda i: (ATTENTION_ORDER[i['severity']], i['vehicle_name'] or '', i['title']))
+
+    names = {v['id']: _vehicle_name(v) for v in vehicles}
+    recent = []
+    for s in db.execute(f'{SERVICE_SELECT} ORDER BY s.date DESC, s.id DESC LIMIT 8').fetchall():
+        recent.append({'kind': 'service', 'date': s['date'], 'vehicle_id': s['vehicle_id'],
+                       'vehicle_name': names.get(s['vehicle_id']),
+                       'title': s['service_types'] or s['repairs_completed'] or s['service_provider'],
+                       'amount': dollars(int(s['cost_cents'] or 0) + round((s['supplies_cost'] or 0) * 100)),
+                       'link': '/services'})
+    for f in db.execute('SELECT * FROM fuel_records ORDER BY date DESC, id DESC LIMIT 8').fetchall():
+        recent.append({'kind': 'fuel', 'date': f['date'], 'vehicle_id': f['vehicle_id'],
+                       'vehicle_name': names.get(f['vehicle_id']),
+                       'title': f"{f['gallons']:g} gal" + (f" at {f['station']}" if f['station'] else '')
+                                + (f" · {f['mpg']:g} MPG" if f['mpg'] else ''),
+                       'amount': dollars(f['cost_cents']), 'link': '/fuel'})
+    recent.sort(key=lambda r: r['date'] or '', reverse=True)
+
+    result = {
+        'today': today.isoformat(),
+        'attention': attention,
+        'spend': {'this_month': _spend_dollars(_spend_cents(db, month_start)),
+                  'this_year': _spend_dollars(_spend_cents(db, year_start))},
+        'vehicles': cards,
+        'recent': recent[:8],
+    }
+    db.close()
+    return jsonify(result)
+
+
+# ── Backups ──────────────────────────────────────────────────────────────────
+#
+# A backup is a zip laid out like the install directory, so restoring is
+# unzipping it over the app. Two kinds:
+#   kept backups   database and signing keys only (small), written to
+#                  instance/backups, made on demand and automatically about
+#                  once a day while the app is in use, oldest ones pruned
+#   full download  the same plus every uploaded file, built on request and
+#                  sent to the browser, never stored on the server
+# Kept backups live on the same disk as the data: they guard against a bad
+# change or a mistake, not against losing the disk. Download one now and
+# then.
+
+BACKUP_NAME = re.compile(r'^(auto-)?vehicle-tracker-\d{8}-\d{6}\.zip$')
+BACKUP_INTERVAL = timedelta(hours=24)
+BACKUP_CHECK_EVERY = timedelta(minutes=10)
+_backup_checked_at = None
+
+BACKUP_README = '''Vehicle Maintenance Tracker backup
+
+To restore, on the server:
+
+  systemctl stop vehicle-tracker
+  unzip -o <this file> -d /opt/vehicle-tracker
+  chown -R vtracker:vtracker /opt/vehicle-tracker
+  systemctl start vehicle-tracker
+
+instance/vehicle_tracker.db  everything you have entered
+instance/secret_key, instance/jwt_secret_key
+                             the signing keys; restoring them keeps people
+                             signed in
+static/uploads/              receipts, documents and photos (full backups only)
+'''
+
+
+def backup_dir():
+    return os.path.join(os.path.dirname(DATABASE) or '.', 'backups')
+
+
+def write_backup(path, include_uploads):
+    """Write a backup zip to `path`. The database goes in as a consistent
+    snapshot taken with SQLite's own backup, so it is safe while in use."""
+    instance = os.path.dirname(DATABASE) or '.'
+    snapshot = path + '.db-snapshot'
+    try:
+        source = sqlite3.connect(DATABASE, timeout=15)
+        target = sqlite3.connect(snapshot)
+        with target:
+            source.backup(target)
+        target.close()
+        source.close()
+        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('README.txt', BACKUP_README)
+            archive.write(snapshot, 'instance/vehicle_tracker.db')
+            for key in ('secret_key', 'jwt_secret_key'):
+                if os.path.exists(os.path.join(instance, key)):
+                    archive.write(os.path.join(instance, key), f'instance/{key}')
+            if include_uploads:
+                uploads = app.config['UPLOAD_FOLDER']
+                for folder, _, files in os.walk(uploads):
+                    for name in files:
+                        full = os.path.join(folder, name)
+                        archive.write(full, 'static/uploads/' + os.path.relpath(full, uploads).replace(os.sep, '/'))
+    finally:
+        if os.path.exists(snapshot):
+            os.remove(snapshot)
+
+
+def list_backups():
+    folder = backup_dir()
+    if not os.path.isdir(folder):
+        return []
+    backups = []
+    for name in os.listdir(folder):
+        if BACKUP_NAME.match(name):
+            stat = os.stat(os.path.join(folder, name))
+            backups.append({'name': name, 'size': stat.st_size, 'automatic': name.startswith('auto-'),
+                            'created': datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()})
+    return sorted(backups, key=lambda b: b['name'].replace('auto-', ''), reverse=True)
+
+
+def create_kept_backup(automatic=False):
+    """Make a database backup in the backups folder, then drop the oldest
+    automatic ones beyond the number to keep. Returns its file name."""
+    folder = backup_dir()
+    os.makedirs(folder, exist_ok=True)
+    name = f"{'auto-' if automatic else ''}vehicle-tracker-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    write_backup(os.path.join(folder, name), include_uploads=False)
+    keep = max(1, int(get_setting('auto_backup_keep', '7') or 7))
+    for old in [b for b in list_backups() if b['automatic']][keep:]:
+        os.remove(os.path.join(folder, old['name']))
+    return name
+
+
+def maybe_auto_backup(now=None, background=True):
+    """Make the daily automatic backup if one is due. Several worker
+    processes may ask at once; whichever manages to move the stored
+    timestamp forward does the work. Returns True if this call took it."""
+    if get_setting('auto_backup_enabled', '1') != '1':
+        return False
+    now = now or datetime.now(timezone.utc)
+    last = get_setting('auto_backup_last', '')
+    try:
+        if last and now - datetime.fromisoformat(last) < BACKUP_INTERVAL:
+            return False
+    except ValueError:
+        pass
+    db = get_db()
+    db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup_last', '')")
+    claimed = db.execute("UPDATE settings SET value = ? WHERE key = 'auto_backup_last' AND value = ?",
+                         (now.isoformat(), last)).rowcount == 1
+    db.commit()
+    db.close()
+    if not claimed:
+        return False
+
+    def run():
+        try:
+            create_kept_backup(automatic=True)
+        except Exception as error:   # never let a backup problem break a page
+            print(f'Automatic backup failed: {error}')
+    if background:
+        threading.Thread(target=run, daemon=True).start()
+    else:
+        run()
+    return True
+
+
+@app.before_request
+def auto_backup_check():
+    """Cheap, at most every few minutes per worker: is the daily backup due?"""
+    global _backup_checked_at
+    if app.testing or request.endpoint == 'static':
+        return
+    now = datetime.now(timezone.utc)
+    if _backup_checked_at and now - _backup_checked_at < BACKUP_CHECK_EVERY:
+        return
+    _backup_checked_at = now
+    try:
+        maybe_auto_backup(now)
+    except Exception as error:
+        print(f'Automatic backup check failed: {error}')
+
+
+def _backup_path(name):
+    if not BACKUP_NAME.match(name):
+        raise ApiError('Backup not found', 404)
+    path = os.path.join(backup_dir(), name)
+    if not os.path.isfile(path):
+        raise ApiError('Backup not found', 404)
+    return path
+
+
+@app.route('/api/admin/backups', methods=['GET'])
+@api_admin_required
+def get_backups():
+    return jsonify({
+        'backups': list_backups(),
+        'enabled': get_setting('auto_backup_enabled', '1') == '1',
+        'keep': int(get_setting('auto_backup_keep', '7') or 7),
+        'last_automatic': get_setting('auto_backup_last', '') or None,
+        'folder': os.path.abspath(backup_dir()),
+    })
+
+@app.route('/api/admin/backups', methods=['POST'])
+@api_admin_required
+def create_backup():
+    """Make a database backup now and keep it on the server"""
+    return jsonify({'success': True, 'name': create_kept_backup()})
+
+@app.route('/api/admin/backups/settings', methods=['POST'])
+@api_admin_required
+def update_backup_settings():
+    data = _payload()
+    if 'enabled' in data:
+        set_setting('auto_backup_enabled', '1' if data['enabled'] in (True, 1, '1', 'true', 'on') else '0')
+    if 'keep' in data:
+        keep = _number(data, 'keep', 'Backups to keep', integer=True, minimum=1)
+        if keep is None or keep > 365:
+            raise ApiError('Backups to keep must be between 1 and 365')
+        set_setting('auto_backup_keep', str(keep))
+    return jsonify({'success': True})
+
+@app.route('/api/admin/backups/<name>', methods=['GET'])
+@api_admin_required
+def download_backup(name):
+    return send_file(os.path.abspath(_backup_path(name)), as_attachment=True, download_name=name)
+
+@app.route('/api/admin/backups/<name>', methods=['DELETE'])
+@api_admin_required
+def delete_backup(name):
+    os.remove(_backup_path(name))
+    return jsonify({'success': True})
+
+@app.route('/api/admin/backup/download', methods=['GET'])
+@api_admin_required
+def download_full_backup():
+    """Build a full backup (database, keys and every uploaded file) and send
+    it to the browser. Nothing is left on the server."""
+    handle, path = tempfile.mkstemp(suffix='.zip')
+    os.close(handle)
+    try:
+        write_backup(path, include_uploads=True)
+    except Exception:
+        os.remove(path)
+        raise
+    name = f"vehicle-tracker-full-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    response = send_file(path, as_attachment=True, download_name=name, mimetype='application/zip')
+    response.call_on_close(lambda: os.path.exists(path) and os.remove(path))
+    return response
+
 
 def setup():
     """Create runtime directories and bring the database schema up to date.
