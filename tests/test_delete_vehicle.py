@@ -5,7 +5,7 @@ import app as app_module
 
 TABLES_WITH_VEHICLE_ID = ['service_records', 'part_installs', 'fuel_records',
                           'service_reminders', 'documents', 'tires', 'tire_rotations',
-                          'tread_readings', 'tire_install_log']
+                          'tread_readings', 'tire_install_log', 'vehicle_costs']
 
 
 def _upload(name):
@@ -33,6 +33,9 @@ def _populate(client, vehicle_id):
     client.post('/api/fuel', json={'vehicle_id': vehicle_id, 'date': '2026-01-01', 'odometer': 100,
                                    'gallons': 5, 'cost': 20})
     client.post('/api/reminders', json={'vehicle_id': vehicle_id, 'service_type': 'Oil change'})
+    r = client.post(f'/api/vehicle/{vehicle_id}/costs', json={'category': 'Insurance', 'amount': 600,
+                                                               'start_date': '2026-01-01', 'repeat': 'semiannual'})
+    assert r.status_code == 200, r.get_json()
     r = client.post('/api/documents', data={'vehicle_id': vehicle_id, 'title': 'Title', 'category': 'Insurance',
                                             'file': _upload('doc.pdf')}, content_type='multipart/form-data')
     assert r.status_code == 200, r.get_json()

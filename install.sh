@@ -73,6 +73,26 @@ echo "Step 8: Setting permissions..."
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 chmod -R 755 "$INSTALL_DIR"
 
+# Settings file: port, address and keys. Updates never overwrite it.
+if [ ! -f /etc/vehicle-tracker.env ]; then
+    cat > /etc/vehicle-tracker.env << 'SETTINGS'
+# Vehicle Maintenance Tracker settings.
+# Updates never change this file. Remove the # from a line to use it, then
+# run: systemctl restart vehicle-tracker
+#
+# Port and address to listen on, and how many worker processes to run
+#VT_PORT=5000
+#VT_HOST=0.0.0.0
+#VT_WORKERS=2
+#
+# Keys that sign logins and API tokens. Normally generated on first start
+# and kept in instance/; set them here only to manage them yourself.
+#SECRET_KEY=
+#JWT_SECRET_KEY=
+SETTINGS
+    chmod 600 /etc/vehicle-tracker.env
+fi
+
 # Create systemd service
 echo ""
 echo "Step 9: Creating systemd service..."
@@ -86,6 +106,8 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
+# Your settings (port, keys): kept across updates
+EnvironmentFile=-/etc/vehicle-tracker.env
 # Production WSGI server; settings in gunicorn.conf.py
 ExecStart=$INSTALL_DIR/venv/bin/gunicorn wsgi:app
 Restart=always
@@ -124,6 +146,7 @@ if systemctl is-active --quiet vehicle-tracker.service; then
     echo "  - Start service: systemctl start vehicle-tracker"
     echo "  - View logs:     journalctl -u vehicle-tracker -f"
     echo ""
+    echo "Settings (port, keys): /etc/vehicle-tracker.env"
     echo "Data is stored in: $INSTALL_DIR/instance/vehicle_tracker.db"
     echo "Uploads are in:    $INSTALL_DIR/static/uploads/"
     echo ""

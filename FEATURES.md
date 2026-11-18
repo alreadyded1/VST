@@ -12,6 +12,7 @@ What each page of the app does. For installation and upkeep see [README.md](READ
 | Parts & Warranties | `/parts` | Parts shelf, purchases, installs and warranty status |
 | Fuel Tracker | `/fuel` | Fill-ups, fuel economy and cost |
 | Reminders | `/reminders` | Manual and scheduled reminders |
+| Costs | `/costs` | Cost of ownership: purchase, insurance, registration, tax, loans |
 | Tires | `/tires` | Tire sets, rotations and tread depth |
 | Documents | `/documents` | Papers and notes for the vehicle |
 | Export / Report | `/report` | Printable summary and CSV downloads |
@@ -31,7 +32,7 @@ Covers every vehicle at once, not just the active one.
   - installed tires with tread at 4/32" or less
   - a latest tank well below the vehicle's recent MPG
 - Clicking an item opens the right page with that vehicle selected
-- **Spending** this month and this year, split into fuel, service and parts, and tires. Parts still on the shelf are not counted until they are used
+- **Spending** this month and this year, split into fuel, service and parts, tires, and insurance, tax and other costs (the purchase price is left out). Parts still on the shelf are not counted until they are used
 - **A card per vehicle:** odometer, average MPG, last service, spend this year, and whether anything is overdue. Clicking a card makes it the active vehicle
 - **Recent activity:** the latest services and fill-ups across all vehicles
 
@@ -139,11 +140,27 @@ Covers every vehicle at once, not just the active one.
 ## Reminders
 
 - Service type, due date, due mileage (either or both) and notes
-- Mark complete or incomplete, or delete
+- Mark complete or incomplete, **edit**, or delete. Scheduled reminders can't be edited; change their interval instead
+- **Snooze** for 1 week, 2 weeks, 1 month, 500 miles or 1,000 miles. A snoozed reminder stays on this page, dimmed, but is off the dashboard until the date or mileage is reached. **Wake** ends a snooze early. A scheduled reminder's snooze ends when the work is logged again
+- **Log as Service** opens a new service record dated today for that work (the matching type of work is filled in where there is one). Saving it ticks a manual reminder off; a scheduled one moves on by itself
 - Overdue when past the date or past the mileage
 - Mileage reminders show miles to go and, when the driving pace is known, an expected date
 - Reminders from the maintenance schedule are tagged **Scheduled**
 - Recall and re-order reminders are created for you from the Vehicles and Parts pages
+
+## Costs
+
+The cost of owning the active vehicle, beyond what fuel, service and tires already record.
+
+- **Other costs:** category (purchase, insurance, registration, tax, loan payment, parking and tolls, other), amount, description, date and notes
+- **Repeating costs:** once, monthly, every 3 or 6 months, or yearly, with an optional last payment. Entered once and counted each time they come round; the list shows how many payments so far, their total and the next date
+- **Total cost of ownership:** fuel, service and parts, tires and other costs since the first record, plus the purchase. With a current value entered, the purchase counts as what the vehicle has lost in value; without one, at its full price (and the page says so)
+- **Per year, per month and per mile.** Cost per mile uses the miles since the odometer when bought, or since the first reading on record
+- **Running costs:** everything except buying it, also per mile
+- **Where it goes:** a breakdown by kind of cost
+- **By year:** what was paid out each calendar year, purchase included
+- **All vehicles:** the same figures side by side
+- The dashboard's spending includes these costs, except the purchase price
 
 ## Tires
 
