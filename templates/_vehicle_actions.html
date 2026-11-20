@@ -1,0 +1,216 @@
+{# Shared by the Vehicles list and the vehicle detail page: the add / edit
+   form, the mark-as-sold form, and the actions behind them. A page that
+   includes this defines afterVehicleChange(change), called after any save. #}
+<div id="addVehicleModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">Add Vehicle</h3>
+            <button class="close" onclick="closeModal('addVehicleModal')">&times;</button>
+        </div>
+        <form id="vehicleForm" onsubmit="saveVehicle(event)">
+            <input type="hidden" id="vehicleId">
+
+            <div class="form-group">
+                <label for="vin">VIN</label>
+                <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+                    <input type="text" id="vin" name="vin" maxlength="17" placeholder="17-character VIN" style="flex: 1;">
+                    <button type="button" class="btn btn-secondary" onclick="decodeVINForAdd()" id="decodeVINAddBtn" style="white-space: nowrap;">Decode VIN</button>
+                </div>
+                <small style="color: var(--light-text); font-size: 0.8rem;">Enter the VIN and click Decode to fill in the details below.</small>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="year">Year *</label>
+                    <input type="number" id="year" name="year" min="1900" max="2100" required>
+                </div>
+                <div class="form-group">
+                    <label for="manufacturer">Make *</label>
+                    <input type="text" id="manufacturer" name="manufacturer" required>
+                </div>
+                <div class="form-group">
+                    <label for="model">Model *</label>
+                    <input type="text" id="model" name="model" required>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="engine">Engine</label>
+                    <input type="text" id="engine" name="engine" placeholder="e.g., 2.0L Turbo">
+                </div>
+                <div class="form-group">
+                    <label for="nickname">Nickname</label>
+                    <input type="text" id="nickname" name="nickname" placeholder="e.g., The Beast">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="picture">Photo</label>
+                <input type="file" id="picture" name="picture" accept="image/*" onchange="handleFilePreview(this, 'picturePreview')">
+                <div id="picturePreview" class="file-preview"></div>
+            </div>
+
+            <button type="submit" class="btn btn-success" id="vehicleSubmit">Save Vehicle</button>
+        </form>
+    </div>
+</div>
+
+<div id="soldModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="soldModalTitle">Mark as Sold</h3>
+            <button class="close" onclick="closeModal('soldModal')">&times;</button>
+        </div>
+        <form onsubmit="saveSold(event)">
+            <input type="hidden" id="soldVehicleId">
+            <p style="color: var(--light-text); font-size: 0.875rem; margin-bottom: 1rem;">
+                Its records are kept. It moves to Past Vehicles and leaves the vehicle selector and the dashboard.
+                The sale price becomes its final value on the Costs page, and its costs stop at the date sold.
+            </p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="soldDate">Date Sold *</label>
+                    <input type="date" id="soldDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="salePrice">Sale Price</label>
+                    <input type="number" id="salePrice" min="0" step="0.01" placeholder="Optional">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-success">Mark as Sold</button>
+        </form>
+    </div>
+</div>
+
+<script>
+// What the forms are editing; set by openVehicleForm / openSoldForm
+let vehicleFormSubject = null;
+
+function vehicleDisplayName(vehicle) {
+    return vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
+}
+
+function openVehicleForm(vehicle = null) {
+    vehicleFormSubject = vehicle;
+    document.getElementById('vehicleForm').reset();
+    document.getElementById('picturePreview').textContent = '';
+    document.getElementById('vehicleId').value = vehicle ? vehicle.id : '';
+    document.getElementById('modalTitle').textContent = vehicle ? 'Edit Vehicle' : 'Add Vehicle';
+    if (vehicle) {
+        ['manufacturer', 'model', 'year', 'engine', 'vin', 'nickname'].forEach(field => {
+            document.getElementById(field).value = vehicle[field] || '';
+        });
+    }
+    openModal('addVehicleModal');
+}
+
+async function saveVehicle(event) {
+    event.preventDefault();
+    const vehicleId = document.getElementById('vehicleId').value;
+    const formData = new FormData(document.getElementById('vehicleForm'));
+    try {
+        const result = await fetchAPI(vehicleId ? `/api/vehicle/${vehicleId}` : '/api/vehicle',
+                                      { method: vehicleId ? 'PUT' : 'POST', body: formData });
+        // A new vehicle becomes the active one
+        if (!vehicleId && result.id) setCurrentVehicleId(result.id);
+        showAlert(vehicleId ? 'Vehicle updated' : 'Vehicle added', 'success');
+        closeModal('addVehicleModal');
+        await vehicleChanged({ kind: vehicleId ? 'edited' : 'added', id: Number(vehicleId || result.id) });
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+async function decodeVINForAdd() {
+    const vin = document.getElementById('vin').value.trim();
+    if (vin.length !== 17) {
+        showAlert('Enter the full 17-character VIN first', 'warning');
+        return;
+    }
+    const btn = document.getElementById('decodeVINAddBtn');
+    btn.disabled = true;
+    btn.textContent = 'Decoding...';
+    try {
+        const response = await fetchAPI(`/api/vehicle/decode-vin/${encodeURIComponent(vin)}`);
+        const data = response.data || {};
+        [['manufacturer', data.manufacturer], ['model', data.model], ['year', data.year], ['engine', data.engine]]
+            .forEach(([field, value]) => { if (value) document.getElementById(field).value = value; });
+        showAlert('VIN decoded: details filled in. Check them before saving.', 'success');
+    } catch (error) {
+        showAlert(error.message || 'Could not decode that VIN', 'danger');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Decode VIN';
+    }
+}
+
+function openSoldForm(vehicle) {
+    document.getElementById('soldVehicleId').value = vehicle.id;
+    document.getElementById('soldModalTitle').textContent = `Mark as Sold: ${vehicleDisplayName(vehicle)}`;
+    document.getElementById('soldDate').value = toISODate(new Date());
+    document.getElementById('salePrice').value = '';
+    openModal('soldModal');
+}
+
+async function vehicleRequest(method, url, body, message, change) {
+    try {
+        await fetchAPI(url, {
+            method,
+            headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        showAlert(message, 'success');
+        await vehicleChanged(change);
+        return true;
+    } catch (error) {
+        showAlert(error.message, 'danger');
+        return false;
+    }
+}
+
+async function saveSold(event) {
+    event.preventDefault();
+    const id = Number(document.getElementById('soldVehicleId').value);
+    const done = await vehicleRequest('PUT', `/api/vehicle/${id}/status`, {
+        status: 'sold',
+        sold_date: document.getElementById('soldDate').value,
+        sale_price: document.getElementById('salePrice').value
+    }, 'Marked as sold. It is now under Past Vehicles.', { kind: 'sold', id });
+    if (done) closeModal('soldModal');
+}
+
+function reactivateVehicle(id) {
+    vehicleRequest('PUT', `/api/vehicle/${id}/status`, { status: 'active' },
+                   'Back in use', { kind: 'reactivated', id });
+}
+
+function setDefaultVehicle(id) {
+    vehicleRequest('PUT', '/api/profile/default-vehicle', { vehicle_id: id },
+                   id ? 'Default set: this vehicle is selected when you sign in' : 'Default cleared',
+                   { kind: 'default', id });
+}
+
+function deleteVehicle(vehicle) {
+    if (!confirm(`Delete ${vehicleDisplayName(vehicle)} and everything recorded for it (services, fuel, reminders, tires, documents, costs)? Parts stay on the shelf.\n\nTo keep its history, mark it as sold instead.`)) return;
+    vehicleRequest('DELETE', `/api/vehicle/${vehicle.id}`, undefined, 'Vehicle deleted', { kind: 'deleted', id: vehicle.id });
+}
+
+function makeActiveVehicle(id) {
+    setCurrentVehicleId(id);
+    vehicleChanged({ kind: 'selected', id });
+}
+
+// Refresh the sidebar selector, then let the page redraw itself
+async function vehicleChanged(change) {
+    clearCache('vehicles');
+    if (change && change.kind === 'default') document.body.dataset.defaultVehicle = change.id || '';
+    // Deleted or sold the active vehicle: the selector picks the default or
+    // the first one still in use
+    if (change && (change.kind === 'deleted' || change.kind === 'sold') && String(getCurrentVehicleId()) === String(change.id)) {
+        localStorage.removeItem('currentVehicleId');
+    }
+    await loadVehicleSelector(true);
+    if (typeof afterVehicleChange === 'function') await afterVehicleChange(change || {});
+}
+</script>

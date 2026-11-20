@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}Vehicle - Vehicle Maintenance Tracker{% endblock %}
+
+{% block content %}
+<style>
+.back-link { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.875rem; margin-bottom: 0.75rem; }
+.vd-head { display: flex; gap: 1.25rem; align-items: center; flex-wrap: wrap; }
+.vd-photo {
+    width: 150px; height: 110px; border-radius: 10px; object-fit: cover; flex-shrink: 0;
+    background: var(--light-bg); color: var(--light-text); display: flex; align-items: center; justify-content: center;
+}
+.vd-title { font-size: 1.5rem; font-weight: 700; margin: 0; }
+.vd-sub { color: var(--light-text); margin: 0.15rem 0 0.4rem; }
+.vd-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-left: auto; }
+.vd-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem 1rem; margin-top: 1rem; }
+.vd-facts div span, .spec-grid div span { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--light-text); }
+.vd-jump { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+
+.vd-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; align-items: start; }
+.vd-columns .card { margin: 0; }
+@media (max-width: 900px) { .vd-columns { grid-template-columns: 1fr; } }
+
+.spec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem 1rem; }
+.spec-empty { color: var(--light-text); }
+.att-item { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color); text-decoration: none; color: inherit; }
+.att-item:last-child { border-bottom: none; }
+.att-detail { font-size: 0.8rem; color: var(--light-text); }
+.mini-row { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.45rem 0; border-bottom: 1px solid var(--border-color); font-size: 0.9rem; }
+.mini-row:last-child { border-bottom: none; }
+.mini-row small { display: block; color: var(--light-text); }
+.money-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+.money-grid div { border: 1px solid var(--border-color); border-radius: 8px; padding: 0.6rem 0.75rem; }
+.money-grid span { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--light-text); }
+.money-grid strong { font-size: 1.2rem; }
+.pill { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
+.pill-ok { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.pill-warn { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.pill-bad { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.pill-info { background: var(--accent-light); color: var(--accent); }
+.pill-muted { background: var(--light-bg); color: var(--light-text); }
+.hint { color: var(--light-text); font-size: 0.8rem; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+.card-head h2 { margin: 0; }
+.recall-item { border: 1px solid var(--border-color); border-radius: 8px; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
+.recall-item p { margin: 0.25rem 0 0; color: var(--light-text); }
+.menu-button { background: none; border: none; font-size: 1.3rem; line-height: 1; cursor: pointer; padding: 0.3rem 0.5rem; border-radius: 6px; color: var(--dark-text); }
+.menu-button:hover { background: var(--light-bg); }
+.menu-dropdown {
+    display: none; position: fixed; background: var(--card-bg); min-width: 180px; z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden;
+}
+.menu-dropdown.show { display: block; }
+.menu-dropdown button { display: block; width: 100%; padding: 0.6rem 1rem; border: none; background: none; text-align: left; cursor: pointer; font: inherit; font-size: 0.875rem; color: var(--dark-text); }
+.menu-dropdown button:hover { background: var(--light-bg); }
+.menu-dropdown button.danger { color: var(--danger-color); }
+@media (max-width: 640px) {
+    .vd-actions { margin-left: 0; width: 100%; }
+    .spec-grid, .money-grid { grid-template-columns: 1fr 1fr; }
+}
+</style>
+
+<a class="back-link" href="/vehicles">&larr; All vehicles</a>
+
+<div id="detail"><p>Loading...</p></div>
+
+<div class="menu-dropdown" id="detailMenu"></div>
+
+<!-- Edit quick specs -->
+<div id="specsModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Quick Specs</h3>
+            <button class="close" onclick="closeModal('specsModal')">&times;</button>
+        </div>
+        <form onsubmit="saveSpecs(event)">
+            <p class="hint" style="margin-bottom: 1rem;">Leave a field blank to clear it.
+                {% if current_user.is_admin %}Add more fields, such as spark plug gap, on the <a href="/admin">Admin page</a>.{% else %}An admin can add more fields.{% endif %}</p>
+            <div class="form-row" id="specFields" style="grid-template-columns: repeat(2, minmax(0, 1fr));"></div>
+            <button type="submit" class="btn btn-success">Save Specs</button>
+        </form>
+    </div>
+</div>
+
+{% include "_vehicle_actions.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const VEHICLE_ID = {{ vehicle_id }};
+let vehicle = null;
+let lastRecalls = [];
+
+const CAR_ICON = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect x="9" y="11" width="14" height="10" rx="2"/><circle cx="12" cy="21" r="1"/><circle cx="20" cy="21" r="1"/></svg>';
+const SEVERITY = { overdue: ['pill-bad', 'Overdue'], soon: ['pill-warn', 'Soon'], info: ['pill-info', 'Heads up'] };
+
+async function loadDetail() {
+    try {
+        vehicle = await fetchAPI(`/api/vehicle/${VEHICLE_ID}/details`);
+    } catch (error) {
+        document.getElementById('detail').innerHTML = `<div class="card"><p>${escapeHtml(error.message)}. <a href="/vehicles">Back to all vehicles</a>.</p></div>`;
+        return;
+    }
+    document.title = `${vehicle.name} - Vehicle Maintenance Tracker`;
+    render();
+}
+
+function afterVehicleChange(change) {
+    if (change.kind === 'deleted') {
+        window.location.href = '/vehicles';
+        return;
+    }
+    return loadDetail();
+}
+
+const isActive = () => String(getCurrentVehicleId()) === String(VEHICLE_ID);
+const odometer = value => value !== null && value !== undefined ? value.toLocaleString() + ' mi' : '—';
+
+// Go to another page about this vehicle, making it the active one first
+function openWith(path) {
+    setCurrentVehicleId(VEHICLE_ID);
+    window.location.href = path;
+}
+
+function render() {
+    const v = vehicle;
+    const sold = v.status === 'sold';
+    const photo = v.picture ? `<img class="vd-photo" src="/static/${escapeHtml(v.picture)}" alt="">` : `<div class="vd-photo">${CAR_ICON}</div>`;
+    const badges = (sold ? `<span class="pill pill-muted">Sold ${v.sold_date ? formatDate(v.sold_date) : ''}</span>` : '')
+        + (isActive() ? '<span class="pill pill-info">Active</span>' : '')
+        + (v.is_default ? '<span class="pill pill-muted" title="Selected when you sign in">Default</span>' : '')
+        + (sold ? '' : v.overdue ? `<span class="pill pill-bad">${v.overdue} overdue</span>`
+                    : v.soon ? `<span class="pill pill-warn">${v.soon} coming up</span>` : '<span class="pill pill-ok">All good</span>');
+
+    document.getElementById('detail').innerHTML = `
+        <div class="card">
+            <div class="vd-head">
+                ${photo}
+                <div style="min-width: 0;">
+                    <h1 class="vd-title">${escapeHtml(v.name)}</h1>
+                    ${v.name !== v.description ? `<p class="vd-sub">${escapeHtml(v.description)}</p>` : '<p class="vd-sub"></p>'}
+                    <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">${badges}</div>
+                </div>
+                <div class="vd-actions">
+                    ${isActive() || sold ? '' : `<button class="btn btn-primary" onclick="makeActiveVehicle(${v.id})">Make Active</button>`}
+                    <button class="btn btn-secondary" onclick="openVehicleForm(vehicle)">Edit</button>
+                    <button class="menu-button" onclick="openMenu(event)" aria-label="More actions">&#8942;</button>
+                </div>
+            </div>
+            <div class="vd-facts">
+                <div><span>Odometer</span>${odometer(v.current_odometer)}</div>
+                <div><span>Average MPG</span>${v.avg_mpg !== null ? v.avg_mpg.toFixed(1) : '—'}</div>
+                <div><span>Engine</span>${escapeHtml(v.engine || '—')}</div>
+                <div><span>VIN</span><span style="font-family: monospace; font-size: 0.85rem; text-transform: none; letter-spacing: 0; color: inherit;">${escapeHtml(v.vin || '—')}</span></div>
+                ${sold ? `<div><span>Sale price</span>${v.sale_price !== null ? formatCurrency(v.sale_price) : '—'}</div>` : ''}
+            </div>
+            <div class="vd-jump">
+                <button class="btn btn-small btn-secondary" onclick="openWith('/services')">Service Records</button>
+                <button class="btn btn-small btn-secondary" onclick="openWith('/fuel')">Fuel</button>
+                <button class="btn btn-small btn-secondary" onclick="openWith('/reminders')">Reminders</button>
+                <button class="btn btn-small btn-secondary" onclick="openWith('/tires')">Tires</button>
+                <button class="btn btn-small btn-secondary" onclick="openWith('/documents')">Documents</button>
+                <button class="btn btn-small btn-secondary" onclick="openWith('/costs')">Costs</button>
+            </div>
+        </div>
+
+        <div class="vd-columns">
+            <div style="display: grid; gap: 1.25rem;">
+                ${sold ? '' : attentionCard()}
+                ${specsCard()}
+                ${recallsCard()}
+                ${warrantiesCard()}
+            </div>
+            <div style="display: grid; gap: 1.25rem;">
+                ${costCard()}
+                ${activityCard()}
+                ${tiresCard()}
+            </div>
+        </div>`;
+}
+
+function attentionCard() {
+    const items = vehicle.attention;
+    return `
+        <div class="card">
+            <div class="card-head"><h2>Needs Attention</h2></div>
+            ${items.length ? items.map(i => `
+                <a class="att-item" href="${i.link}" onclick="setCurrentVehicleId(${VEHICLE_ID})">
+                    <span class="pill ${SEVERITY[i.severity][0]}">${SEVERITY[i.severity][1]}</span>
+                    <div><strong>${escapeHtml(i.title)}</strong><div class="att-detail">${escapeHtml(i.detail)}</div></div>
+                </a>`).join('')
+            : '<p class="hint" style="font-size: 0.9rem;">Nothing needs attention right now.</p>'}
+        </div>`;
+}
+
+function specsCard() {
+    const filled = vehicle.specs.filter(s => s.value);
+    return `
+        <div class="card">
+            <div class="card-head">
+                <h2>Quick Specs</h2>
+                <button class="btn btn-small btn-secondary" onclick="openSpecs()">${filled.length ? 'Edit' : 'Add'}</button>
+            </div>
+            ${filled.length ? `<div class="spec-grid">${filled.map(s => `<div><span>${escapeHtml(s.name)}</span>${escapeHtml(s.value)}</div>`).join('')}</div>`
+                : '<p class="hint" style="font-size: 0.9rem;">Plate, oil type, wiper sizes and the like: the things you look up at the parts counter.</p>'}
+        </div>`;
+}
+
+function recallsCard() {
+    const r = vehicle.recalls;
+    const status = !r.checked_at ? 'Not checked yet.'
+        : `${r.open ? `<strong style="color: var(--danger-color);">${r.open} open</strong>` : 'None open'} of ${r.total} found · checked ${formatDate(r.checked_at.slice(0, 10))}`;
+    const results = lastRecalls.length ? lastRecalls.map(rec => `
+        <div class="recall-item">
+            <strong>${escapeHtml(rec.subject || rec.component || 'Recall')}</strong>
+            <span class="hint"> · ${escapeHtml(rec.nhtsa_campaign_number)}</span>
+            ${rec.summary ? `<p>${escapeHtml(rec.summary)}</p>` : ''}
+            ${rec.remedy ? `<p><strong>Remedy:</strong> ${escapeHtml(rec.remedy)}</p>` : ''}
+        </div>`).join('') + `<button class="btn btn-small btn-secondary" onclick="createRecallReminders()">Add Reminders for These</button>` : '';
+    return `
+        <div class="card" id="recallsCard">
+            <div class="card-head">
+                <h2>Recalls</h2>
+                <button class="btn btn-small btn-secondary" id="recallButton" onclick="checkRecalls()">Check Now</button>
+            </div>
+            <p style="font-size: 0.9rem; margin: 0 0 0.5rem;">${status}</p>
+            <p class="hint" style="margin: 0 0 0.75rem;">Checked with NHTSA ${(vehicle.vin || '').length === 17 ? 'by VIN' : 'by year, make and model (add the VIN for an exact match)'}. A recall counts as fixed once its reminder is marked complete.</p>
+            ${results}
+        </div>`;
+}
+
+function warrantiesCard() {
+    const items = vehicle.warranties;
+    const label = w => w.status === 'lifetime' ? ['pill-ok', 'Lifetime']
+        : w.status === 'expired' ? ['pill-bad', 'Expired'] : w.status === 'expiring' ? ['pill-warn', 'Expiring'] : ['pill-ok', 'Covered'];
+    return `
+        <div class="card">
+            <div class="card-head"><h2>Parts Under Warranty</h2></div>
+            ${items.length ? items.map(i => `
+                <div class="mini-row">
+                    <div><strong>${escapeHtml(i.part_name)}</strong><small>Installed ${i.install_date ? formatDate(i.install_date) : '—'}</small></div>
+                    <div style="text-align: right;"><span class="pill ${label(i.warranty)[0]}">${label(i.warranty)[1]}</span>
+                        ${i.warranty.expires_on ? `<small>until ${formatDate(i.warranty.expires_on)}</small>` : ''}</div>
+                </div>`).join('')
+            : '<p class="hint" style="font-size: 0.9rem;">No installed parts with a warranty.</p>'}
+        </div>`;
+}
+
+function costCard() {
+    const o = vehicle.ownership;
+    const perMile = o.cost_per_mile !== null ? '$' + o.cost_per_mile.toFixed(2) : '—';
+    return `
+        <div class="card">
+            <div class="card-head">
+                <h2>Costs</h2>
+                <button class="btn btn-small btn-secondary" onclick="openWith('/costs')">Details</button>
+            </div>
+            <div class="money-grid">
+                <div><span>Cost of ownership</span><strong>${formatCurrency(o.total)}</strong></div>
+                <div><span>${vehicle.status === 'sold' ? 'Per year owned' : 'Per year'}</span><strong>${o.per_year !== null ? formatCurrency(o.per_year) : '—'}</strong></div>
+                <div><span>Per mile</span><strong>${perMile}</strong></div>
+                <div><span>Spent this year</span><strong>${formatCurrency(vehicle.spent_this_year)}</strong></div>
+            </div>
+            <p class="hint" style="margin: 0.75rem 0 0;">
+                Fuel ${formatCurrency(o.running.fuel)} · Service &amp; parts ${formatCurrency(o.running.service)} · Tires ${formatCurrency(o.running.tires)}
+                ${Object.entries(o.running.by_category).map(([k, val]) => ` · ${escapeHtml(k)} ${formatCurrency(val)}`).join('')}
+                ${o.purchase ? ` · ${o.purchase_counted_as === 'depreciation' ? 'Lost in value' : 'Purchase'} ${formatCurrency(o.total - o.running.total)}` : ''}
+            </p>
+        </div>`;
+}
+
+function activityCard() {
+    const services = vehicle.recent_services.map(s => `
+        <div class="mini-row">
+            <div><strong>${escapeHtml(s.title)}</strong><small>${formatDate(s.date)}${s.odometer ? ' · ' + s.odometer.toLocaleString() + ' mi' : ''}</small></div>
+            <div>${formatCurrency(s.amount)}</div>
+        </div>`).join('');
+    const fuel = vehicle.recent_fuel.map(f => `
+        <div class="mini-row">
+            <div><strong>${f.gallons} gal${f.station ? ' at ' + escapeHtml(f.station) : ''}</strong><small>${formatDate(f.date)}${f.mpg ? ' · ' + f.mpg + ' MPG' : ''}</small></div>
+            <div>${formatCurrency(f.amount)}</div>
+        </div>`).join('');
+    return `
+        <div class="card">
+            <div class="card-head"><h2>Recent Services</h2><button class="btn btn-small btn-secondary" onclick="openWith('/services')">All</button></div>
+            ${services || '<p class="hint" style="font-size: 0.9rem;">No service records yet.</p>'}
+        </div>
+        <div class="card">
+            <div class="card-head"><h2>Recent Fill-ups</h2><button class="btn btn-small btn-secondary" onclick="openWith('/fuel')">All</button></div>
+            ${fuel || '<p class="hint" style="font-size: 0.9rem;">No fill-ups yet.</p>'}
+        </div>`;
+}
+
+function tiresCard() {
+    const t = vehicle.tires;
+    if (!t) {
+        return `<div class="card"><div class="card-head"><h2>Tires</h2><button class="btn btn-small btn-secondary" onclick="openWith('/tires')">Tire Log</button></div>
+            <p class="hint" style="font-size: 0.9rem;">No tire set marked as installed.</p></div>`;
+    }
+    const tread = t.tread && t.tread.lowest !== null
+        ? `<span class="pill ${t.tread.status === 'replace' ? 'pill-bad' : t.tread.status === 'marginal' ? 'pill-warn' : 'pill-ok'}">${t.tread.lowest}/32"</span> <span class="hint">lowest tread, ${formatDate(t.tread.date)}</span>`
+        : '<span class="hint">No tread reading yet</span>';
+    return `
+        <div class="card">
+            <div class="card-head"><h2>Tires</h2><button class="btn btn-small btn-secondary" onclick="openWith('/tires')">Tire Log</button></div>
+            <div class="mini-row"><div><strong>${escapeHtml(t.brand + (t.model ? ' ' + t.model : ''))}</strong>
+                <small>${[t.size, t.season].filter(Boolean).map(escapeHtml).join(' · ')}</small></div>
+                <div style="text-align: right;">${t.miles_on_set !== null ? t.miles_on_set.toLocaleString() + ' mi' : ''}</div></div>
+            <div style="margin-top: 0.5rem;">${tread}</div>
+        </div>`;
+}
+
+// ── Menu ────────────────────────────────────────────────────────────────────
+
+function openMenu(event) {
+    event.stopPropagation();
+    const v = vehicle;
+    const sold = v.status === 'sold';
+    const menu = document.getElementById('detailMenu');
+    if (menu.classList.contains('show')) { menu.classList.remove('show'); return; }
+    menu.innerHTML = `
+        ${sold ? '' : `<button onclick="setDefaultVehicle(${v.is_default ? 'null' : v.id})">${v.is_default ? 'Clear Default' : 'Make Default'}</button>`}
+        ${sold ? `<button onclick="reactivateVehicle(${v.id})">Back in Use</button>` : `<button onclick="openSoldForm(vehicle)">Mark as Sold</button>`}
+        <button class="danger" onclick="deleteVehicle(vehicle)">Delete</button>`;
+    const rect = event.currentTarget.getBoundingClientRect();
+    menu.classList.add('show');
+    menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${rect.bottom}px`;
+}
+document.addEventListener('click', () => document.getElementById('detailMenu').classList.remove('show'));
+
+// ── Specs ───────────────────────────────────────────────────────────────────
+
+function openSpecs() {
+    document.getElementById('specFields').innerHTML = vehicle.specs.map(s => `
+        <div class="form-group">
+            <label for="spec-${s.field_id}">${escapeHtml(s.name)}</label>
+            <input type="text" id="spec-${s.field_id}" data-field="${s.field_id}" maxlength="200" value="${escapeHtml(s.value || '')}">
+        </div>`).join('');
+    openModal('specsModal');
+}
+
+async function saveSpecs(event) {
+    event.preventDefault();
+    const values = {};
+    document.querySelectorAll('#specFields input').forEach(input => { values[input.dataset.field] = input.value; });
+    try {
+        await fetchAPI(`/api/vehicle/${VEHICLE_ID}/specs`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values })
+        });
+        closeModal('specsModal');
+        showAlert('Specs saved', 'success');
+        await loadDetail();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+// ── Recalls ─────────────────────────────────────────────────────────────────
+
+async function checkRecalls() {
+    const button = document.getElementById('recallButton');
+    if (button) { button.disabled = true; button.textContent = 'Checking...'; }
+    try {
+        const result = await fetchAPI(`/api/vehicle/${VEHICLE_ID}/check-recalls`, { method: 'POST' });
+        lastRecalls = result.recalls;
+        showAlert(result.count ? `${result.count} recall${result.count === 1 ? '' : 's'} found` : 'No recalls found', result.count ? 'warning' : 'success');
+        await loadDetail();
+        document.getElementById('recallsCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+        showAlert(error.message, 'danger');
+        if (button) { button.disabled = false; button.textContent = 'Check Now'; }
+    }
+}
+
+async function createRecallReminders() {
+    try {
+        const result = await fetchAPI('/api/vehicle/recalls/create-reminders', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vehicle_id: VEHICLE_ID, recalls: lastRecalls })
+        });
+        showAlert(result.created ? `Added ${result.created} reminder${result.created === 1 ? '' : 's'}` : 'Reminders for these recalls already exist', 'success');
+        await loadDetail();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+appReady.then(async () => {
+    await loadDetail();
+    // Arrived from "Check Recalls" on the vehicles list
+    if (new URLSearchParams(window.location.search).get('recalls') && vehicle) {
+        history.replaceState(null, '', window.location.pathname);
+        checkRecalls();
+    }
+});
+</script>
+{% endblock %}

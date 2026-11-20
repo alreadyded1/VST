@@ -7,7 +7,8 @@ What each page of the app does. For installation and upkeep see [README.md](READ
 | Page | Address | What it is for |
 |---|---|---|
 | Dashboard | `/` | What needs attention across all vehicles, spending and recent activity |
-| Vehicles | `/vehicles` | Add, edit and delete vehicles; VIN decode and recall check |
+| Vehicles | `/vehicles` | Your vehicles as compact cards or a list; order, default and sold vehicles |
+| Vehicle | `/vehicles/<id>` | Everything about one vehicle: specs, what's due, costs, history, tires, recalls |
 | Service Records | `/services` | Service history and the maintenance schedule |
 | Parts & Warranties | `/parts` | Parts shelf, purchases, installs and warranty status |
 | Fuel Tracker | `/fuel` | Fill-ups, fuel economy and cost |
@@ -38,11 +39,22 @@ Covers every vehicle at once, not just the active one.
 
 ## Vehicles
 
-- Make, model, year, engine, VIN, nickname and a photo
-- **Decode VIN** fills in the details from the VIN
-- **Check Recalls** lists open recalls and can create a reminder for each
-- Per-vehicle summary: service and fuel counts, last service and fill-up, current odometer, average MPG, and spend this year and all time
-- Deleting a vehicle removes its services, fuel records, reminders, tires, documents and their files. Parts stay on the shelf
+- Make, model, year, engine, VIN, nickname and a photo; **Decode VIN** fills in the details from the VIN
+- **Cards or list:** each vehicle shows odometer, average MPG, spend this year, cost per mile, an overdue / coming up / all good status, and recall status. The list view adds last service and sorts by any column. The page remembers which view you chose
+- **Click a vehicle** to make it the active one; **Open** goes to its detail page
+- **Order:** drag cards or rows, or use **Move Up** / **Move Down** in the menu. The sidebar selector and dashboard follow the same order
+- **Default vehicle** (per user): selected when you sign in. If nothing is selected, the default is used, then the first vehicle in your order
+- **Mark as Sold** with a date and optional sale price. The vehicle moves to **Past Vehicles**, keeps all its records, and leaves the sidebar selector, the dashboard and the parts picker. Its costs stop at the sale and the sale price becomes its final value on the Costs page. **Back in Use** undoes it
+- Deleting a vehicle removes everything recorded for it, including costs and specs. Parts stay on the shelf
+
+### Vehicle detail page
+
+- Photo, name, status, odometer, MPG, engine and VIN, with buttons to that vehicle's service records, fuel, reminders, tires, documents and costs
+- **Needs attention** for that vehicle
+- **Quick specs:** license plate, color, tire size, tire pressure, oil type and capacity, wiper sizes and battery group to start with. An admin can add fields (such as spark plug gap), rename, reorder or delete them on the Admin page
+- **Costs:** cost of ownership, per year, per mile and spend this year, with the breakdown
+- **Recent services and fill-ups**, the **installed tire set** with its tread, and **parts under warranty**
+- **Recalls:** **Check Now** asks NHTSA (by VIN when there is a full one, otherwise by year, make and model). The date checked and how many were found are kept; a recall counts as fixed once its "Recall Repair" reminder is marked complete. Found recalls can be turned into reminders
 
 ## Service Records
 

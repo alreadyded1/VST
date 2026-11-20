@@ -4,786 +4,389 @@
 
 {% block content %}
 <style>
-/* View modal label styling */
-#viewVehicleModal .form-group label {
-    font-weight: bold;
+.view-toggle { display: inline-flex; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+.view-toggle button {
+    border: none; background: var(--card-bg); padding: 0.45rem 0.85rem; font: inherit; font-size: 0.85rem;
+    font-weight: 600; color: var(--light-text); cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem;
 }
+.view-toggle button + button { border-left: 1px solid var(--border-color); }
+.view-toggle button.active { background: var(--accent); color: #fff; }
 
-/* Horizontal vehicle cards */
-.vehicle-horizontal-card {
-    transition: transform 0.2s, box-shadow 0.2s;
+.v-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+@media (max-width: 1100px) { .v-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .v-grid { grid-template-columns: 1fr; } }
+
+.v-card {
+    border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg);
+    padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.7rem; cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
-
-.vehicle-horizontal-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+.v-card:hover { border-color: var(--accent); }
+.v-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
+.v-card.dragging { opacity: 0.4; }
+.v-card.drop-target { border-style: dashed; border-color: var(--accent); }
+.v-head { display: flex; gap: 0.75rem; align-items: center; }
+.v-thumb {
+    width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex-shrink: 0;
+    background: var(--light-bg); color: var(--light-text); display: flex; align-items: center; justify-content: center;
 }
+.v-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v-sub { font-size: 0.8rem; color: var(--light-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v-badges { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.25rem; }
+.v-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.25rem 0.5rem; font-size: 0.8rem; }
+.v-facts div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v-facts span { display: block; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--light-text); }
+.v-foot { display: flex; align-items: center; gap: 0.5rem; }
+.v-recalls { flex: 1; font-size: 0.75rem; color: var(--light-text); min-width: 0; }
+.drag-handle { cursor: grab; color: var(--light-text); padding: 0 0.15rem; user-select: none; }
 
-/* Mobile responsiveness for horizontal cards */
-@media (max-width: 900px) {
-    .vehicle-horizontal-card > div {
-        grid-template-columns: 150px 1fr !important;
-    }
+.pill { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
+.pill-ok { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.pill-warn { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.pill-bad { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.pill-info { background: var(--accent-light); color: var(--accent); }
+.pill-muted { background: var(--light-bg); color: var(--light-text); }
 
-    .vehicle-horizontal-card > div > div:last-child {
-        grid-column: 1 / -1 !important;
-        border-left: none !important;
-        border-top: 3px solid var(--primary-color) !important;
-        min-width: 100% !important;
-    }
+.menu-button { background: none; border: none; font-size: 1.3rem; line-height: 1; cursor: pointer; padding: 0.2rem 0.45rem; color: var(--dark-text); border-radius: 6px; }
+.menu-button:hover { background: var(--light-bg); }
+.menu-dropdown {
+    display: none; position: fixed; background: var(--card-bg); min-width: 180px; z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden;
 }
-
-@media (max-width: 600px) {
-    .vehicle-horizontal-card > div {
-        grid-template-columns: 1fr !important;
-        min-height: auto !important;
-    }
-
-    .vehicle-horizontal-card > div > div:first-child {
-        height: 150px !important;
-    }
-
-    .vehicle-horizontal-card > div > div:last-child {
-        min-width: 100% !important;
-    }
+.menu-dropdown.show { display: block; }
+.menu-dropdown button {
+    display: block; width: 100%; padding: 0.6rem 1rem; border: none; background: none; text-align: left;
+    cursor: pointer; font: inherit; font-size: 0.875rem; color: var(--dark-text);
 }
+.menu-dropdown button:hover { background: var(--light-bg); }
+.menu-dropdown button.danger { color: var(--danger-color); }
+.menu-dropdown hr { border: none; border-top: 1px solid var(--border-color); margin: 0.2rem 0; }
 
+#vehicleTable td { vertical-align: middle; }
+#vehicleTable tr.active td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.past-summary { cursor: pointer; font-weight: 600; padding: 0.25rem 0; }
+.hint { color: var(--light-text); font-size: 0.8rem; }
 </style>
 
 <h1>My Vehicles</h1>
 
 <div class="card">
-    <div class="flex-between mb-2">
-        <h2>Vehicle List</h2>
-        <button class="btn btn-primary" onclick="openModal('addVehicleModal')">Add Vehicle</button>
+    <div class="flex-between mb-2" style="gap: 0.75rem; flex-wrap: wrap;">
+        <h2 style="margin: 0;">In Use</h2>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <div class="view-toggle" role="group" aria-label="View">
+                <button type="button" data-view="cards" onclick="setView('cards')" title="Cards">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Cards
+                </button>
+                <button type="button" data-view="list" onclick="setView('list')" title="List">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>List
+                </button>
+            </div>
+            <button class="btn btn-primary" onclick="openVehicleForm()">Add Vehicle</button>
+        </div>
     </div>
-
-    <div id="vehiclesList">
-        <p>Loading...</p>
-    </div>
+    <p class="hint mb-2" id="orderHint">Click a vehicle to make it the active one. Drag to change the order, or use Move Up / Move Down in its menu.</p>
+    <div id="vehiclesList"><p>Loading...</p></div>
 </div>
 
-<!-- Add/Edit Vehicle Modal -->
-<div id="addVehicleModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="modalTitle">Add Vehicle</h3>
-            <button class="close" onclick="closeModal('addVehicleModal')">&times;</button>
+<div class="card" id="pastCard" style="display: none;">
+    <details id="pastDetails">
+        <summary class="past-summary">Past Vehicles <span id="pastCount" class="hint"></span></summary>
+        <p class="hint" style="margin: 0.5rem 0 0.75rem;">Sold vehicles keep all their records. Open one to look back at it.</p>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr><th>Vehicle</th><th>Sold</th><th>Sale Price</th><th>Cost of Ownership</th><th></th></tr>
+                </thead>
+                <tbody id="pastTableBody"></tbody>
+            </table>
         </div>
-        <form id="vehicleForm" onsubmit="saveVehicle(event)">
-            <input type="hidden" id="vehicleId">
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="manufacturer">Manufacturer *</label>
-                    <input type="text" id="manufacturer" name="manufacturer" required>
-                </div>
-                <div class="form-group">
-                    <label for="model">Model *</label>
-                    <input type="text" id="model" name="model" required>
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="year">Year *</label>
-                    <input type="number" id="year" name="year" min="1900" max="2100" required>
-                </div>
-                <div class="form-group">
-                    <label for="engine">Engine</label>
-                    <input type="text" id="engine" name="engine" placeholder="e.g., 2.0L Turbo">
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="vin">VIN</label>
-                    <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
-                        <input type="text" id="vin" name="vin" maxlength="17" placeholder="17-character VIN" style="flex: 1;">
-                        <button type="button" class="btn btn-secondary" onclick="decodeVINForAdd()" id="decodeVINAddBtn" style="white-space: nowrap;">Decode VIN</button>
-                    </div>
-                    <small style="color: var(--light-text); font-size: 0.85rem;">Enter 17-character VIN and click Decode to auto-fill vehicle details</small>
-                </div>
-                <div class="form-group">
-                    <label for="nickname">Nickname</label>
-                    <input type="text" id="nickname" name="nickname" placeholder="e.g., The Beast">
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="picture">Vehicle Picture</label>
-                <input type="file" id="picture" name="picture" accept="image/*" onchange="handleFilePreview(this, 'picturePreview')">
-                <div id="picturePreview" class="file-preview"></div>
-            </div>
-
-            <button type="submit" class="btn btn-success">Save Vehicle</button>
-        </form>
-    </div>
+    </details>
 </div>
 
-<!-- View Vehicle Modal -->
-<div id="viewVehicleModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Vehicle Details</h3>
-            <button class="close" onclick="closeModal('viewVehicleModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div id="viewVehicleImage" style="margin-bottom: 1rem;"></div>
+<div class="menu-dropdown" id="vehicleMenu"></div>
 
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Nickname:</label>
-                    <p id="viewNickname"></p>
-                </div>
-                <div class="form-group">
-                    <label>Year:</label>
-                    <p id="viewYear"></p>
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Manufacturer:</label>
-                    <p id="viewManufacturer"></p>
-                </div>
-                <div class="form-group">
-                    <label>Model:</label>
-                    <p id="viewModel"></p>
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Engine:</label>
-                    <p id="viewEngine"></p>
-                </div>
-                <div class="form-group">
-                    <label>VIN:</label>
-                    <p id="viewVIN"></p>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label>Created:</label>
-                <p id="viewCreated"></p>
-            </div>
-
-            <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
-                <h4 style="margin-bottom: 1rem;">NHTSA Services</h4>
-                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <button class="btn btn-secondary" onclick="decodeVINFromView()" id="decodeVINBtn">Decode VIN</button>
-                    <button class="btn btn-secondary" onclick="checkRecallsFromView()" id="checkRecallsBtn">Check Recalls</button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- VIN Decode Results Modal -->
-<div id="vinDecodeModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>VIN Decode Results</h3>
-            <button class="close" onclick="closeModal('vinDecodeModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div id="vinDecodeResults"></div>
-        </div>
-    </div>
-</div>
-
-<!-- Recalls Results Modal -->
-<div id="recallsModal" class="modal">
-    <div class="modal-content" style="max-width: 800px;">
-        <div class="modal-header">
-            <h3>Vehicle Recalls</h3>
-            <button class="close" onclick="closeModal('recallsModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div id="recallsResults"></div>
-        </div>
-    </div>
-</div>
+{% include "_vehicle_actions.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-let allVehicles = [];
-let vehicleStats = {};
+let vehicles = [];
+let view = 'cards';
+try { view = localStorage.getItem('vehicles-view') || 'cards'; } catch (error) { /* private mode */ }
+
+const CAR_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect x="9" y="11" width="14" height="10" rx="2"/><circle cx="12" cy="21" r="1"/><circle cx="20" cy="21" r="1"/></svg>';
+
+const activeVehicles = () => vehicles.filter(v => v.status !== 'sold');
+const pastVehicles = () => vehicles.filter(v => v.status === 'sold');
+const byId = id => vehicles.find(v => v.id === id);
 
 async function loadVehicles() {
     try {
-        const vehicles = await fetchAPI('/api/vehicles');
-        allVehicles = vehicles;
-
-        // Load stats for all vehicles
-        await loadAllVehicleStats();
-
-        displayVehicles(vehicles);
+        vehicles = await fetchAPI('/api/vehicles/overview');
     } catch (error) {
-        console.error('Error loading vehicles:', error);
         document.getElementById('vehiclesList').innerHTML = '<p>Error loading vehicles</p>';
+        return;
     }
+    render();
 }
 
-async function loadAllVehicleStats() {
-    // One request for every vehicle's totals, computed server-side
-    try {
-        const params = new URLSearchParams({ year: new Date().getFullYear() });
-        const summary = await fetchAPI(`/api/vehicles/summary?${params}`);
-        vehicleStats = {};
-        allVehicles.forEach(vehicle => {
-            const s = summary[vehicle.id];
-            if (!s) return;
-            vehicleStats[vehicle.id] = {
-                ytdServiceCost: s.ytd_service_cost,
-                ytdFuelCost: s.ytd_fuel_cost,
-                ytdTotalCost: s.ytd_total_cost,
-                totalServiceCost: s.total_service_cost,
-                totalFuelCost: s.total_fuel_cost,
-                totalAllTimeCost: s.total_all_time_cost,
-                lastService: s.last_service,
-                lastFuel: s.last_fuel,
-                currentOdometer: s.current_odometer,
-                avgMpg: s.avg_mpg,
-                serviceCount: s.service_count,
-                fuelRecordCount: s.fuel_record_count
-            };
-        });
-    } catch (error) {
-        console.error('Error loading vehicle stats:', error);
-        vehicleStats = {};
-    }
+function afterVehicleChange() {
+    return loadVehicles();
 }
 
-function displayVehicles(vehicles) {
-    const container = document.getElementById('vehiclesList');
+function setView(next) {
+    view = next;
+    try { localStorage.setItem('vehicles-view', next); } catch (error) { /* private mode */ }
+    render();
+}
+
+// ── Pieces shown for each vehicle ───────────────────────────────────────────
+
+function thumb(v) {
+    return v.picture ? `<img class="v-thumb" src="/static/${escapeHtml(v.picture)}" alt="">` : `<div class="v-thumb">${CAR_ICON}</div>`;
+}
+
+function statusPill(v) {
+    if (v.overdue) return `<span class="pill pill-bad">${v.overdue} overdue</span>`;
+    if (v.soon) return `<span class="pill pill-warn">${v.soon} coming up</span>`;
+    return '<span class="pill pill-ok">All good</span>';
+}
+
+function badges(v) {
+    const active = String(v.id) === String(getCurrentVehicleId());
+    return (active ? '<span class="pill pill-info">Active</span>' : '')
+        + (v.is_default ? '<span class="pill pill-muted" title="Selected when you sign in">Default</span>' : '')
+        + statusPill(v);
+}
+
+function recallText(v) {
+    const r = v.recalls;
+    if (!r.checked_at) return 'Recalls not checked yet';
+    const when = formatDate(r.checked_at.slice(0, 10));
+    if (r.open) return `<span style="color: var(--danger-color); font-weight: 600;">${r.open} open recall${r.open === 1 ? '' : 's'}</span> · checked ${when}`;
+    return `No open recalls · checked ${when}`;
+}
+
+const perMile = value => value === null ? '—' : '$' + value.toFixed(2);
+const odometer = value => value !== null ? value.toLocaleString() + ' mi' : '—';
+const mpg = value => value !== null ? value.toFixed(1) : '—';
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+
+function render() {
+    document.querySelectorAll('.view-toggle button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    const list = document.getElementById('vehiclesList');
+    const active = activeVehicles();
+    document.getElementById('orderHint').style.display = active.length > 1 ? 'block' : 'none';
 
     if (vehicles.length === 0) {
-        container.innerHTML = '<p>No vehicles yet. Click "Add Vehicle" to create one.</p>';
-        return;
+        list.innerHTML = '<p>No vehicles yet. Click "Add Vehicle" to add your first one.</p>';
+    } else if (active.length === 0) {
+        list.innerHTML = '<p>No vehicles in use. Past vehicles are listed below.</p>';
+    } else if (view === 'list') {
+        list.innerHTML = listHtml(active);
+        makeSortable(document.getElementById('vehicleTable'));
+    } else {
+        list.innerHTML = `<div class="v-grid">${active.map(cardHtml).join('')}</div>`;
     }
+    enableDragging();
+    renderPast();
+}
 
-    let html = '<div style="display: flex; flex-direction: column; gap: 1.5rem;">';
-
-    vehicles.forEach(vehicle => {
-        const nickname = escapeHtml(vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`);
-        const imageSrc = vehicle.picture ? `/static/${vehicle.picture}` : '';
-        const stats = vehicleStats[vehicle.id] || {};
-
-        html += `
-            <div class="card vehicle-horizontal-card" style="margin: 0; padding: 0; overflow: hidden;">
-                <div style="display: grid; grid-template-columns: 200px 1fr auto; gap: 0; min-height: 200px;">
-                    <!-- Vehicle Image -->
-                    <div style="position: relative; overflow: hidden;">
-                        ${imageSrc ?
-                            `<img src="${imageSrc}" style="width: 100%; height: 100%; object-fit: cover;">` :
-                            `<div style="width: 100%; height: 100%; background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 4rem;">🚗</div>`
-                        }
-                    </div>
-
-                    <!-- Vehicle Info & Stats -->
-                    <div style="padding: 1.5rem; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div>
-                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem; color: var(--primary-color);">${nickname}</h3>
-                            <p style="margin: 0 0 0.75rem 0; font-size: 1.1rem;"><strong>${escapeHtml(`${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`)}</strong></p>
-
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
-                                ${vehicle.engine ? `
-                                <div>
-                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Engine</p>
-                                    <p style="margin: 0; font-weight: 600;">${escapeHtml(vehicle.engine)}</p>
-                                </div>` : ''}
-                                ${stats.currentOdometer ? `
-                                <div>
-                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Odometer</p>
-                                    <p style="margin: 0; font-weight: 600;">${stats.currentOdometer.toLocaleString()} mi</p>
-                                </div>` : ''}
-                                ${stats.avgMpg ? `
-                                <div>
-                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Avg MPG</p>
-                                    <p style="margin: 0; font-weight: 600;">${stats.avgMpg.toFixed(1)}</p>
-                                </div>` : ''}
-                                <div>
-                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Services</p>
-                                    <p style="margin: 0; font-weight: 600;">${stats.serviceCount || 0}</p>
-                                </div>
-                                <div>
-                                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">Fuel Records</p>
-                                    <p style="margin: 0; font-weight: 600;">${stats.fuelRecordCount || 0}</p>
-                                </div>
-                            </div>
-
-                            ${vehicle.vin ? `<p style="margin: 0.5rem 0 0 0;"><small style="color: var(--light-text);">VIN: ${escapeHtml(vehicle.vin)}</small></p>` : ''}
-                        </div>
-
-                        <!-- Action Buttons -->
-                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem;">
-                            <button class="btn btn-small btn-primary" onclick="selectVehicle(${vehicle.id})">Select Vehicle</button>
-                            <button class="btn btn-small btn-secondary" onclick="viewVehicle(${vehicle.id})">View Details</button>
-                            <button class="btn btn-small btn-secondary" onclick="editVehicle(${vehicle.id})">Edit</button>
-                            <button class="btn btn-small btn-danger" onclick="deleteVehicle(${vehicle.id})">Delete</button>
-                        </div>
-                    </div>
-
-                    <!-- Cost Summary Panel -->
-                    <div style="background: linear-gradient(to bottom, var(--light-bg) 0%, #f5f7f8 100%); padding: 1.5rem; min-width: 280px; border-left: 3px solid var(--primary-color);">
-                        <h4 style="margin: 0 0 1rem 0; font-size: 1rem; color: var(--secondary-color); text-align: center;">💰 Cost Summary</h4>
-
-                        <!-- YTD Costs -->
-                        <div style="background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                            <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; font-weight: bold; color: var(--secondary-color); text-align: center; text-transform: uppercase; letter-spacing: 0.5px;">Year-to-Date ${new Date().getFullYear()}</p>
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                                <span style="color: var(--light-text); font-size: 0.9rem;">Maintenance:</span>
-                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.ytdServiceCost || 0)}</strong>
-                            </div>
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.75rem;">
-                                <span style="color: var(--light-text); font-size: 0.9rem;">Fuel:</span>
-                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.ytdFuelCost || 0)}</strong>
-                            </div>
-                            <div style="padding-top: 0.75rem; border-top: 2px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: 600; font-size: 0.9rem;">YTD Total:</span>
-                                <strong style="font-size: 1.25rem; color: var(--secondary-color);">${formatCurrency(stats.ytdTotalCost || 0)}</strong>
-                            </div>
-                        </div>
-
-                        <!-- All-Time Costs -->
-                        <div style="background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                            <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; font-weight: bold; color: var(--primary-color); text-align: center; text-transform: uppercase; letter-spacing: 0.5px;">All-Time Total</p>
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                                <span style="color: var(--light-text); font-size: 0.9rem;">Maintenance:</span>
-                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.totalServiceCost || 0)}</strong>
-                            </div>
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.75rem;">
-                                <span style="color: var(--light-text); font-size: 0.9rem;">Fuel:</span>
-                                <strong style="font-size: 0.95rem;">${formatCurrency(stats.totalFuelCost || 0)}</strong>
-                            </div>
-                            <div style="padding-top: 0.75rem; border-top: 2px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: 600; font-size: 0.9rem;">Grand Total:</span>
-                                <strong style="font-size: 1.25rem; color: var(--primary-color);">${formatCurrency(stats.totalAllTimeCost || 0)}</strong>
-                            </div>
-                        </div>
-
-                        <!-- Last Activity -->
-                        ${stats.lastService || stats.lastFuel ? `
-                        <div style="margin-top: 1rem; padding: 0.75rem; background: white; border-radius: 8px; font-size: 0.85rem;">
-                            ${stats.lastService ? `<p style="margin: 0 0 0.25rem 0; color: var(--light-text);">🔧 Last Service: <strong>${formatDate(stats.lastService)}</strong></p>` : ''}
-                            ${stats.lastFuel ? `<p style="margin: 0; color: var(--light-text);">⛽ Last Fuel: <strong>${formatDate(stats.lastFuel)}</strong></p>` : ''}
-                        </div>` : ''}
-                    </div>
+function cardHtml(v) {
+    const active = String(v.id) === String(getCurrentVehicleId());
+    return `
+        <div class="v-card${active ? ' active' : ''}" draggable="true" data-id="${v.id}" onclick="cardClicked(event, ${v.id})">
+            <div class="v-head">
+                ${thumb(v)}
+                <div style="flex: 1; min-width: 0;">
+                    <div class="v-name">${escapeHtml(v.name)}</div>
+                    ${v.name !== v.description ? `<div class="v-sub">${escapeHtml(v.description)}</div>` : ''}
+                    <div class="v-badges">${badges(v)}</div>
                 </div>
+                <span class="drag-handle hide-mobile" title="Drag to reorder">&#8942;&#8942;</span>
             </div>
-        `;
-    });
-
-    html += '</div>';
-    container.innerHTML = html;
+            <div class="v-facts">
+                <div><span>Odometer</span>${odometer(v.current_odometer)}</div>
+                <div><span>Avg MPG</span>${mpg(v.avg_mpg)}</div>
+                <div><span>This year</span>${formatCurrency(v.spent_this_year)}</div>
+                <div><span>Per mile</span>${perMile(v.cost_per_mile)}</div>
+            </div>
+            <div class="v-foot">
+                <div class="v-recalls">${recallText(v)}</div>
+                <a class="btn btn-small btn-primary" href="/vehicles/${v.id}">Open</a>
+                <button class="menu-button" onclick="openMenu(event, ${v.id})" aria-label="More actions">&#8942;</button>
+            </div>
+        </div>`;
 }
 
-function selectVehicle(vehicleId) {
-    setCurrentVehicleId(vehicleId);
-    showAlert('Vehicle selected! Redirecting to dashboard...', 'success');
-    setTimeout(() => {
-        window.location.href = '/';
-    }, 1000);
+function listHtml(active) {
+    return `
+        <div class="table-container">
+            <table id="vehicleTable">
+                <thead>
+                    <tr>
+                        <th class="sortable">Vehicle</th>
+                        <th class="sortable">Odometer</th>
+                        <th class="sortable">Avg MPG</th>
+                        <th class="sortable">This Year</th>
+                        <th class="sortable">Per Mile</th>
+                        <th class="sortable">Last Service</th>
+                        <th>Recalls</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${active.map(v => `
+                        <tr draggable="true" data-id="${v.id}" class="${String(v.id) === String(getCurrentVehicleId()) ? 'active' : ''}"
+                            onclick="cardClicked(event, ${v.id})" style="cursor: pointer;">
+                            <td>
+                                <div style="display: flex; align-items: center; gap: 0.6rem;">
+                                    <span class="drag-handle hide-mobile" title="Drag to reorder">&#8942;&#8942;</span>
+                                    <div style="min-width: 0;">
+                                        <strong>${escapeHtml(v.name)}</strong>
+                                        <div class="v-badges">${badges(v)}</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>${odometer(v.current_odometer)}</td>
+                            <td>${mpg(v.avg_mpg)}</td>
+                            <td>${formatCurrency(v.spent_this_year)}</td>
+                            <td>${perMile(v.cost_per_mile)}</td>
+                            <td>${v.last_service ? formatDate(v.last_service) : '—'}</td>
+                            <td style="font-size: 0.8rem;">${recallText(v)}</td>
+                            <td style="white-space: nowrap;">
+                                <a class="btn btn-small btn-primary" href="/vehicles/${v.id}">Open</a>
+                                <button class="menu-button" onclick="openMenu(event, ${v.id})" aria-label="More actions">&#8942;</button>
+                            </td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
 }
 
-function viewVehicle(vehicleId) {
-    const vehicle = allVehicles.find(v => v.id === vehicleId);
-    if (!vehicle) return;
-
-    // Store current vehicle for NHTSA functions
-    currentViewVehicle = vehicle;
-
-    // Display vehicle image
-    const imageContainer = document.getElementById('viewVehicleImage');
-    if (vehicle.picture) {
-        imageContainer.innerHTML = `<img src="/static/${vehicle.picture}" style="width: 100%; max-height: 300px; object-fit: cover; border-radius: 8px;">`;
-    } else {
-        imageContainer.innerHTML = '<div style="width: 100%; height: 200px; background: var(--light-bg); display: flex; align-items: center; justify-content: center; color: var(--light-text); border-radius: 8px;">No Image</div>';
-    }
-
-    // Populate vehicle details
-    document.getElementById('viewNickname').textContent = vehicle.nickname || 'N/A';
-    document.getElementById('viewYear').textContent = vehicle.year;
-    document.getElementById('viewManufacturer').textContent = vehicle.manufacturer;
-    document.getElementById('viewModel').textContent = vehicle.model;
-    document.getElementById('viewEngine').textContent = vehicle.engine || 'N/A';
-    document.getElementById('viewVIN').textContent = vehicle.vin || 'N/A';
-
-    // Format created_at date if available
-    if (vehicle.created_at) {
-        const createdDate = new Date(vehicle.created_at);
-        document.getElementById('viewCreated').textContent = createdDate.toLocaleString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    } else {
-        document.getElementById('viewCreated').textContent = 'N/A';
-    }
-
-    openModal('viewVehicleModal');
+function renderPast() {
+    const past = pastVehicles();
+    document.getElementById('pastCard').style.display = past.length ? 'block' : 'none';
+    document.getElementById('pastCount').textContent = `(${past.length})`;
+    document.getElementById('pastTableBody').innerHTML = past.map(v => `
+        <tr>
+            <td><strong>${escapeHtml(v.name)}</strong>${v.name !== v.description ? `<div class="hint">${escapeHtml(v.description)}</div>` : ''}</td>
+            <td>${v.sold_date ? formatDate(v.sold_date) : '—'}</td>
+            <td>${v.sale_price !== null ? formatCurrency(v.sale_price) : '—'}</td>
+            <td>${formatCurrency(v.total_cost)}</td>
+            <td style="white-space: nowrap;">
+                <a class="btn btn-small btn-secondary" href="/vehicles/${v.id}">Open</a>
+                <button class="btn btn-small btn-secondary" onclick="reactivateVehicle(${v.id})">Back in Use</button>
+                <button class="btn btn-small btn-danger" onclick="deleteVehicle(byId(${v.id}))">Delete</button>
+            </td>
+        </tr>`).join('');
 }
 
-function editVehicle(vehicleId) {
-    const vehicle = allVehicles.find(v => v.id === vehicleId);
-    if (!vehicle) return;
-
-    document.getElementById('modalTitle').textContent = 'Edit Vehicle';
-    document.getElementById('vehicleId').value = vehicle.id;
-    document.getElementById('manufacturer').value = vehicle.manufacturer;
-    document.getElementById('model').value = vehicle.model;
-    document.getElementById('year').value = vehicle.year;
-    document.getElementById('engine').value = vehicle.engine || '';
-    document.getElementById('vin').value = vehicle.vin || '';
-    document.getElementById('nickname').value = vehicle.nickname || '';
-
-    openModal('addVehicleModal');
+// Clicking a card (not one of its buttons) makes that vehicle the active one
+function cardClicked(event, id) {
+    if (event.target.closest('a, button')) return;
+    if (String(getCurrentVehicleId()) === String(id)) return;
+    makeActiveVehicle(id);
+    showAlert(`${byId(id).name} is now the active vehicle`, 'success');
 }
 
-async function saveVehicle(event) {
-    event.preventDefault();
+// ── Menu ────────────────────────────────────────────────────────────────────
 
-    const form = document.getElementById('vehicleForm');
-    const formData = new FormData(form);
-    const vehicleId = document.getElementById('vehicleId').value;
-
-    try {
-        let result;
-        if (vehicleId) {
-            // Update existing vehicle using PUT
-            result = await putFormData(`/api/vehicle/${vehicleId}`, formData);
-        } else {
-            // Add new vehicle
-            result = await postFormData('/api/vehicle', formData);
-
-            // Auto-select newly created vehicle
-            if (result.success && result.id) {
-                setCurrentVehicleId(result.id);
-            }
-        }
-
-        if (result.success) {
-            showAlert(vehicleId ? 'Vehicle updated successfully!' : 'Vehicle added successfully!', 'success');
-            form.reset();
-            document.getElementById('picturePreview').textContent = '';
-            document.getElementById('vehicleId').value = '';
-            document.getElementById('modalTitle').textContent = 'Add Vehicle';
-            closeModal('addVehicleModal');
-            await loadVehicles();
-            await loadVehicleSelector();
-        }
-    } catch (error) {
-        console.error('Error saving vehicle:', error);
-    }
-}
-
-async function deleteVehicle(vehicleId) {
-    if (!confirm('Are you sure you want to delete this vehicle? This will also delete all associated records (services, fuel, reminders, tires, documents). Parts stay on the shelf.')) {
+function openMenu(event, id) {
+    event.stopPropagation();
+    const v = byId(id);
+    const menu = document.getElementById('vehicleMenu');
+    if (menu.classList.contains('show') && menu.dataset.id === String(id)) {
+        menu.classList.remove('show');
         return;
     }
+    const order = activeVehicles();
+    const index = order.findIndex(x => x.id === id);
+    const isActive = String(getCurrentVehicleId()) === String(id);
+    menu.dataset.id = id;
+    menu.innerHTML = `
+        ${isActive ? '' : `<button onclick="makeActiveVehicle(${id})">Make Active</button>`}
+        <button onclick="openVehicleForm(byId(${id}))">Edit</button>
+        <button onclick="setDefaultVehicle(${v.is_default ? 'null' : id})">${v.is_default ? 'Clear Default' : 'Make Default'}</button>
+        <button onclick="window.location.href='/vehicles/${id}?recalls=1'">Check Recalls</button>
+        ${order.length > 1 ? `<hr>
+        <button onclick="moveVehicle(${id}, -1)" ${index === 0 ? 'disabled style="opacity: 0.4;"' : ''}>Move Up</button>
+        <button onclick="moveVehicle(${id}, 1)" ${index === order.length - 1 ? 'disabled style="opacity: 0.4;"' : ''}>Move Down</button>` : ''}
+        <hr>
+        <button onclick="openSoldForm(byId(${id}))">Mark as Sold</button>
+        <button class="danger" onclick="deleteVehicle(byId(${id}))">Delete</button>`;
+    const rect = event.currentTarget.getBoundingClientRect();
+    menu.classList.add('show');
+    const left = Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8);
+    const top = rect.bottom + menu.offsetHeight > window.innerHeight ? rect.top - menu.offsetHeight : rect.bottom;
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.max(8, top)}px`;
+}
 
+document.addEventListener('click', () => document.getElementById('vehicleMenu').classList.remove('show'));
+window.addEventListener('scroll', () => document.getElementById('vehicleMenu').classList.remove('show'), true);
+
+// ── Order ───────────────────────────────────────────────────────────────────
+
+async function saveOrder(ids) {
+    // Keep past vehicles after the ones in use
+    const all = ids.concat(pastVehicles().map(v => v.id));
+    vehicles.sort((a, b) => all.indexOf(a.id) - all.indexOf(b.id));
+    render();
     try {
-        await deleteAPI(`/api/vehicle/${vehicleId}`);
-        showAlert('Vehicle deleted successfully!', 'success');
-
-        // If this was the selected vehicle, clear selection
-        if (getCurrentVehicleId() == vehicleId) {
-            localStorage.removeItem('currentVehicleId');
-        }
-
+        await fetchAPI('/api/vehicles/order', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: all })
+        });
+        clearCache('vehicles');
+        await loadVehicleSelector(true);
+    } catch (error) {
+        showAlert(error.message, 'danger');
         await loadVehicles();
-        await loadVehicleSelector();
-    } catch (error) {
-        console.error('Error deleting vehicle:', error);
     }
 }
 
-// NHTSA Integration Functions
-let currentViewVehicle = null;
-let currentRecalls = [];
-
-async function decodeVINFromView() {
-    if (!currentViewVehicle || !currentViewVehicle.vin) {
-        showAlert('No VIN available for this vehicle', 'error');
-        return;
-    }
-
-    const btn = document.getElementById('decodeVINBtn');
-    btn.disabled = true;
-    btn.textContent = 'Decoding...';
-
-    try {
-        const response = await fetchAPI(`/api/vehicle/decode-vin/${currentViewVehicle.vin}`);
-
-        if (response.success && response.data) {
-            displayVINDecodeResults(response.data);
-            openModal('vinDecodeModal');
-        } else {
-            showAlert(response.error || 'Failed to decode VIN', 'error');
-        }
-    } catch (error) {
-        console.error('Error decoding VIN:', error);
-        const errorMsg = error.message || 'Error decoding VIN';
-        showAlert(errorMsg, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Decode VIN';
-    }
+function moveVehicle(id, step) {
+    const ids = activeVehicles().map(v => v.id);
+    const from = ids.indexOf(id);
+    const to = from + step;
+    if (to < 0 || to >= ids.length) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    saveOrder(ids);
 }
 
-async function decodeVINForAdd() {
-    const vinInput = document.getElementById('vin');
-    const vin = vinInput.value.trim();
+let draggedId = null;
 
-    if (!vin) {
-        showAlert('Please enter a VIN', 'error');
-        return;
-    }
-
-    if (vin.length !== 17) {
-        showAlert('VIN must be exactly 17 characters', 'error');
-        return;
-    }
-
-    const btn = document.getElementById('decodeVINAddBtn');
-    btn.disabled = true;
-    btn.textContent = 'Decoding...';
-
-    try {
-        const response = await fetchAPI(`/api/vehicle/decode-vin/${vin}`);
-
-        if (response.success && response.data) {
-            // Auto-fill form fields (manufacturer, model, year only)
-            const data = response.data;
-
-            if (data.manufacturer) {
-                document.getElementById('manufacturer').value = data.manufacturer;
-            }
-            if (data.model) {
-                document.getElementById('model').value = data.model;
-            }
-            if (data.year) {
-                document.getElementById('year').value = data.year;
-            }
-
-            showAlert('VIN decoded successfully! Manufacturer, model, and year have been auto-filled.', 'success');
-        } else {
-            showAlert(response.error || 'Failed to decode VIN', 'error');
-        }
-    } catch (error) {
-        console.error('Error decoding VIN:', error);
-        const errorMsg = error.message || 'Error decoding VIN';
-        showAlert(errorMsg, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Decode VIN';
-    }
-}
-
-function displayVINDecodeResults(data) {
-    const container = document.getElementById('vinDecodeResults');
-
-    let html = '<div style="display: grid; gap: 1rem;">';
-
-    // Check for errors
-    if (data.error_codes && data.error_codes !== '0') {
-        html += `<div class="alert alert-warning" style="padding: 1rem; background: var(--warning-color); color: white; border-radius: 8px;">
-            <strong>Warning:</strong> ${escapeHtml(data.error_text || 'Some errors occurred during decoding')}
-        </div>`;
-    }
-
-    // Display vehicle information
-    html += '<div class="form-row">';
-    html += `<div class="form-group"><label>VIN:</label><p>${escapeHtml(data.vin || 'N/A')}</p></div>`;
-    html += `<div class="form-group"><label>Year:</label><p>${escapeHtml(data.year || 'N/A')}</p></div>`;
-    html += '</div>';
-
-    html += '<div class="form-row">';
-    html += `<div class="form-group"><label>Manufacturer:</label><p>${escapeHtml(data.manufacturer || 'N/A')}</p></div>`;
-    html += `<div class="form-group"><label>Model:</label><p>${escapeHtml(data.model || 'N/A')}</p></div>`;
-    html += '</div>';
-
-    html += '<div class="form-row">';
-    html += `<div class="form-group"><label>Body Type:</label><p>${escapeHtml(data.body_type || 'N/A')}</p></div>`;
-    html += `<div class="form-group"><label>Vehicle Type:</label><p>${escapeHtml(data.vehicle_type || 'N/A')}</p></div>`;
-    html += '</div>';
-
-    html += '<div class="form-row">';
-    html += `<div class="form-group"><label>Engine:</label><p>${escapeHtml(data.engine || 'N/A')}</p></div>`;
-    html += '</div>';
-
-    // Plant information
-    if (data.plant_city || data.plant_state || data.plant_country) {
-        html += '<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">';
-        html += '<h4>Manufacturing Plant</h4>';
-        html += '<div class="form-row">';
-        html += `<div class="form-group"><label>City:</label><p>${escapeHtml(data.plant_city || 'N/A')}</p></div>`;
-        html += `<div class="form-group"><label>State:</label><p>${escapeHtml(data.plant_state || 'N/A')}</p></div>`;
-        html += `<div class="form-group"><label>Country:</label><p>${escapeHtml(data.plant_country || 'N/A')}</p></div>`;
-        html += '</div>';
-        html += '</div>';
-    }
-
-    html += '</div>';
-    container.innerHTML = html;
-}
-
-async function checkRecallsFromView() {
-    if (!currentViewVehicle) {
-        showAlert('No vehicle selected', 'error');
-        return;
-    }
-
-    const btn = document.getElementById('checkRecallsBtn');
-    btn.disabled = true;
-    btn.textContent = 'Checking...';
-
-    try {
-        let response;
-
-        // Prefer VIN-based recall check if VIN is available
-        if (currentViewVehicle.vin) {
-            response = await fetchAPI(`/api/vehicle/recalls-by-vin/${currentViewVehicle.vin}`);
-        } else {
-            // Fallback to make/model/year if no VIN
-            response = await fetchAPI(`/api/vehicle/recalls?make=${encodeURIComponent(currentViewVehicle.manufacturer)}&model=${encodeURIComponent(currentViewVehicle.model)}&year=${currentViewVehicle.year}`);
-        }
-
-        if (response.success) {
-            displayRecallResults(response);
-            openModal('recallsModal');
-        } else {
-            showAlert(response.error || 'Failed to check recalls', 'error');
-        }
-    } catch (error) {
-        console.error('Error checking recalls:', error);
-        const errorMsg = error.message || 'Error checking recalls';
-        showAlert(errorMsg, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Check Recalls';
-    }
-}
-
-function displayRecallResults(response) {
-    const container = document.getElementById('recallsResults');
-
-    // Store recalls for reminder creation
-    currentRecalls = response.recalls || [];
-
-    let html = '';
-
-    if (response.count === 0) {
-        html = `<div class="alert alert-success" style="padding: 1.5rem; background: var(--success-color); color: white; border-radius: 8px; text-align: center;">
-            <h3 style="margin-bottom: 0.5rem;">No Recalls Found</h3>
-            <p>Great news! No recalls were found for this vehicle.</p>
-        </div>`;
-    } else {
-        html = `<div class="alert alert-danger" style="padding: 1rem; background: var(--danger-color); color: white; border-radius: 8px; margin-bottom: 1rem;">
-            <strong>⚠ ${response.count} Recall${response.count > 1 ? 's' : ''} Found</strong>
-        </div>`;
-
-        // Add button to create reminders for all recalls
-        html += `<div style="margin-bottom: 1rem; text-align: center;">
-            <button class="btn btn-primary" onclick="createRecallReminders()" id="createRemindersBtn">
-                Create Reminders for All Recalls
-            </button>
-            <p style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--light-text);">
-                This will create service reminders for each unrepaired recall
-            </p>
-        </div>`;
-
-        response.recalls.forEach((recall, index) => {
-            html += `<div class="card" style="margin-bottom: 1rem; border-left: 4px solid var(--danger-color);">
-                <h4 style="margin-bottom: 0.5rem;">Recall #${index + 1}: ${escapeHtml(recall.nhtsa_campaign_number)}</h4>
-                <p><strong>Manufacturer:</strong> ${escapeHtml(recall.manufacturer)}</p>
-                <p><strong>Component:</strong> ${escapeHtml(recall.component || 'N/A')}</p>
-                <p><strong>Report Date:</strong> ${escapeHtml(recall.report_date || 'N/A')}</p>
-
-                <div style="margin-top: 1rem;">
-                    <p><strong>Subject:</strong></p>
-                    <p>${escapeHtml(recall.subject || 'N/A')}</p>
-                </div>
-
-                <div style="margin-top: 1rem;">
-                    <p><strong>Summary:</strong></p>
-                    <p>${escapeHtml(recall.summary || 'N/A')}</p>
-                </div>
-
-                ${recall.consequence ? `
-                <div style="margin-top: 1rem;">
-                    <p><strong>Consequence:</strong></p>
-                    <p>${escapeHtml(recall.consequence)}</p>
-                </div>
-                ` : ''}
-
-                ${recall.remedy ? `
-                <div style="margin-top: 1rem;">
-                    <p><strong>Remedy:</strong></p>
-                    <p>${escapeHtml(recall.remedy)}</p>
-                </div>
-                ` : ''}
-            </div>`;
+function enableDragging() {
+    document.querySelectorAll('#vehiclesList [draggable="true"]').forEach(el => {
+        el.addEventListener('dragstart', event => {
+            draggedId = Number(el.dataset.id);
+            el.classList.add('dragging');
+            event.dataTransfer.effectAllowed = 'move';
         });
-    }
-
-    container.innerHTML = html;
-}
-
-async function createRecallReminders() {
-    if (!currentViewVehicle || currentRecalls.length === 0) {
-        showAlert('No recalls to create reminders for', 'error');
-        return;
-    }
-
-    const btn = document.getElementById('createRemindersBtn');
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Creating Reminders...';
-    }
-
-    try {
-        const response = await fetch('/api/vehicle/recalls/create-reminders', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                vehicle_id: currentViewVehicle.id,
-                recalls: currentRecalls
-            })
+        el.addEventListener('dragend', () => {
+            el.classList.remove('dragging');
+            document.querySelectorAll('.drop-target').forEach(t => t.classList.remove('drop-target'));
         });
-
-        const result = await response.json();
-
-        if (result.success) {
-            showAlert(result.message || `Created ${result.created} reminder(s)`, 'success');
-            if (btn) {
-                btn.textContent = '✓ Reminders Created';
-                btn.style.backgroundColor = 'var(--success-color)';
-            }
-        } else {
-            showAlert(result.error || 'Failed to create reminders', 'error');
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = 'Create Reminders for All Recalls';
-            }
-        }
-    } catch (error) {
-        console.error('Error creating recall reminders:', error);
-        showAlert('Error creating reminders', 'error');
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Create Reminders for All Recalls';
-        }
-    }
+        el.addEventListener('dragover', event => {
+            if (draggedId === null || Number(el.dataset.id) === draggedId) return;
+            event.preventDefault();
+            el.classList.add('drop-target');
+        });
+        el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+        el.addEventListener('drop', event => {
+            event.preventDefault();
+            const target = Number(el.dataset.id);
+            const ids = activeVehicles().map(v => v.id).filter(i => i !== draggedId);
+            ids.splice(ids.indexOf(target) + (activeVehicles().findIndex(v => v.id === draggedId) <
+                       activeVehicles().findIndex(v => v.id === target) ? 1 : 0), 0, draggedId);
+            draggedId = null;
+            saveOrder(ids);
+        });
+    });
 }
 
-document.addEventListener('DOMContentLoaded', loadVehicles);
+appReady.then(loadVehicles);
 </script>
 {% endblock %}

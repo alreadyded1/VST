@@ -45,6 +45,26 @@
     </div>
 </div>
 
+<!-- Quick spec fields -->
+<div class="card">
+    <h2>Quick Spec Fields</h2>
+    <p style="color: var(--light-text); font-size: 0.875rem; margin-bottom: 1rem;">
+        The facts kept for each vehicle on its detail page, such as oil type and wiper sizes. Add your own, such as spark plug gap,
+        rename them or change their order. Deleting a field removes its value from every vehicle.
+    </p>
+    <form onsubmit="addSpecField(event)" style="display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
+        <input type="text" id="newSpecField" maxlength="60" placeholder="New field, e.g. Spark plug gap" required
+               style="flex: 1; min-width: 200px; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 8px; font: inherit;">
+        <button type="submit" class="btn btn-primary">Add Field</button>
+    </form>
+    <div class="table-container">
+        <table>
+            <thead><tr><th>Field</th><th>Filled In On</th><th>Actions</th></tr></thead>
+            <tbody id="specFieldsBody"></tbody>
+        </table>
+    </div>
+</div>
+
 <!-- Backups -->
 <div class="card">
     <div class="flex-between mb-2">
@@ -413,6 +433,77 @@ function saveBackupSettings() {
 }
 
 document.addEventListener('DOMContentLoaded', loadBackups);
+
+// ── Quick spec fields ───────────────────────────────────────────────────────
+
+let specFields = [];
+
+async function loadSpecFields() {
+    const tbody = document.getElementById('specFieldsBody');
+    try {
+        specFields = await fetchAPI('/api/spec-fields');
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="3">Could not load the fields.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = specFields.length ? specFields.map((f, i) => `
+        <tr>
+            <td>${escapeHtml(f.name)}</td>
+            <td>${f.uses} vehicle${f.uses === 1 ? '' : 's'}</td>
+            <td style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+                <button class="btn btn-small btn-secondary" onclick="moveSpecField(${i}, -1)" ${i === 0 ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
+                <button class="btn btn-small btn-secondary" onclick="moveSpecField(${i}, 1)" ${i === specFields.length - 1 ? 'disabled' : ''} aria-label="Move down">&darr;</button>
+                <button class="btn btn-small btn-secondary" onclick="renameSpecField(${f.id})">Rename</button>
+                <button class="btn btn-small btn-danger" onclick="deleteSpecField(${f.id})">Delete</button>
+            </td>
+        </tr>`).join('')
+        : '<tr><td colspan="3" style="text-align: center; color: var(--light-text);">No fields. Add one above.</td></tr>';
+}
+
+async function specFieldRequest(method, url, body, message) {
+    try {
+        await fetchAPI(url, {
+            method,
+            headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        showAdminAlert(message, 'success');
+        await loadSpecFields();
+        return true;
+    } catch (err) {
+        showAdminAlert(err.message, 'danger');
+        return false;
+    }
+}
+
+async function addSpecField(event) {
+    event.preventDefault();
+    const input = document.getElementById('newSpecField');
+    if (await specFieldRequest('POST', '/api/spec-fields', { name: input.value }, 'Field added.')) input.value = '';
+}
+
+function renameSpecField(id) {
+    const field = specFields.find(f => f.id === id);
+    const name = (prompt('Rename this field:', field ? field.name : '') || '').trim();
+    if (name && (!field || name !== field.name)) specFieldRequest('PUT', `/api/spec-fields/${id}`, { name }, 'Field renamed.');
+}
+
+function deleteSpecField(id) {
+    const field = specFields.find(f => f.id === id);
+    const used = field && field.uses ? ` It is filled in on ${field.uses} vehicle${field.uses === 1 ? '' : 's'}; those values are deleted too.` : '';
+    if (!confirm(`Delete the field "${field ? field.name : ''}"?${used}`)) return;
+    specFieldRequest('DELETE', `/api/spec-fields/${id}`, undefined, 'Field deleted.');
+}
+
+function moveSpecField(index, step) {
+    const ids = specFields.map(f => f.id);
+    const to = index + step;
+    if (to < 0 || to >= ids.length) return;
+    ids.splice(to, 0, ids.splice(index, 1)[0]);
+    specFieldRequest('PUT', '/api/spec-fields/order', { ids }, 'Order saved.');
+}
+
+document.addEventListener('DOMContentLoaded', loadSpecFields);
 
 function showAdminAlert(message, type) {
     const el = document.getElementById('alertContainer');

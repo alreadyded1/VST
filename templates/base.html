@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ static_v('css/style.css') }}">
 </head>
-<body>
+<body data-default-vehicle="{{ default_vehicle_id or '' }}" data-apply-default="{{ '1' if apply_default_vehicle else '' }}">
 
     <!-- Mobile sidebar overlay -->
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileMenu()"></div>
