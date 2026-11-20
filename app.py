@@ -879,7 +879,16 @@ def init_db():
                 # A snoozed reminder stays off the dashboard until this date
                 # or odometer reading
                 'ALTER TABLE service_reminders ADD COLUMN snoozed_until DATE',
-                'ALTER TABLE service_reminders ADD COLUMN snoozed_until_mileage INTEGER'):
+                'ALTER TABLE service_reminders ADD COLUMN snoozed_until_mileage INTEGER',
+                # Vehicles page: your order, sold vehicles, stored recall checks
+                'ALTER TABLE vehicle ADD COLUMN sort_order INTEGER',
+                "ALTER TABLE vehicle ADD COLUMN status TEXT DEFAULT 'active'",
+                'ALTER TABLE vehicle ADD COLUMN sold_date DATE',
+                'ALTER TABLE vehicle ADD COLUMN sale_price_cents INTEGER',
+                'ALTER TABLE vehicle ADD COLUMN recalls_checked_at TEXT',
+                'ALTER TABLE vehicle ADD COLUMN recall_campaigns TEXT',
+                # The vehicle selected when this user signs in
+                'ALTER TABLE users ADD COLUMN default_vehicle_id INTEGER'):
             try:
                 db.execute(migration)
                 db.commit()
@@ -913,6 +922,39 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_vehicle_costs_vehicle_id ON vehicle_costs(vehicle_id);
         ''')
+
+        # Quick specs: fields (an admin can add more) and each vehicle's values
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS spec_fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                position INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS vehicle_specs (
+                vehicle_id INTEGER NOT NULL,
+                field_id INTEGER NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (vehicle_id, field_id),
+                FOREIGN KEY (vehicle_id) REFERENCES vehicle (id),
+                FOREIGN KEY (field_id) REFERENCES spec_fields (id)
+            );
+        ''')
+        if not db.execute("SELECT 1 FROM settings WHERE key = 'spec_fields_seeded'").fetchone():
+            for position, name in enumerate(DEFAULT_SPEC_FIELDS):
+                db.execute('INSERT OR IGNORE INTO spec_fields (name, position) VALUES (?, ?)', (name, position))
+            db.execute("INSERT INTO settings (key, value) VALUES ('spec_fields_seeded', '1')")
+            db.commit()
+
+        # Vehicles without a place in the order go after the rest, newest
+        # first, which is how the Vehicles page used to list them
+        unplaced = db.execute('''SELECT id FROM vehicle WHERE sort_order IS NULL
+                                 ORDER BY created_at DESC, id DESC''').fetchall()
+        if unplaced:
+            start = db.execute('SELECT COALESCE(MAX(sort_order), -1) + 1 AS p FROM vehicle').fetchone()['p']
+            for offset, row in enumerate(unplaced):
+                db.execute('UPDATE vehicle SET sort_order = ? WHERE id = ?', (start + offset, row['id']))
+            db.commit()
 
         # One-time repair: MPG used to be computed only at insert time, so
         # edits, deletions and backdated fill-ups left stale values behind.
@@ -1120,6 +1162,7 @@ def login():
 
         if user:
             login_user(User(user['id'], user['username'], user['is_admin']))
+            session['apply_default_vehicle'] = True
             if password == DEFAULT_ADMIN_PASSWORD:
                 # Nag on every page (see base.html) until it's changed
                 session['default_password'] = True
@@ -1180,6 +1223,12 @@ def vehicle_page():
 def vehicles_page():
     """Vehicles management page"""
     return render_template('vehicles.html')
+
+@app.route('/vehicles/<int:vehicle_id>')
+@login_required
+def vehicle_detail_page(vehicle_id):
+    """Everything about one vehicle"""
+    return render_template('vehicle_detail.html', vehicle_id=vehicle_id)
 
 @app.route('/services')
 @login_required
@@ -1495,9 +1544,9 @@ def get_vehicles_summary():
 def get_vehicles():
     """Get all vehicles"""
     db = get_db()
-    vehicles = db.execute('SELECT * FROM vehicle ORDER BY created_at DESC').fetchall()
+    vehicles = db.execute(f'SELECT * FROM vehicle {VEHICLE_ORDER}').fetchall()
     db.close()
-    return jsonify([dict(row) for row in vehicles])
+    return jsonify([dict(row, status=row['status'] or 'active') for row in vehicles])
 
 @app.route('/api/vehicle/<int:vehicle_id>', methods=['GET'])
 @api_login_required
@@ -1518,11 +1567,12 @@ def add_vehicle():
     picture_path = save_upload('picture', 'vehicles')
 
     db = get_db()
-    cursor = db.execute('''INSERT INTO vehicle (manufacturer, model, year, engine, vin, nickname, picture)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+    position = db.execute('SELECT COALESCE(MAX(sort_order), -1) + 1 AS p FROM vehicle').fetchone()['p']
+    cursor = db.execute('''INSERT INTO vehicle (manufacturer, model, year, engine, vin, nickname, picture, sort_order)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
               (data['manufacturer'], data['model'], data['year'],
                data.get('engine', ''), data.get('vin', ''), data.get('nickname', ''),
-               picture_path))
+               picture_path, position))
     vehicle_id = cursor.lastrowid
     db.commit()
     db.close()
@@ -1579,9 +1629,10 @@ def delete_vehicle(vehicle_id):
     db.execute('UPDATE part_installs SET vehicle_id = NULL, service_id = NULL WHERE vehicle_id = ?',
                (vehicle_id,))
     for table in ('service_records', 'maintenance_schedules', 'fuel_records',
-                  'service_reminders', 'documents', 'tire_install_log', 'vehicle_costs',
+                  'service_reminders', 'documents', 'tire_install_log', 'vehicle_costs', 'vehicle_specs',
                   'tire_rotations', 'tread_readings', 'tires'):
         db.execute(f'DELETE FROM {table} WHERE vehicle_id = ?', (vehicle_id,))
+    db.execute('UPDATE users SET default_vehicle_id = NULL WHERE default_vehicle_id = ?', (vehicle_id,))
     db.execute('DELETE FROM vehicle WHERE id = ?', (vehicle_id,))
     db.commit()
     db.close()
@@ -1645,47 +1696,50 @@ def decode_vin(vin):
     except Exception as e:
         return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
 
-def _fetch_recalls(params):
-    """Query the NHTSA recalls API and return a JSON response for the client"""
+def fetch_recalls_list(params):
+    """Recalls from NHTSA for a VIN or a make, model and year, as a list.
+    Raises ApiError when the service can't be reached or answers oddly."""
     try:
         # params= URL-encodes values, so makes/models with spaces or '&' work
         response = requests.get('https://api.nhtsa.gov/recalls/recallsByVehicle',
                                 params=params, headers=NHTSA_HEADERS, timeout=10)
-
-        # NHTSA API quirk: returns 400 even for successful queries with no results
-        # Check if we got valid JSON regardless of status code
-        if response.status_code not in (200, 400):
-            error_msg = f'NHTSA Recalls API returned status {response.status_code}'
-            if response.text:
-                error_msg += f': {response.text[:100]}'
-            return jsonify({'success': False, 'error': error_msg}), 500
-
-        try:
-            data = response.json()
-        except ValueError:
-            return jsonify({'success': False, 'error': 'Invalid JSON response from NHTSA'}), 500
-
-        if 'results' not in data and 'Results' not in data:
-            return jsonify({'success': False, 'error': 'Invalid response format from NHTSA'}), 500
-
-        # Handle both lowercase and uppercase keys
-        results = data.get('results') or data.get('Results') or []
-        recalls = [{
-            'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
-            'manufacturer': recall.get('Manufacturer', ''),
-            'subject': recall.get('Subject', ''),
-            'summary': recall.get('Summary', ''),
-            'consequence': recall.get('Consequence', ''),
-            'remedy': recall.get('Remedy', ''),
-            'report_date': recall.get('ReportReceivedDate', ''),
-            'component': recall.get('Component', '')
-        } for recall in results]
-        return jsonify({'success': True, 'count': len(recalls), 'recalls': recalls})
-
     except requests.exceptions.Timeout:
-        return jsonify({'success': False, 'error': 'Request to NHTSA API timed out. Please try again.'}), 504
+        raise ApiError('NHTSA took too long to answer. Please try again.', 504)
     except requests.exceptions.RequestException as e:
-        return jsonify({'success': False, 'error': f'Network error: {str(e)}'}), 500
+        print(f'Recall check failed: {e}')
+        raise ApiError('Could not reach NHTSA to check recalls. Check that this server can reach the '
+                       'internet, then try again.', 502)
+
+    # NHTSA API quirk: returns 400 even for successful queries with no results
+    if response.status_code not in (200, 400):
+        error_msg = f'NHTSA Recalls API returned status {response.status_code}'
+        if response.text:
+            error_msg += f': {response.text[:100]}'
+        raise ApiError(error_msg, 502)
+    try:
+        data = response.json()
+    except ValueError:
+        raise ApiError('Invalid JSON response from NHTSA', 502)
+    if 'results' not in data and 'Results' not in data:
+        raise ApiError('Invalid response format from NHTSA', 502)
+
+    # Handle both lowercase and uppercase keys
+    results = data.get('results') or data.get('Results') or []
+    return [{
+        'nhtsa_campaign_number': recall.get('NHTSACampaignNumber', ''),
+        'manufacturer': recall.get('Manufacturer', ''),
+        'subject': recall.get('Subject', ''),
+        'summary': recall.get('Summary', ''),
+        'consequence': recall.get('Consequence', ''),
+        'remedy': recall.get('Remedy', ''),
+        'report_date': recall.get('ReportReceivedDate', ''),
+        'component': recall.get('Component', '')
+    } for recall in results]
+
+def _fetch_recalls(params):
+    """Query the NHTSA recalls API and return a JSON response for the client"""
+    recalls = fetch_recalls_list(params)
+    return jsonify({'success': True, 'count': len(recalls), 'recalls': recalls})
 
 @app.route('/api/vehicle/recalls', methods=['GET'])
 @api_login_required
@@ -4777,12 +4831,19 @@ def ownership_summary(db, vehicle_id, today=None):
     record. All amounts in dollars."""
     today = today or datetime.now().date()
     vehicle = db.execute('SELECT * FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone()
+    # A sold vehicle's costs stop at the sale, and its sale price is its
+    # final value
+    sold = is_sold(vehicle) and _parse_date(vehicle['sold_date'])
+    if sold and sold < today:
+        today = sold
     running = running_costs_cents(db, vehicle_id, end=today.isoformat())
     fixed = fixed_costs_cents(db, vehicle_id, end=today)
     purchase = fixed.pop('Purchase', 0)
     running_total = sum(running.values()) + sum(fixed.values())
 
     current_value = vehicle['current_value_cents']
+    if sold and vehicle['sale_price_cents'] is not None:
+        current_value = vehicle['sale_price_cents']
     depreciation = purchase - current_value if purchase and current_value is not None else None
     total = running_total + (depreciation if depreciation is not None else purchase)
 
@@ -4890,13 +4951,14 @@ def compare_ownership():
     """Cost of ownership side by side for every vehicle"""
     db = get_db()
     rows = []
-    for vehicle in db.execute('SELECT * FROM vehicle ORDER BY created_at').fetchall():
+    for vehicle in db.execute(f'SELECT * FROM vehicle {VEHICLE_ORDER}').fetchall():
         s = ownership_summary(db, vehicle['id'])
         rows.append({'id': vehicle['id'], 'name': _vehicle_name(vehicle), 'total': s['total'],
                      'per_year': s['per_year'], 'per_month': s['per_month'], 'miles': s['miles'],
                      'cost_per_mile': s['cost_per_mile'], 'running_cost_per_mile': s['running_cost_per_mile'],
                      'years': s['years'],
-                     'full_price': bool(s['purchase']) and s['purchase_counted_as'] == 'price'})
+                     'full_price': bool(s['purchase']) and s['purchase_counted_as'] == 'price',
+                     'sold': is_sold(vehicle)})
     db.close()
     return jsonify(rows)
 
@@ -4947,6 +5009,321 @@ def set_ownership_settings(vehicle_id):
                    (_number(data, 'purchase_odometer', 'Odometer at purchase', integer=True),
                     to_cents(_number(data, 'current_value', 'Current value')), vehicle_id))
     return jsonify({'success': True})
+
+
+# ── Vehicles: order, sold, default, quick specs, overview and details ───────
+#
+# Vehicles have an order you set (sort_order), and can be marked sold: a sold
+# vehicle keeps its history but leaves the sidebar selector and the
+# dashboard, and its sale price becomes its final value for cost of
+# ownership. Each user can pick a default vehicle, selected when they sign
+# in. Quick specs are short facts kept per vehicle (plate, oil type, wiper
+# sizes...), under fields an admin can add to.
+
+DEFAULT_SPEC_FIELDS = ['License plate', 'Color', 'Tire size', 'Tire pressure', 'Oil type', 'Oil capacity',
+                       'Wiper size (driver)', 'Wiper size (passenger)', 'Battery group']
+VEHICLE_ORDER = 'ORDER BY COALESCE(sort_order, 1000000), id'
+ACTIVE_VEHICLE = "COALESCE(status, 'active') != 'sold'"
+
+
+def is_sold(vehicle):
+    return (vehicle['status'] or 'active') == 'sold'
+
+
+def user_default_vehicle(db, user_id):
+    row = db.execute('SELECT default_vehicle_id FROM users WHERE id = ?', (user_id,)).fetchone()
+    return row['default_vehicle_id'] if row else None
+
+
+@app.context_processor
+def inject_default_vehicle():
+    """The signed-in user's default vehicle for base.html, and whether to
+    select it now (just after signing in)"""
+    if not current_user.is_authenticated:
+        return {}
+    db = get_db()
+    default = db.execute(f'''SELECT v.id FROM users u JOIN vehicle v ON v.id = u.default_vehicle_id
+                             WHERE u.id = ? AND {ACTIVE_VEHICLE.replace('status', 'v.status')}''',
+                         (current_user.id,)).fetchone()
+    db.close()
+    return {'default_vehicle_id': default['id'] if default else None,
+            'apply_default_vehicle': session.pop('apply_default_vehicle', False)}
+
+
+def recall_status(db, vehicle):
+    """What the last recall check found: campaigns, and how many are still
+    open (no completed "Recall Repair" reminder for them)"""
+    try:
+        campaigns = json.loads(vehicle['recall_campaigns'] or '[]')
+    except ValueError:
+        campaigns = []
+    done = {r['service_type'] for r in db.execute(
+        "SELECT service_type FROM service_reminders WHERE vehicle_id = ? AND completed = 1 "
+        "AND service_type LIKE 'Recall Repair: %'", (vehicle['id'],)).fetchall()}
+    open_count = sum(1 for c in campaigns if f'Recall Repair: {c}' not in done)
+    return {'checked_at': vehicle['recalls_checked_at'], 'total': len(campaigns),
+            'open': open_count if vehicle['recalls_checked_at'] else None}
+
+
+def spec_values(db, vehicle_id):
+    """Every spec field, in order, with this vehicle's value or None"""
+    return [dict(r) for r in db.execute('''SELECT f.id AS field_id, f.name, s.value
+                                            FROM spec_fields f
+                                            LEFT JOIN vehicle_specs s ON s.field_id = f.id AND s.vehicle_id = ?
+                                            ORDER BY COALESCE(f.position, 1000000), f.id''', (vehicle_id,)).fetchall()]
+
+
+def vehicle_card(db, vehicle, today, default_id):
+    """The facts shown for a vehicle on the Vehicles page"""
+    s = ownership_summary(db, vehicle['id'], today)
+    spend_year = today.replace(month=1, day=1).isoformat()
+    items = [] if is_sold(vehicle) else vehicle_attention(db, vehicle, today)
+    last_service = db.execute('SELECT MAX(date) AS d FROM service_records WHERE vehicle_id = ?',
+                              (vehicle['id'],)).fetchone()['d']
+    return {
+        'id': vehicle['id'],
+        'name': _vehicle_name(vehicle),
+        'description': f"{vehicle['year']} {vehicle['manufacturer']} {vehicle['model']}",
+        'nickname': vehicle['nickname'],
+        'year': vehicle['year'], 'manufacturer': vehicle['manufacturer'], 'model': vehicle['model'],
+        'engine': vehicle['engine'], 'vin': vehicle['vin'], 'picture': vehicle['picture'],
+        'status': vehicle['status'] or 'active',
+        'sold_date': vehicle['sold_date'],
+        'sale_price': dollars(vehicle['sale_price_cents']),
+        'is_default': vehicle['id'] == default_id,
+        'current_odometer': latest_odometer(db, vehicle['id']),
+        'avg_mpg': weighted_avg_mpg(db, vehicle['id']),
+        'last_service': last_service,
+        'spent_this_year': dollars(_spend_cents(db, spend_year, vehicle['id'])['total']),
+        'total_cost': s['total'],
+        'cost_per_mile': s['cost_per_mile'],
+        'overdue': sum(1 for i in items if i['severity'] == 'overdue'),
+        'soon': sum(1 for i in items if i['severity'] == 'soon'),
+        'recalls': recall_status(db, vehicle),
+    }
+
+
+@app.route('/api/vehicles/overview', methods=['GET'])
+@api_login_required
+def get_vehicles_overview():
+    """Every vehicle in your order, with the facts the Vehicles page shows"""
+    today = datetime.now().date()
+    db = get_db()
+    default_id = user_default_vehicle(db, _api_user().id)
+    cards = [vehicle_card(db, v, today, default_id)
+             for v in db.execute(f'SELECT * FROM vehicle {VEHICLE_ORDER}').fetchall()]
+    db.commit()
+    db.close()
+    return jsonify(cards)
+
+
+@app.route('/api/vehicle/<int:vehicle_id>/details', methods=['GET'])
+@api_login_required
+def get_vehicle_details(vehicle_id):
+    """Everything about one vehicle for its detail page"""
+    today = datetime.now().date()
+    db = get_db()
+    try:
+        vehicle = _require_vehicle(db, vehicle_id)
+        card = vehicle_card(db, vehicle, today, user_default_vehicle(db, _api_user().id))
+        s = ownership_summary(db, vehicle_id, today)
+        card.update({
+            'created_at': vehicle['created_at'],
+            'specs': spec_values(db, vehicle_id),
+            'attention': [] if is_sold(vehicle) else vehicle_attention(db, vehicle, today),
+            'ownership': {k: s[k] for k in ('total', 'per_year', 'per_month', 'cost_per_mile', 'running',
+                                             'purchase', 'purchase_counted_as', 'since', 'years', 'miles')},
+        })
+        card['recent_services'] = [
+            {'id': r['id'], 'date': r['date'], 'odometer': r['odometer'], 'provider': r['service_provider'],
+             'title': r['service_types'] or r['repairs_completed'] or r['service_provider'],
+             'amount': dollars(int(r['cost_cents'] or 0) + round((r['supplies_cost'] or 0) * 100))}
+            for r in db.execute(f'{SERVICE_SELECT} WHERE s.vehicle_id = ? ORDER BY s.date DESC, s.id DESC LIMIT 5',
+                                (vehicle_id,)).fetchall()]
+        card['recent_fuel'] = [
+            {'date': f['date'], 'odometer': f['odometer'], 'gallons': f['gallons'], 'mpg': f['mpg'],
+             'station': f['station'], 'amount': dollars(f['cost_cents'])}
+            for f in db.execute('''SELECT * FROM fuel_records WHERE vehicle_id = ?
+                                   ORDER BY date DESC, odometer DESC LIMIT 5''', (vehicle_id,)).fetchall()]
+        tire = db.execute('SELECT * FROM tires WHERE vehicle_id = ? AND is_installed = 1', (vehicle_id,)).fetchone()
+        card['tires'] = _tire_dict(db, tire, card['current_odometer']) if tire else None
+        card['warranties'] = [i for i in load_installs(db, 'pi.vehicle_id = ? AND pi.removed_date IS NULL',
+                                                       (vehicle_id,)) if i['warranty']]
+        db.commit()
+        return jsonify(card)
+    finally:
+        db.close()
+
+
+@app.route('/api/vehicles/order', methods=['PUT'])
+@api_login_required
+def set_vehicle_order():
+    """`ids`: vehicle ids in the order to show them"""
+    ids = _payload().get('ids')
+    if not isinstance(ids, list) or not ids:
+        raise ApiError('ids must be a list of vehicle ids')
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        raise ApiError('ids must be a list of vehicle ids')
+    with db_session() as db:
+        for position, vehicle_id in enumerate(ids):
+            db.execute('UPDATE vehicle SET sort_order = ? WHERE id = ?', (position, vehicle_id))
+    return jsonify({'success': True})
+
+
+@app.route('/api/vehicle/<int:vehicle_id>/status', methods=['PUT'])
+@api_login_required
+def set_vehicle_status(vehicle_id):
+    """Mark a vehicle sold ({status: 'sold', sold_date, sale_price}) or
+    back in use ({status: 'active'})"""
+    data = _payload()
+    status = _text(data, 'status')
+    with db_session() as db:
+        _require_vehicle(db, vehicle_id)
+        if status == 'sold':
+            sold_date = _date(data, 'sold_date', 'Date sold')
+            if not sold_date:
+                raise ApiError('Date sold is required')
+            db.execute("UPDATE vehicle SET status = 'sold', sold_date = ?, sale_price_cents = ? WHERE id = ?",
+                       (sold_date, to_cents(_number(data, 'sale_price', 'Sale price')), vehicle_id))
+            # It can't be anyone's default any more
+            db.execute('UPDATE users SET default_vehicle_id = NULL WHERE default_vehicle_id = ?', (vehicle_id,))
+        elif status == 'active':
+            db.execute("UPDATE vehicle SET status = 'active', sold_date = NULL, sale_price_cents = NULL WHERE id = ?",
+                       (vehicle_id,))
+        else:
+            raise ApiError("Status must be 'active' or 'sold'")
+    return jsonify({'success': True})
+
+
+@app.route('/api/profile/default-vehicle', methods=['PUT'])
+@api_login_required
+def set_default_vehicle():
+    """The vehicle selected when you sign in; blank for none"""
+    vehicle_id = _number(_payload(), 'vehicle_id', 'Vehicle', integer=True)
+    with db_session() as db:
+        if vehicle_id:
+            if is_sold(_require_vehicle(db, vehicle_id)):
+                raise ApiError('A sold vehicle cannot be the default')
+        db.execute('UPDATE users SET default_vehicle_id = ? WHERE id = ?', (vehicle_id, _api_user().id))
+    return jsonify({'success': True})
+
+
+@app.route('/api/vehicle/<int:vehicle_id>/specs', methods=['PUT'])
+@api_login_required
+def set_vehicle_specs(vehicle_id):
+    """`values`: {field_id: text}. A blank value removes it."""
+    values = _payload().get('values')
+    if not isinstance(values, dict):
+        raise ApiError('values must be an object of field id to text')
+    with db_session() as db:
+        _require_vehicle(db, vehicle_id)
+        for field_id, value in values.items():
+            try:
+                field_id = int(field_id)
+            except (TypeError, ValueError):
+                raise ApiError('Unknown spec field')
+            if not db.execute('SELECT 1 FROM spec_fields WHERE id = ?', (field_id,)).fetchone():
+                raise ApiError('Unknown spec field; reload and try again')
+            text = str(value).strip() if value is not None else ''
+            if text:
+                db.execute('''INSERT INTO vehicle_specs (vehicle_id, field_id, value) VALUES (?, ?, ?)
+                              ON CONFLICT(vehicle_id, field_id) DO UPDATE SET value = excluded.value''',
+                           (vehicle_id, field_id, text[:200]))
+            else:
+                db.execute('DELETE FROM vehicle_specs WHERE vehicle_id = ? AND field_id = ?', (vehicle_id, field_id))
+    return jsonify({'success': True})
+
+
+@app.route('/api/spec-fields', methods=['GET'])
+@api_login_required
+def get_spec_fields():
+    db = get_db()
+    rows = db.execute('''SELECT f.id, f.name, (SELECT COUNT(*) FROM vehicle_specs s WHERE s.field_id = f.id) AS uses
+                         FROM spec_fields f ORDER BY COALESCE(f.position, 1000000), f.id''').fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
+
+
+def _spec_field_name(db, data, exclude_id=None):
+    name = _text(data, 'name')
+    if not name:
+        raise ApiError('Field name is required')
+    if len(name) > 60:
+        raise ApiError('Keep the field name under 60 characters')
+    clash = db.execute('SELECT 1 FROM spec_fields WHERE name = ? COLLATE NOCASE AND id != ?',
+                       (name, exclude_id or 0)).fetchone()
+    if clash:
+        raise ApiError(f'There is already a field called {name}')
+    return name
+
+
+@app.route('/api/spec-fields', methods=['POST'])
+@api_admin_required
+def add_spec_field():
+    data = _payload()
+    with db_session() as db:
+        name = _spec_field_name(db, data)
+        position = db.execute('SELECT COALESCE(MAX(position), -1) + 1 AS p FROM spec_fields').fetchone()['p']
+        field_id = db.execute('INSERT INTO spec_fields (name, position) VALUES (?, ?)', (name, position)).lastrowid
+    return jsonify({'success': True, 'id': field_id})
+
+
+@app.route('/api/spec-fields/<int:field_id>', methods=['PUT'])
+@api_admin_required
+def rename_spec_field(field_id):
+    data = _payload()
+    with db_session() as db:
+        name = _spec_field_name(db, data, field_id)
+        if db.execute('UPDATE spec_fields SET name = ? WHERE id = ?', (name, field_id)).rowcount == 0:
+            raise ApiError('Field not found', 404)
+    return jsonify({'success': True})
+
+
+@app.route('/api/spec-fields/<int:field_id>', methods=['DELETE'])
+@api_admin_required
+def delete_spec_field(field_id):
+    """Delete a field and every vehicle's value for it"""
+    with db_session() as db:
+        if not db.execute('SELECT 1 FROM spec_fields WHERE id = ?', (field_id,)).fetchone():
+            raise ApiError('Field not found', 404)
+        db.execute('DELETE FROM vehicle_specs WHERE field_id = ?', (field_id,))
+        db.execute('DELETE FROM spec_fields WHERE id = ?', (field_id,))
+    return jsonify({'success': True})
+
+
+@app.route('/api/spec-fields/order', methods=['PUT'])
+@api_admin_required
+def set_spec_field_order():
+    ids = _payload().get('ids')
+    if not isinstance(ids, list):
+        raise ApiError('ids must be a list of field ids')
+    with db_session() as db:
+        for position, field_id in enumerate(ids):
+            db.execute('UPDATE spec_fields SET position = ? WHERE id = ?', (position, int(field_id)))
+    return jsonify({'success': True})
+
+
+@app.route('/api/vehicle/<int:vehicle_id>/check-recalls', methods=['POST'])
+@api_login_required
+def check_vehicle_recalls(vehicle_id):
+    """Ask NHTSA for recalls on this vehicle (by VIN when it has a full one,
+    otherwise by make, model and year) and remember what came back"""
+    db = get_db()
+    vehicle = _require_vehicle(db, vehicle_id)
+    db.close()
+    vin = (vehicle['vin'] or '').strip()
+    params = {'vin': vin} if len(vin) == 17 else \
+        {'make': vehicle['manufacturer'], 'model': vehicle['model'], 'modelYear': vehicle['year']}
+    recalls = fetch_recalls_list(params)
+    campaigns = sorted({r['nhtsa_campaign_number'] for r in recalls if r['nhtsa_campaign_number']})
+    with db_session() as db:
+        db.execute('UPDATE vehicle SET recalls_checked_at = ?, recall_campaigns = ? WHERE id = ?',
+                   (datetime.now(timezone.utc).isoformat(timespec='seconds'), json.dumps(campaigns), vehicle_id))
+        status = recall_status(db, db.execute('SELECT * FROM vehicle WHERE id = ?', (vehicle_id,)).fetchone())
+    return jsonify({'success': True, 'count': len(recalls), 'recalls': recalls, 'status': status,
+                    'searched_by': 'vin' if 'vin' in params else 'model'})
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
@@ -5073,7 +5450,7 @@ def get_dashboard():
     month_start = today.replace(day=1).isoformat()
     year_start = today.replace(month=1, day=1).isoformat()
     db = get_db()
-    vehicles = db.execute('SELECT * FROM vehicle ORDER BY created_at').fetchall()
+    vehicles = db.execute(f'SELECT * FROM vehicle WHERE {ACTIVE_VEHICLE} {VEHICLE_ORDER}').fetchall()
 
     attention = []
     cards = []
@@ -5103,7 +5480,7 @@ def get_dashboard():
                               'link': '/parts', 'vehicle_id': None, 'vehicle_name': None})
     attention.sort(key=lambda i: (ATTENTION_ORDER[i['severity']], i['vehicle_name'] or '', i['title']))
 
-    names = {v['id']: _vehicle_name(v) for v in vehicles}
+    names = {v['id']: _vehicle_name(v) for v in db.execute('SELECT * FROM vehicle').fetchall()}
     recent = []
     for s in db.execute(f'{SERVICE_SELECT} ORDER BY s.date DESC, s.id DESC LIMIT 8').fetchall():
         recent.append({'kind': 'service', 'date': s['date'], 'vehicle_id': s['vehicle_id'],

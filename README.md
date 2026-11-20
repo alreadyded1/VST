@@ -10,9 +10,13 @@ See [FEATURES.md](FEATURES.md) for a page-by-page reference and [QUICKSTART.md](
 
 ✅ **Vehicles**
 - Any number of vehicles, each with make, model, year, engine, VIN, nickname and photo
-- Decode a VIN to fill in the details, and check for open recalls (both use the public NHTSA service)
-- Turn recalls into reminders with one click
-- Pick the active vehicle from the sidebar; every page follows it
+- Compact cards (or a list) showing odometer, MPG, spend this year, cost per mile, what's due and recall status
+- A detail page per vehicle with everything about it in one place
+- Quick specs per vehicle (plate, oil type, wiper sizes and more); admins can add fields such as spark plug gap
+- Decode a VIN to fill in the details, and check for recalls; the last check and how many are still open are remembered (both use the public NHTSA service)
+- Put vehicles in your own order, and pick a default that is selected when you sign in
+- Mark a vehicle sold: it keeps its history, leaves the selector and dashboard, and its sale price closes out its cost of ownership
+- Pick the active vehicle from the sidebar or by clicking it; every page follows it
 
 ✅ **Service Records**
 - Date, total bill, service provider (or mark it as done yourself) and odometer
@@ -187,9 +191,12 @@ The install script is the better choice for real use: it sets up the service use
 
 ### Managing vehicles
 
-- **Switch vehicle**: use the selector at the top of the sidebar
-- **Edit or delete**: on the **Vehicles** page
-- **Deleting a vehicle** removes its services, fuel records, reminders, tires and documents. Parts stay on the shelf, and what the vehicle used stays used.
+- **Switch vehicle**: use the selector at the top of the sidebar, or click a vehicle on the **Vehicles** page
+- **See everything about one vehicle**: **Open** on its card
+- **Change the order**: drag the cards (or rows), or use **Move Up** / **Move Down** in a vehicle's menu
+- **Default vehicle**: **Make Default** in a vehicle's menu; it is selected each time you sign in
+- **Sold a vehicle**: **Mark as Sold** keeps its records under **Past Vehicles**; **Back in Use** undoes it
+- **Deleting a vehicle** removes its services, fuel records, reminders, tires, documents, costs and specs. Parts stay on the shelf, and what the vehicle used stays used. To keep the history, mark it sold instead.
 
 ## System Management
 
@@ -424,6 +431,14 @@ rm -rf /opt/vehicle-tracker && userdel vtracker
 This project is open source and available for personal and commercial use.
 
 ## Changelog
+
+### Version 3.5.0
+- **Vehicles page rebuilt**: compact cards three across (or a list view), each with odometer, MPG, spend this year, cost per mile, what's due and recall status
+- **Vehicle detail page** with specs, what needs attention, costs, recent services and fill-ups, tires, parts under warranty and recalls
+- **Quick specs** per vehicle, with fields an admin can add, rename, reorder and delete on the Admin page
+- **Sold vehicles** move to Past Vehicles with their history; the sale price closes out cost of ownership
+- **Your own vehicle order** (drag, or Move Up / Down) and a **default vehicle** per user, selected when you sign in
+- **Recall checks are remembered**, with how many recalls are still open
 
 ### Version 3.4.0
 - **Cost of ownership**: a new Costs page for the purchase, insurance, registration, tax, loan payments and anything else, entered once or repeating. Shows total cost of ownership, per year, per month and per mile, a year-by-year table, and every vehicle side by side. These costs (except the purchase price) also appear in the dashboard's spending

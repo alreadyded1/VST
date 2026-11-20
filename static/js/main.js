@@ -295,30 +295,42 @@ async function loadVehicleSelector(forceRefresh = false) {
         }
 
         const selector = document.getElementById('vehicleSelector');
+        const active = (vehicles || []).filter(v => v.status !== 'sold');
+        const known = id => (vehicles || []).some(v => String(v.id) === String(id));
+
+        // Just signed in: select the user's default vehicle (base.html
+        // only sets this flag on the first page after signing in)
+        const page = document.body.dataset;
+        if (page.applyDefault && page.defaultVehicle && active.some(v => String(v.id) === page.defaultVehicle)) {
+            setCurrentVehicleId(page.defaultVehicle);
+        }
+        // Nothing selected, or it was deleted: the default, else the first
+        // vehicle still in use
+        if (!known(getCurrentVehicleId())) {
+            const fallback = active.find(v => String(v.id) === page.defaultVehicle) || active[0];
+            if (fallback) {
+                setCurrentVehicleId(fallback.id);
+            } else {
+                localStorage.removeItem('currentVehicleId');
+            }
+        }
 
         if (!selector) return;
 
-        if (vehicles && vehicles.length > 0) {
+        const currentId = getCurrentVehicleId();
+        // Sold vehicles stay out of the list, unless you opened one
+        const shown = (vehicles || []).filter(v => v.status !== 'sold' || String(v.id) === String(currentId));
+        if (shown.length > 0) {
             selector.style.display = 'block';
             selector.innerHTML = '<option value="">Select a vehicle...</option>';
-
-            vehicles.forEach(vehicle => {
+            shown.forEach(vehicle => {
                 const option = document.createElement('option');
                 option.value = vehicle.id;
-                const nickname = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
-                option.textContent = nickname;
+                const name = vehicle.nickname || `${vehicle.year} ${vehicle.manufacturer} ${vehicle.model}`;
+                option.textContent = vehicle.status === 'sold' ? `${name} (sold)` : name;
                 selector.appendChild(option);
             });
-
-            // Set current vehicle
-            const currentId = getCurrentVehicleId();
-            if (currentId) {
-                selector.value = currentId;
-            } else if (vehicles.length === 1) {
-                // Auto-select if only one vehicle
-                selector.value = vehicles[0].id;
-                setCurrentVehicleId(vehicles[0].id);
-            }
+            if (currentId) selector.value = currentId;
         } else {
             selector.style.display = 'none';
         }

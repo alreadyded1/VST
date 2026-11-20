@@ -926,7 +926,8 @@ document.addEventListener('click', () => {
 
 appReady.then(async () => {
     try {
-        allVehicles = await fetchAPI('/api/vehicles');
+        // Parts go on vehicles still in use
+        allVehicles = (await fetchAPI('/api/vehicles')).filter(v => v.status !== 'sold');
     } catch (error) {
         allVehicles = [];
     }
